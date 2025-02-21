@@ -1,11 +1,17 @@
+use ollama_rs::Ollama;
+use ollama_rs::generation::options::GenerationOptions;
+use ollama_rs::generation::completion::request::GenerationRequest;
+use tokio::io::{self, AsyncWriteExt};
+use tokio_stream::StreamExt;
+
 use anyhow::{Result, Context};
 use clap::{Parser, ValueEnum};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use futures_util::stream::StreamExt;
 use chrono::{DateTime, FixedOffset};
 use indicatif::{ProgressBar, ProgressStyle};
 use serde_json::Value;
+
 
 #[derive(Clone, Debug, ValueEnum, Serialize, Deserialize)] // ArgEnum here
 #[clap(rename_all = "lower")]
@@ -34,7 +40,7 @@ struct Args {
     #[clap(short, long)]
     text_files: String,
 
-    #[clap(short, long, default_value = "http://0.0.0.0:11434")]
+    #[clap(short, long, default_value = "http://localhost:11434")]
     server: String,
 }
 
@@ -152,8 +158,7 @@ async fn get_model(client: &Client, args: &Args, pb: &ProgressBar) -> Result<()>
     Ok(())
 }
 
-
-async fn send_request(client: Client, args: Args) -> Result<()> {
+fn generate_prompt(args: &Args) -> Result<String> {
     let mut prompt = String::new();
     args.text_files.split(',').into_iter().map(|file| {
         if prompt.is_empty() {
@@ -172,11 +177,15 @@ async fn send_request(client: Client, args: Args) -> Result<()> {
         Ok(())
     }).collect::<Result<()>>()?;
     prompt.push_str(&args.prompt);
+    Ok(prompt)
+}
 
+
+async fn send_request(client: Client, args: Args) -> Result<()> {
     let json_body = serde_json::json!({
         "model": args.model,
         "role": args.role,
-        "prompt": prompt
+        "prompt": generate_prompt(&args)?
     });
 
     let mut response = client.post(args.server + "/api/generate")
@@ -210,7 +219,52 @@ async fn send_request(client: Client, args: Args) -> Result<()> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let client = Client::new();
+
+    let ollama = match args.server.rsplit_once(':') {
+        Some((host, port)) => {
+            if port.parse::<u16>().is_err() {
+                return Err(anyhow::anyhow!("Invalid port number: {}", port));
+            }
+            Ollama::new(host.to_string(), port.parse()?)
+        },
+        None => return Err(anyhow::anyhow!("Invalid server address: {}", args.server)),
+    };
+
+    let model = args.model.clone();
+    let prompt = generate_prompt(&args)?;
+
+    let options = GenerationOptions::default()
+        .temperature(0.2)
+        .repeat_penalty(1.5)
+        .top_k(25)
+        .top_p(0.25);
+
+    let mut stream = ollama.generate_stream(GenerationRequest::new(model, prompt)).await?;
+
+    let mut stdout = io::stdout();
+    while let Some(res) = stream.next().await {
+        for resp in res? {
+            resp.response.as_bytes().iter().for_each(|b| {
+                async {
+                    match stdout.write_all(&[*b]).await {
+                        Ok(_) => (),
+                        Err(e) => eprintln!("Failed to write to stdout: {}", e),
+                    }
+                    match stdout.flush().await {
+                        Ok(_) => (),
+                        Err(e) => eprintln!("Failed to flush stdout: {}", e),
+                    }
+                };
+                ()
+            });
+            //stdout.write_all(resp.response.as_bytes()).await?;
+            //stdout.flush().await?;
+        }
+    }
+    return Ok(());
+    
+
+    /*let client = Client::new();
     let pb = ProgressBar::new(100);
     pb.set_style(ProgressStyle::default_bar()
         .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")?
@@ -218,5 +272,5 @@ async fn main() -> Result<()> {
 
     get_model(&client, &args, &pb).await?;
 
-    send_request(client, args).await
+    send_request(client, args).await*/
 }

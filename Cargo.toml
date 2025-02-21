@@ -10,8 +10,10 @@ clap = { version = "4.5.30", features = ["derive"] }
 curl = "0.4.47"
 futures-util = "0.3.31"
 indicatif = "0.17.11"
+ollama-rs = { version = "0.2.5", features = ["stream"] }
 reqwest = { version = "0.12.12", features = ["json", "stream"] }
 serde = { version = "1.0.218", features = ["derive"] }
 serde_json = "1.0.139"
 tokio = { version = "1.43.0", features = ["full"] }
+tokio-stream = "0.1.17"
 tokio-util = { version = "0.7.12", features = ["io"] }
