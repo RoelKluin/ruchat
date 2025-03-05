@@ -2,12 +2,15 @@ use anyhow::{Context, Error as AnyError, Result, anyhow};
 use log::{error, info};
 use ollama_rs::{
     Ollama,
-    generation::{completion::request::GenerationRequest, options::GenerationOptions},
+    generation::{completion::request::GenerationRequest, options::GenerationOptions, embeddings::request::GenerateEmbeddingsRequest},
+    headers::HeaderMap,
 };
 use tokio::io::{self, AsyncWriteExt};
 use tokio_stream::StreamExt;
-
-
+use chromadb::{
+    client::{ChromaAuthMethod, ChromaClient, ChromaClientOptions, ChromaTokenHeader},
+    collection::{ChromaCollection, GetResult, CollectionEntries},
+};
 use clap::Parser;
 use serde_json::Value;
 
@@ -21,6 +24,7 @@ struct Args {
     #[clap(short, long, default_value = "qwen2.5-coder:14b")]
     model: String,
 
+    /// Request a certain output format, the default leaves the text as is
     #[clap(short, long, default_value_t = String::from("text"))]
     output_format: String,
 
@@ -28,13 +32,27 @@ struct Args {
     #[clap(short, long)]
     text_files: Option<String>,
 
-    /// History file to use as input #TODO
+    /// History file to use as input - invokes chat mode. #TODO
     #[clap(short, long)]
     history_file: Option<String>,
+
+    /// Chroma database server address and port
+    #[clap(short, long, default_value = "http://localhost:8000")]
+    chroma_server: String,
+
+    /// Chroma database name
+    #[clap(short, long, default_value = "default")]
+    chroma_database: String,
+
+    /// Chroma token for authentication
+    #[clap(short, long)]
+    chroma_token: Option<String>,
 
     #[clap(short, long, default_value = "http://172.30.138.132:11434")]
     server: String,
 
+    /// Path to a JSON file to amend default generation options, listed in
+    /// https://docs.rs/ollama-rs/latest/ollama_rs/generation/options/struct.GenerationOptions.html
     #[clap(short, long)]
     config: Option<String>,
 }
@@ -97,20 +115,25 @@ fn generate_prompt(args: &Args) -> Result<String> {
     Ok(prompt)
 }
 
-fn merge(a: &mut Value, b: Value) {
-    if let Value::Object(a) = a {
-        if let Value::Object(b) = b {
-            for (k, v) in b {
-                if v.is_null() {
-                    a.remove(&k);
-                } else {
-                    merge(a.entry(k).or_insert(Value::Null), v);
-                }
-            }
-            return;
-        }
+/// access a running chroma server to store and retrieve data for embeddings
+// You can use the following docker command to run a chroma database:
+// docker build chromadb/chroma
+// # with auth using tokens and persistent storage:
+// docker run -p 8000:8000 -e chroma_server_auth_credentials_provider="chromadb.auth.token.tokenconfigserverauthcredentialsprovider" -e chroma_server_auth_provider="chromadb.auth.token.tokenauthserverprovider" -e chroma_server_auth_token_transport_header="$(sed -n 1p ~/.chroma_creds.txt)" -e chroma_server_auth_credentials="$(sed -n 2p ~/.chroma_creds.txt)" -v ~/chroma_storage/:/chroma/chroma chromadb/chroma
+async fn create_chroma_client(args: &Args) -> Result<ChromaClient> {
+    if let Some(token) = &args.chroma_token {
+        ChromaClient::new(ChromaClientOptions {
+            url: Some(args.chroma_server.clone()),
+            database: args.chroma_database.clone(),
+            auth: ChromaAuthMethod::TokenAuth {
+                token: token.clone(),
+                header: ChromaTokenHeader::Authorization,
+            },
+        }).await
+    } else {
+        // Defaults to http://localhost:8000
+        ChromaClient::new(Default::default()).await
     }
-    *a = b;
 }
 
 async fn read_config_file(config_path: &str) -> Result<serde_json::Value> {
@@ -122,12 +145,20 @@ async fn read_config_file(config_path: &str) -> Result<serde_json::Value> {
 async fn get_generation_request<'a>(ollama: &'a Ollama, args: &'a Args) -> Result<GenerationRequest<'a>> {
     let prompt = generate_prompt(args)?;
     let options = if let Some(config_path) = &args.config {
-        let config_updates = read_config_file(config_path).await?;
         let mut defaults =
             serde_json::to_value(GenerationOptions::default()).with_context(|| {
                 format!("Failed to serialize default generation options for config file at {config_path}")
             })?;
-        merge(&mut defaults, config_updates);
+        // only options already present in GenerationOptions::default are allowed
+        if let Value::Object(ref mut defaults) = defaults {
+            if let Value::Object(config_updates) = read_config_file(config_path).await? {
+                for (k, v) in config_updates.into_iter() {
+                    if defaults.contains_key(&k) && !v.is_null() {
+                        defaults[&k] = v.clone();
+                    }
+                }
+            }
+        }
         serde_json::from_value(defaults)?
     } else {
         GenerationOptions::default()
@@ -135,7 +166,6 @@ async fn get_generation_request<'a>(ollama: &'a Ollama, args: &'a Args) -> Resul
     let model_name = get_model_name(ollama, &args.model).await?;
     Ok(GenerationRequest::new(model_name, prompt).options(options))
 }
-
 
 async fn handle_request(args: Args) -> Result<()> {
     let server = &args.server;
@@ -146,7 +176,6 @@ async fn handle_request(args: Args) -> Result<()> {
 
     let request = get_generation_request(&ollama, &args).await?;
     let mut stream = ollama.generate_stream(request).await?;
-
 
     let mut stdout = io::stdout();
     while let Some(res) = stream.next().await {
