@@ -1,56 +1,53 @@
-use ollama_rs::generation::completion::request::GenerationRequest;
-use ollama_rs::generation::options::GenerationOptions;
-use ollama_rs::Ollama;
+use anyhow::{Context, Error as AnyError, Result, anyhow};
+use log::{error, info};
+use ollama_rs::{
+    Ollama,
+    generation::{completion::request::GenerationRequest, options::GenerationOptions},
+};
 use tokio::io::{self, AsyncWriteExt};
 use tokio_stream::StreamExt;
 
-use anyhow::{anyhow, Error as AnyError, Result};
-use clap::{Parser, ValueEnum};
-use serde::{Deserialize, Serialize};
+
+use clap::Parser;
 use serde_json::Value;
 
-#[derive(Clone, Debug, ValueEnum, Serialize, Deserialize)] // ArgEnum here
-#[clap(rename_all = "lower")]
-enum Role {
-    System,
-    User,
-    Assistant,
-    Tool,
-}
+// https://ollama.com/blog/embedding-models
 
 #[derive(Parser)]
 struct Args {
-    #[clap(short, long, value_enum, default_value = "user")]
-    role: Role,
-
     #[clap(short, long)]
     prompt: String,
 
-    #[clap(short, long, default_value = "qwen2.5-coder:latest")]
+    #[clap(short, long, default_value = "qwen2.5-coder:14b")]
     model: String,
 
-    #[clap(short, long, default_value = "text")]
+    #[clap(short, long, default_value_t = String::from("text"))]
     output_format: String,
 
     /// Text files to use as input, seperated by commas
     #[clap(short, long)]
     text_files: Option<String>,
 
-    #[clap(short, long, default_value = "http://localhost:11434")]
+    /// History file to use as input #TODO
+    #[clap(short, long)]
+    history_file: Option<String>,
+
+    #[clap(short, long, default_value = "http://172.30.138.132:11434")]
     server: String,
 
     #[clap(short, long)]
     config: Option<String>,
 }
 
-async fn get_model(ollama: &Ollama, name: &str) -> Result<String> {
+async fn get_model_name(ollama: &Ollama, name: &str) -> Result<String> {
     if name.is_empty()
         || !name
             .chars()
             .all(|c| c.is_alphanumeric() || c == ':' || c == '-' || c == '.')
     {
-        return Err(anyhow::anyhow!("Invalid model name: {}.", name));
+        return Err(anyhow::anyhow!("Invalid model name: {name}."));
     }
+    info!("Model: {}", name);
     let model_list = ollama.list_local_models().await?;
     let model = if name.contains(":") {
         model_list.iter().find(|m| m.name == name)
@@ -64,8 +61,8 @@ async fn get_model(ollama: &Ollama, name: &str) -> Result<String> {
             ollama
                 .pull_model(name.to_string(), false)
                 .await
-                .map_err(|e| anyhow!("Failed to pull model: {}", e))?;
-            Box::pin(get_model(ollama, name)).await
+                .map_err(|e| anyhow!("Failed to pull model: {e}"))?;
+            Box::pin(get_model_name(ollama, name)).await
         }
     }
 }
@@ -78,19 +75,25 @@ fn generate_prompt(args: &Args) -> Result<String> {
                 prompt.push_str("Considering the input:\n");
             }
 
-            if file != "-" {
+            if file == "-" {
+                prompt.push_str("stdin:");
+            } else {
                 prompt.push_str("file: ");
                 prompt.push_str(file);
-            } else {
-                prompt.push_str("stdin:");
             }
             prompt.push_str("\n```\n");
-            prompt.push_str(&std::fs::read_to_string(file)?);
+            prompt.push_str(&std::fs::read_to_string(file)
+                .with_context(|| format!("Failed to read file: {file}"))?);
             prompt.push_str("\n```\n");
             Ok::<(), AnyError>(())
         })?;
     }
     prompt.push_str(&args.prompt);
+    if args.output_format != "text" {
+        prompt.push_str("\nPlease generate your response in valid ");
+        prompt.push_str(&args.output_format);
+        prompt.push_str(" output format.\n");
+    }
     Ok(prompt)
 }
 
@@ -110,46 +113,60 @@ fn merge(a: &mut Value, b: Value) {
     *a = b;
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    let args = Args::parse();
+async fn read_config_file(config_path: &str) -> Result<serde_json::Value> {
+    let config_content = std::fs::read_to_string(config_path)?;
+    serde_json::from_str(&config_content)
+        .with_context(|| format!("Failed to parse config file at {}", config_path))
+}
 
-    let ollama = match args.server.rsplit_once(':') {
-        Some((host, port)) => {
-            if port.parse::<u16>().is_err() {
-                return Err(anyhow::anyhow!("Invalid port number: {}", port));
-            }
-            Ollama::new(host.to_string(), port.parse()?)
-        }
-        None => return Err(anyhow::anyhow!("Invalid server address: {}", args.server)),
+async fn get_generation_request<'a>(ollama: &'a Ollama, args: &'a Args) -> Result<GenerationRequest<'a>> {
+    let prompt = generate_prompt(args)?;
+    let options = if let Some(config_path) = &args.config {
+        let config_updates = read_config_file(config_path).await?;
+        let mut defaults =
+            serde_json::to_value(GenerationOptions::default()).with_context(|| {
+                format!("Failed to serialize default generation options for config file at {config_path}")
+            })?;
+        merge(&mut defaults, config_updates);
+        serde_json::from_value(defaults)?
+    } else {
+        GenerationOptions::default()
     };
-    let completed_model_name = get_model(&ollama, &args.model).await?;
+    let model_name = get_model_name(ollama, &args.model).await?;
+    Ok(GenerationRequest::new(model_name, prompt).options(options))
+}
 
-    let prompt = generate_prompt(&args)?;
 
-    let mut options = GenerationOptions::default();
+async fn handle_request(args: Args) -> Result<()> {
+    let server = &args.server;
+    let ollama: Ollama = server
+        .rsplit_once(':')
+        .and_then(|(host, port)| port.parse::<u16>().map(|p| Ollama::new(host, p)).ok())
+        .ok_or_else(|| anyhow!("Invalid server address: {server}"))?;
 
-    if let Some(config) = &args.config {
-        let update: Value = std::fs::read_to_string(config)
-            .map(|s| serde_json::from_str(&s))
-            .map_err(|e| anyhow::anyhow!("Failed to read config file: {}", e))??;
+    let request = get_generation_request(&ollama, &args).await?;
+    let mut stream = ollama.generate_stream(request).await?;
 
-        let mut defaults = serde_json::to_value(&options)?;
-        merge(&mut defaults, update);
-        options = serde_json::from_value(defaults)?;
-    }
-
-    let mut stream = ollama
-        .generate_stream(GenerationRequest::new(completed_model_name, prompt).options(options))
-        .await?;
 
     let mut stdout = io::stdout();
     while let Some(res) = stream.next().await {
         let responses = res?;
         for resp in responses {
-            stdout.write_all(resp.response.as_bytes()).await?;
+            match stdout.write_all(resp.response.as_bytes()).await {
+                Ok(_) => {}
+                Err(e) => {
+                    error!("Failed to write response to stdout: {e}");
+                    return Err(e.into());
+                }
+            }
             stdout.flush().await?;
         }
     }
-    return Ok(());
+    Ok(())
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    env_logger::init();
+    handle_request(Args::parse()).await
 }
