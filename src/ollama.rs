@@ -1,9 +1,9 @@
 use super::args::Args;
 use super::config::read_config_file;
-use crate::args::QueryArgs;
+use crate::args::{ChatArgs, Commands, QueryArgs};
+use crate::ollama_error::Error;
 use log::{error, info};
 use ollama_rs::{
-    error::OllamaError,
     generation::{
         completion::request::GenerationRequest, embeddings::request::GenerateEmbeddingsRequest,
         options::GenerationOptions,
@@ -12,65 +12,12 @@ use ollama_rs::{
     Ollama,
 };
 use serde_json::Value;
-use std::fmt::{self, Display, Formatter};
-use std::{fs, io::Read};
+use std::{
+    fs,
+    io::{stdin, Read},
+};
 use tokio::io::AsyncWriteExt;
 use tokio_stream::StreamExt;
-
-#[derive(Debug)]
-pub enum Error {
-    InvalidModelName(String),
-    ModelNotFound(String),
-    FileReadError(std::io::Error),
-    ConfigSerializationError(serde_json::Error),
-    ConfigDeserializationError(serde_json::Error),
-    ModelPullError(String),
-    OllamaServerError(String),
-    ReadError(String, std::io::Error),
-    StreamWriteError(std::io::Error),
-}
-
-impl From<std::io::Error> for Error {
-    fn from(err: std::io::Error) -> Self {
-        Error::StreamWriteError(err)
-    }
-}
-
-impl From<serde_json::Error> for Error {
-    fn from(err: serde_json::Error) -> Self {
-        if err.is_data() || err.is_syntax() {
-            Error::ConfigDeserializationError(err)
-        } else {
-            Error::ConfigSerializationError(err)
-        }
-    }
-}
-
-impl From<OllamaError> for Error {
-    fn from(err: OllamaError) -> Self {
-        match err {
-            _ => todo!(),
-        }
-    }
-}
-
-impl Display for Error {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        match self {
-            Error::InvalidModelName(name) => write!(f, "Invalid model name: {}", name),
-            Error::ModelNotFound(name) => write!(f, "Model not found: {}", name),
-            Error::FileReadError(e) => write!(f, "Failed to read file: {}", e),
-            Error::ConfigSerializationError(e) => write!(f, "Failed to serialize config: {}", e),
-            Error::ConfigDeserializationError(e) => {
-                write!(f, "Failed to deserialize config: {}", e)
-            }
-            Error::ModelPullError(name) => write!(f, "Failed to pull model: {}", name),
-            Error::OllamaServerError(server) => write!(f, "Invalid Ollama server: {}", server),
-            Error::ReadError(file, e) => write!(f, "Failed to read {}: {}", file, e),
-            Error::StreamWriteError(e) => write!(f, "Failed to write to stream: {}", e),
-        }
-    }
-}
 
 // TODO: allow more prompt configurations
 fn generate_prompt(query_args: &QueryArgs) -> Result<String, Error> {
@@ -140,11 +87,10 @@ async fn get_model_name(ollama: &Ollama, name: &str) -> Result<String, Error> {
 }
 
 pub async fn get_generation_request<'a>(
-    ollama: &'a Ollama,
     args: &'a Args,
-    query_args: &'a QueryArgs,
+    model_name: &str,
+    prompt: String,
 ) -> Result<GenerationRequest<'a>, Error> {
-    let prompt = generate_prompt(query_args)?;
     let options = if let Some(config_path) = &args.config {
         let mut defaults = serde_json::to_value(GenerationOptions::default())
             .map_err(Error::ConfigDeserializationError)?;
@@ -163,35 +109,57 @@ pub async fn get_generation_request<'a>(
     } else {
         GenerationOptions::default()
     };
-    let model_name = get_model_name(ollama, &args.model).await?;
-    Ok(GenerationRequest::new(model_name, prompt).options(options))
+    Ok(GenerationRequest::new(model_name.to_string(), prompt).options(options))
 }
 
-pub async fn handle_request(args: Args, query_args: &QueryArgs) -> Result<(), Error> {
+pub async fn handle_request(args: Args) -> Result<(), Error> {
     let server = &args.server;
     let ollama: Ollama = server
         .rsplit_once(':')
         .and_then(|(host, port)| port.parse::<u16>().map(|p| Ollama::new(host, p)).ok())
         .ok_or_else(|| Error::OllamaServerError(server.to_string()))?;
 
-    let request = get_generation_request(&ollama, &args, query_args).await?;
-    let mut stream = ollama
-        .generate_stream(request)
-        .await
-        .map_err(|_| Error::StreamWriteError(std::io::ErrorKind::Other.into()))?;
-
     let mut stdout = tokio::io::stdout();
-    while let Some(res) = stream.next().await {
-        let responses = res?;
-        for resp in responses {
-            match stdout.write_all(resp.response.as_bytes()).await {
-                Ok(_) => {}
-                Err(e) => {
-                    error!("Failed to write response to stdout: {e}");
-                    return Err(e.into());
-                }
+    let stdin = stdin();
+    let model_name = get_model_name(&ollama, &args.model).await?;
+    let mut do_exit = false;
+    while !do_exit {
+        let prompt = match &args.command {
+            Commands::Query(query_args) => {
+                do_exit = true;
+                generate_prompt(&query_args)?
             }
-            stdout.flush().await?;
+            Commands::Chat(_chat_args) => {
+                stdout.write_all(b"\n> ").await?;
+                stdout.flush().await?;
+
+                let mut input = String::new();
+                stdin.read_line(&mut input)?;
+
+                let input = input.trim_end();
+                do_exit = input.eq_ignore_ascii_case("exit");
+                input.to_string()
+            }
+        };
+        let request = get_generation_request(&args, &model_name, prompt).await?;
+
+        let mut stream = ollama
+            .generate_stream(request)
+            .await
+            .map_err(|_| Error::StreamWriteError(std::io::ErrorKind::Other.into()))?;
+
+        while let Some(res) = stream.next().await {
+            let responses = res?;
+            for resp in responses {
+                match stdout.write_all(resp.response.as_bytes()).await {
+                    Ok(_) => {}
+                    Err(e) => {
+                        error!("Failed to write response to stdout: {e}");
+                        return Err(e.into());
+                    }
+                }
+                stdout.flush().await?;
+            }
         }
     }
     Ok(())

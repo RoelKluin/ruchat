@@ -1,4 +1,4 @@
-use crate::ollama::Error;
+use crate::ollama_error::Error;
 use serde_json::Value;
 
 pub async fn read_config_file(config_path: &str) -> Result<Value, Error> {

@@ -2,15 +2,14 @@ pub mod args;
 pub mod chroma;
 pub mod config;
 pub mod ollama;
+pub mod ollama_error;
 
-use args::{Args, Commands};
+use args::Args;
 use clap::Parser;
-use ollama::{handle_request, Error};
+use ollama::handle_request;
+use ollama_error::Error;
 
 pub async fn run() -> Result<(), Error> {
     env_logger::init();
-    let args = Args::parse();
-    match &args.command {
-        Commands::Query(query_args) => handle_request(Args::parse(), query_args).await,
-    }
+    handle_request(Args::parse()).await
 }
