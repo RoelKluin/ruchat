@@ -3,14 +3,12 @@ pub mod chroma;
 pub mod config;
 pub mod ollama;
 
-use anyhow::{anyhow, Result};
-use args::Args;
+use args::{Args, Commands};
 use clap::Parser;
-use ollama::handle_request;
+use ollama::{handle_request, Error};
 
-pub async fn run() -> Result<()> {
+pub async fn run() -> Result<(), Error> {
     env_logger::init();
     handle_request(Args::parse())
         .await
-        .map_err(|e| anyhow!("{e}"))
 }
