@@ -1,35 +1,23 @@
-use clap::Parser;
+use clap::{Parser, Subcommand};
 
 #[derive(Parser, Debug)]
 pub struct Args {
-    #[clap(short, long)]
-    pub(crate) prompt: String,
+    #[clap(subcommand)]
+    pub command: Commands,
 
     #[clap(short, long, default_value = "qwen2.5-coder:32b")]
     pub(crate) model: String,
 
-    /// Request a certain output format, the default leaves the text as is
-    #[clap(short, long, default_value_t = String::from("text"))]
-    pub(crate) output_format: String,
-
-    /// Text files to use as input, seperated by commas
-    #[clap(short, long)]
-    pub(crate) text_files: Option<String>,
-
-    /// History file to use as input - invokes chat mode. #TODO
-    #[clap(short, long)]
-    pub(crate) history_file: Option<String>,
-
     /// Chroma database server address and port
-    #[clap(short, long, default_value = "http://localhost:8000")]
+    #[clap(short = 'C', long, default_value = "http://localhost:8000")]
     pub(crate) chroma_server: String,
 
     /// Chroma database name
-    #[clap(short, long, default_value = "default")]
+    #[clap(short = 'd', long, default_value = "default")]
     pub(crate) chroma_database: String,
 
     /// Chroma token for authentication
-    #[clap(short, long)]
+    #[clap(short = 't', long)]
     pub(crate) chroma_token: Option<String>,
 
     #[clap(short, long, default_value = "http://0.0.0.0:11434")]
@@ -39,4 +27,28 @@ pub struct Args {
     /// https://docs.rs/ollama-rs/latest/ollama_rs/generation/options/struct.GenerationOptions.html
     #[clap(short, long)]
     pub(crate) config: Option<String>,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum Commands {
+    /// Query command for specific tasks
+    Query(QueryArgs),
+}
+
+#[derive(Parser, Debug)]
+pub struct QueryArgs {
+    #[clap(short, long)]
+    pub(crate) prompt: String,
+
+    /// Request a certain output format, the default leaves the text as is
+    #[clap(short, long, default_value_t = String::from("text"))]
+    pub(crate) output_format: String,
+
+    /// Text files to use as input, seperated by commas
+    #[clap(short = 'i', long)]
+    pub(crate) text_files: Option<String>,
+
+    /// History file to use as input - invokes chat mode. #TODO
+    #[clap(short = 'H', long)]
+    pub(crate) history_file: Option<String>,
 }

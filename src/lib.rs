@@ -9,6 +9,8 @@ use ollama::{handle_request, Error};
 
 pub async fn run() -> Result<(), Error> {
     env_logger::init();
-    handle_request(Args::parse())
-        .await
+    let args = Args::parse();
+    match &args.command {
+        Commands::Query(query_args) => handle_request(Args::parse(), query_args).await,
+    }
 }

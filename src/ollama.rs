@@ -1,5 +1,6 @@
 use super::args::Args;
 use super::config::read_config_file;
+use crate::args::QueryArgs;
 use log::{error, info};
 use ollama_rs::{
     error::OllamaError,
@@ -72,9 +73,9 @@ impl Display for Error {
 }
 
 // TODO: allow more prompt configurations
-fn generate_prompt(args: &Args) -> Result<String, Error> {
+fn generate_prompt(query_args: &QueryArgs) -> Result<String, Error> {
     let mut prompt = String::new();
-    if let Some(text_files) = &args.text_files {
+    if let Some(text_files) = &query_args.text_files {
         text_files.split(',').try_for_each(|file| {
             if prompt.is_empty() {
                 prompt.push_str("Considering the input:\n");
@@ -98,10 +99,10 @@ fn generate_prompt(args: &Args) -> Result<String, Error> {
             Ok::<(), Error>(())
         })?;
     }
-    prompt.push_str(&args.prompt);
-    if args.output_format != "text" {
+    prompt.push_str(&query_args.prompt);
+    if query_args.output_format != "text" {
         prompt.push_str("\nPlease generate your response in valid ");
-        prompt.push_str(&args.output_format);
+        prompt.push_str(&query_args.output_format);
         prompt.push_str(" output format.\n");
     }
     Ok(prompt)
@@ -141,8 +142,9 @@ async fn get_model_name(ollama: &Ollama, name: &str) -> Result<String, Error> {
 pub async fn get_generation_request<'a>(
     ollama: &'a Ollama,
     args: &'a Args,
+    query_args: &'a QueryArgs,
 ) -> Result<GenerationRequest<'a>, Error> {
-    let prompt = generate_prompt(args)?;
+    let prompt = generate_prompt(query_args)?;
     let options = if let Some(config_path) = &args.config {
         let mut defaults = serde_json::to_value(GenerationOptions::default())
             .map_err(Error::ConfigDeserializationError)?;
@@ -165,14 +167,14 @@ pub async fn get_generation_request<'a>(
     Ok(GenerationRequest::new(model_name, prompt).options(options))
 }
 
-pub async fn handle_request(args: Args) -> Result<(), Error> {
+pub async fn handle_request(args: Args, query_args: &QueryArgs) -> Result<(), Error> {
     let server = &args.server;
     let ollama: Ollama = server
         .rsplit_once(':')
         .and_then(|(host, port)| port.parse::<u16>().map(|p| Ollama::new(host, p)).ok())
         .ok_or_else(|| Error::OllamaServerError(server.to_string()))?;
 
-    let request = get_generation_request(&ollama, &args).await?;
+    let request = get_generation_request(&ollama, &args, query_args).await?;
     let mut stream = ollama
         .generate_stream(request)
         .await
