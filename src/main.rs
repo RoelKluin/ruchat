@@ -1,18 +1,21 @@
-use anyhow::{Context, Error as AnyError, Result, anyhow};
-use log::{error, info};
-use ollama_rs::{
-    Ollama,
-    generation::{completion::request::GenerationRequest, options::GenerationOptions, embeddings::request::GenerateEmbeddingsRequest},
-    headers::HeaderMap,
-};
-use tokio::io::{self, AsyncWriteExt};
-use tokio_stream::StreamExt;
+use anyhow::{anyhow, Context, Error as AnyError, Result};
 use chromadb::{
     client::{ChromaAuthMethod, ChromaClient, ChromaClientOptions, ChromaTokenHeader},
-    collection::{ChromaCollection, GetResult, CollectionEntries},
+    collection::{ChromaCollection, CollectionEntries, GetResult},
 };
 use clap::Parser;
+use log::{error, info};
+use ollama_rs::{
+    generation::{
+        completion::request::GenerationRequest, embeddings::request::GenerateEmbeddingsRequest,
+        options::GenerationOptions,
+    },
+    headers::HeaderMap,
+    Ollama,
+};
 use serde_json::Value;
+use tokio::io::{self, AsyncWriteExt};
+use tokio_stream::StreamExt;
 
 // https://ollama.com/blog/embedding-models
 
@@ -21,7 +24,7 @@ struct Args {
     #[clap(short, long)]
     prompt: String,
 
-    #[clap(short, long, default_value = "qwen2.5-coder:14b")]
+    #[clap(short, long, default_value = "qwen2.5-coder:32b")]
     model: String,
 
     /// Request a certain output format, the default leaves the text as is
@@ -48,7 +51,7 @@ struct Args {
     #[clap(short, long)]
     chroma_token: Option<String>,
 
-    #[clap(short, long, default_value = "http://172.30.138.132:11434")]
+    #[clap(short, long, default_value = "http://0.0.0.0:11434")]
     server: String,
 
     /// Path to a JSON file to amend default generation options, listed in
@@ -100,8 +103,10 @@ fn generate_prompt(args: &Args) -> Result<String> {
                 prompt.push_str(file);
             }
             prompt.push_str("\n```\n");
-            prompt.push_str(&std::fs::read_to_string(file)
-                .with_context(|| format!("Failed to read file: {file}"))?);
+            prompt.push_str(
+                &std::fs::read_to_string(file)
+                    .with_context(|| format!("Failed to read file: {file}"))?,
+            );
             prompt.push_str("\n```\n");
             Ok::<(), AnyError>(())
         })?;
@@ -117,7 +122,7 @@ fn generate_prompt(args: &Args) -> Result<String> {
 
 /// access a running chroma server to store and retrieve data for embeddings
 // You can use the following docker command to run a chroma database:
-// docker build chromadb/chroma
+// docker pull chromadb/chroma
 // # with auth using tokens and persistent storage:
 // docker run -p 8000:8000 -e chroma_server_auth_credentials_provider="chromadb.auth.token.tokenconfigserverauthcredentialsprovider" -e chroma_server_auth_provider="chromadb.auth.token.tokenauthserverprovider" -e chroma_server_auth_token_transport_header="$(sed -n 1p ~/.chroma_creds.txt)" -e chroma_server_auth_credentials="$(sed -n 2p ~/.chroma_creds.txt)" -v ~/chroma_storage/:/chroma/chroma chromadb/chroma
 async fn create_chroma_client(args: &Args) -> Result<ChromaClient> {
@@ -129,7 +134,8 @@ async fn create_chroma_client(args: &Args) -> Result<ChromaClient> {
                 token: token.clone(),
                 header: ChromaTokenHeader::Authorization,
             },
-        }).await
+        })
+        .await
     } else {
         // Defaults to http://localhost:8000
         ChromaClient::new(Default::default()).await
@@ -142,7 +148,10 @@ async fn read_config_file(config_path: &str) -> Result<serde_json::Value> {
         .with_context(|| format!("Failed to parse config file at {}", config_path))
 }
 
-async fn get_generation_request<'a>(ollama: &'a Ollama, args: &'a Args) -> Result<GenerationRequest<'a>> {
+async fn get_generation_request<'a>(
+    ollama: &'a Ollama,
+    args: &'a Args,
+) -> Result<GenerationRequest<'a>> {
     let prompt = generate_prompt(args)?;
     let options = if let Some(config_path) = &args.config {
         let mut defaults =
