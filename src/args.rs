@@ -34,6 +34,7 @@ pub enum Commands {
     /// Query command for specific tasks
     Query(QueryArgs),
     Chat(ChatArgs),
+    List,
 }
 
 #[derive(Parser, Debug)]
