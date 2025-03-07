@@ -5,6 +5,7 @@ pub mod config;
 pub mod error;
 pub mod ollama;
 pub mod ollama_chat;
+pub mod ollama_query;
 
 use args::Args;
 use clap::Parser;

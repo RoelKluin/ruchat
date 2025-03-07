@@ -32,5 +32,6 @@ pub async fn chat(ollama: Ollama, args: &Args, _chat_args: &ChatArgs) -> Result<
             response += res.message.content.as_str();
         }
     }
+    dbg!(&history.lock().unwrap());
     Ok(())
 }

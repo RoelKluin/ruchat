@@ -1,53 +1,9 @@
-use crate::args::{Args, Commands, QueryArgs};
-use crate::chat_io::ChatIO;
-use crate::config::read_config_file;
+use crate::args::{Args, Commands};
 use crate::error::Error;
 use crate::ollama_chat::chat;
+use crate::ollama_query::query;
 use log::info;
-use ollama_rs::{
-    generation::{completion::request::GenerationRequest, options::GenerationOptions},
-    Ollama,
-};
-use serde_json::Value;
-use std::sync::{Arc, Mutex};
-use std::{fs, io::Read};
-use tokio_stream::StreamExt;
-
-// TODO: allow more prompt configurations
-fn generate_prompt(query_args: &QueryArgs) -> Result<String, Error> {
-    let mut prompt = String::new();
-    if let Some(text_files) = &query_args.text_files {
-        text_files.split(',').try_for_each(|file| {
-            if prompt.is_empty() {
-                prompt.push_str("Considering the input:\n");
-            }
-
-            let content = if file == "-" {
-                prompt.push_str("stdin:");
-                let stdin = std::io::stdin();
-                let mut handle = stdin.lock();
-                let mut content = String::new();
-                handle.read_to_string(&mut content)?;
-                content
-            } else {
-                prompt.push_str("file: ");
-                prompt.push_str(file);
-                fs::read_to_string(file)?
-            };
-            prompt.push_str("\n```\n");
-            prompt.push_str(&content);
-            prompt.push_str("\n```\n");
-            Ok::<(), Error>(())
-        })?;
-    }
-    prompt.push_str(&query_args.prompt);
-    if query_args.output_format != "text" {
-        prompt.push_str("\nPlease generate your response in valid ");
-        prompt.push_str(&query_args.output_format);
-        prompt.push_str(" output format.\n");
-    }
-    Ok(prompt)
-}
+use ollama_rs::Ollama;
 
 pub async fn get_model_name(ollama: &Ollama, name: &str) -> Result<String, Error> {
     if name.is_empty()
@@ -80,33 +36,6 @@ pub async fn get_model_name(ollama: &Ollama, name: &str) -> Result<String, Error
     }
 }
 
-pub async fn get_generation_request<'a>(
-    args: &'a Args,
-    model_name: &str,
-    query_args: &QueryArgs,
-) -> Result<GenerationRequest<'a>, Error> {
-    let options = if let Some(config_path) = &args.config {
-        let mut defaults = serde_json::to_value(GenerationOptions::default())
-            .map_err(Error::ConfigDeserializationError)?;
-
-        if let Value::Object(ref mut defaults) = defaults {
-            let updates = read_config_file(config_path).await?;
-            if let Value::Object(config_updates) = updates {
-                for (k, v) in config_updates.into_iter() {
-                    if defaults.contains_key(&k) && !v.is_null() {
-                        defaults[&k] = v.clone();
-                    }
-                }
-            }
-        }
-        serde_json::from_value(defaults).map_err(Error::ConfigDeserializationError)?
-    } else {
-        GenerationOptions::default()
-    };
-    generate_prompt(query_args)
-        .map(|prompt| GenerationRequest::new(model_name.to_string(), prompt).options(options))
-}
-
 pub async fn handle_request(args: Args) -> Result<(), Error> {
     let server = &args.server;
     let ollama: Ollama = server
@@ -114,26 +43,9 @@ pub async fn handle_request(args: Args) -> Result<(), Error> {
         .and_then(|(host, port)| port.parse::<u16>().map(|p| Ollama::new(host, p)).ok())
         .ok_or_else(|| Error::OllamaServerError(server.to_string()))?;
 
-    let mut cio = ChatIO::new();
-
-    let history = Arc::new(Mutex::<Vec<String>>::new(Vec::new()));
-    let model_name = get_model_name(&ollama, &args.model).await?;
     match args.command {
-        Commands::Query(ref query_args) => {
-            let request = get_generation_request(&args, &model_name, query_args).await?;
-            let mut stream = ollama
-                .generate_stream(request)
-                .await
-                .map_err(|_| Error::StreamWriteError(std::io::ErrorKind::Other.into()))?;
-            while let Some(res) = stream.next().await {
-                let responses = res?;
-                for resp in responses {
-                    cio.write_line(&resp.response).await?;
-                }
-            }
-        }
+        Commands::Query(ref query_args) => query(ollama, &args, query_args).await?,
         Commands::Chat(ref chat_args) => chat(ollama, &args, chat_args).await?,
     }
-    dbg!(&history.lock().unwrap());
     Ok(())
 }
