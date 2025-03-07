@@ -2,7 +2,6 @@ use crate::args::{Args, Commands};
 use crate::error::Error;
 use crate::ollama_chat::chat;
 use crate::ollama_query::query;
-use log::info;
 use ollama_rs::Ollama;
 
 pub async fn get_model_name(ollama: &Ollama, name: &str) -> Result<String, Error> {
@@ -13,16 +12,17 @@ pub async fn get_model_name(ollama: &Ollama, name: &str) -> Result<String, Error
     {
         return Err(Error::InvalidModelName(name.to_string()));
     }
-    info!("Model: {}", name);
     let model_list = ollama
         .list_local_models()
         .await
         .map_err(|_| Error::ModelNotFound(name.to_string()))?;
-    let model = if name.contains(":") {
-        model_list.iter().find(|m| m.name == name)
-    } else {
-        model_list.iter().find(|m| m.name.starts_with(name))
-    };
+    let model = model_list.iter().find(|m| {
+        if name.contains(":") {
+            m.name == name
+        } else {
+            m.name.starts_with(name)
+        }
+    });
 
     match model {
         Some(model) => Ok(model.name.clone()),
@@ -30,7 +30,7 @@ pub async fn get_model_name(ollama: &Ollama, name: &str) -> Result<String, Error
             ollama
                 .pull_model(name.to_string(), false)
                 .await
-                .map_err(|_| Error::ModelPullError(name.to_string()))?;
+                .map_err(Error::OllamaError)?;
             Box::pin(get_model_name(ollama, name)).await
         }
     }
@@ -41,7 +41,7 @@ pub async fn handle_request(args: Args) -> Result<(), Error> {
     let ollama: Ollama = server
         .rsplit_once(':')
         .and_then(|(host, port)| port.parse::<u16>().map(|p| Ollama::new(host, p)).ok())
-        .ok_or_else(|| Error::OllamaServerError(server.to_string()))?;
+        .ok_or_else(|| Error::ArgServerError(server.to_string()))?;
 
     match args.command {
         Commands::Query(ref query_args) => query(ollama, &args, query_args).await?,

@@ -77,12 +77,12 @@ pub async fn get_generation_request<'a>(
 }
 
 pub async fn query(ollama: Ollama, args: &Args, query_args: &QueryArgs) -> Result<(), Error> {
-    let mut cio = ChatIO::new();
     let request = get_generation_request(&ollama, args, query_args).await?;
     let mut stream = ollama
         .generate_stream(request)
         .await
         .map_err(|_| Error::StreamWriteError(std::io::ErrorKind::Other.into()))?;
+    let mut cio = ChatIO::new();
     while let Some(res) = stream.next().await {
         let responses = res?;
         for resp in responses {

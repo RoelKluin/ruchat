@@ -1,17 +1,19 @@
 use ollama_rs::error::OllamaError;
 use std::fmt::{self, Display, Formatter};
+use std::io::Error as IoError;
 
 #[derive(Debug)]
 pub enum Error {
     InvalidModelName(String),
     ModelNotFound(String),
-    FileReadError(std::io::Error),
+    FileReadError(IoError),
     ConfigSerializationError(serde_json::Error),
     ConfigDeserializationError(serde_json::Error),
     ModelPullError(String),
-    OllamaServerError(String),
-    ReadError(String, std::io::Error),
-    StreamWriteError(std::io::Error),
+    OllamaError(OllamaError),
+    ArgServerError(String),
+    ReadError(String, IoError),
+    StreamWriteError(IoError),
 }
 
 impl From<std::io::Error> for Error {
@@ -32,9 +34,7 @@ impl From<serde_json::Error> for Error {
 
 impl From<OllamaError> for Error {
     fn from(err: OllamaError) -> Self {
-        match err {
-            _ => todo!(),
-        }
+        Error::OllamaError(err)
     }
 }
 
@@ -49,9 +49,10 @@ impl Display for Error {
                 write!(f, "Failed to deserialize config: {}", e)
             }
             Error::ModelPullError(name) => write!(f, "Failed to pull model: {}", name),
-            Error::OllamaServerError(server) => write!(f, "Invalid Ollama server: {}", server),
             Error::ReadError(file, e) => write!(f, "Failed to read {}: {}", file, e),
             Error::StreamWriteError(e) => write!(f, "Failed to write to stream: {}", e),
+            Error::OllamaError(e) => write!(f, "Ollama error: {}", e),
+            Error::ArgServerError(e) => write!(f, "Unable to parse arg --server: '{}'", e),
         }
     }
 }
