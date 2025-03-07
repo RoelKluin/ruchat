@@ -27,10 +27,7 @@ pub async fn get_model_name(ollama: &Ollama, name: &str) -> Result<String, RuCha
     match model {
         Some(model) => Ok(model.name.clone()),
         None => {
-            ollama
-                .pull_model(name.to_string(), false)
-                .await
-                .map_err(RuChatError::OllamaError)?;
+            ollama.pull_model(name.to_string(), false).await?;
             Box::pin(get_model_name(ollama, name)).await
         }
     }

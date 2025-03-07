@@ -54,8 +54,7 @@ pub async fn get_generation_request<'a>(
     query_args: &QueryArgs,
 ) -> Result<GenerationRequest<'a>, RuChatError> {
     let options = if let Some(config_path) = &args.config {
-        let mut defaults =
-            serde_json::to_value(GenerationOptions::default()).map_err(RuChatError::SerdeError)?;
+        let mut defaults = serde_json::to_value(GenerationOptions::default())?;
 
         if let Value::Object(ref mut defaults) = defaults {
             let updates = read_config_file(config_path).await?;
@@ -67,21 +66,18 @@ pub async fn get_generation_request<'a>(
                 }
             }
         }
-        serde_json::from_value(defaults).map_err(RuChatError::SerdeError)?
+        serde_json::from_value(defaults)?
     } else {
         GenerationOptions::default()
     };
     let model_name = get_model_name(ollama, &args.model).await?;
-    generate_prompt(query_args)
-        .map(|prompt| GenerationRequest::new(model_name, prompt).options(options))
+    let prompt = generate_prompt(query_args)?;
+    Ok(GenerationRequest::new(model_name, prompt).options(options))
 }
 
 pub async fn query(ollama: Ollama, args: &Args, query_args: &QueryArgs) -> Result<(), RuChatError> {
     let request = get_generation_request(&ollama, args, query_args).await?;
-    let mut stream = ollama
-        .generate_stream(request)
-        .await
-        .map_err(|_| RuChatError::StreamWriteError(std::io::ErrorKind::Other.into()))?;
+    let mut stream = ollama.generate_stream(request).await?;
     let mut cio = ChatIO::new();
     while let Some(res) = stream.next().await {
         let responses = res?;

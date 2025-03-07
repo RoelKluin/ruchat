@@ -23,8 +23,7 @@ pub async fn chat(ollama: Ollama, args: &Args, _chat_args: &ChatArgs) -> Result<
         let request = get_chat_message_request(model_name.to_string(), input.to_string());
         let mut stream = ollama
             .send_chat_messages_with_history_stream(history.clone(), request)
-            .await
-            .map_err(|_| RuChatError::StreamWriteError(std::io::ErrorKind::Other.into()))?;
+            .await?;
 
         let mut response = String::new();
         while let Some(Ok(res)) = stream.next().await {
