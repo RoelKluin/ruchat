@@ -7,16 +7,21 @@ use ollama_rs::Ollama;
 use std::sync::{Arc, Mutex};
 use tokio_stream::StreamExt;
 
-pub fn get_chat_message_request(model_name: String, prompt: String) -> ChatMessageRequest {
+fn get_chat_message_request(model_name: String, prompt: String) -> ChatMessageRequest {
     ChatMessageRequest::new(model_name, vec![ChatMessage::user(prompt)])
 }
 
-pub async fn chat(ollama: Ollama, args: &Args, _chat_args: &ChatArgs) -> Result<(), RuChatError> {
-    let mut cio = ChatIO::new();
+pub(crate) async fn chat(
+    ollama: Ollama,
+    args: &Args,
+    _chat_args: &ChatArgs,
+) -> Result<(), RuChatError> {
     let history = Arc::new(Mutex::new(vec![]));
     let model_name = get_model_name(&ollama, &args.model).await?;
+    let mut cio = ChatIO::new();
+    cio.write_line("Enter prompt or 'q' to quit:").await?;
     loop {
-        let input = cio.read_line().await?;
+        let input = cio.read_line(true).await?;
         if input.eq_ignore_ascii_case("q") {
             break;
         }

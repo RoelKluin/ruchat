@@ -41,8 +41,9 @@ pub async fn handle_request(args: Args) -> Result<(), RuChatError> {
         .ok_or_else(|| RuChatError::ArgServerError(server.to_string()))?;
 
     match args.command {
-        Commands::Query(ref query_args) => query(ollama, &args, query_args).await?,
-        Commands::Chat(ref chat_args) => chat(ollama, &args, chat_args).await?,
+        Some(Commands::Query(ref query_args)) => query(ollama, &args, Some(query_args)).await?,
+        Some(Commands::Chat(ref chat_args)) => chat(ollama, &args, chat_args).await?,
+        None => query(ollama, &args, None).await?,
     }
     Ok(())
 }

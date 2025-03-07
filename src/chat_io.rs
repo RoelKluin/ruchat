@@ -15,10 +15,11 @@ impl ChatIO {
         }
     }
 
-    pub(crate) async fn read_line(&mut self) -> Result<String, RuChatError> {
-        self.stdout.write_all(b"\n> ").await?;
-        self.stdout.flush().await?;
-
+    pub(crate) async fn read_line(&mut self, with_prompt: bool) -> Result<String, RuChatError> {
+        if with_prompt {
+            self.stdout.write_all(b"\n> ").await?;
+            self.stdout.flush().await?;
+        }
         let mut input = String::new();
         self.stdin.read_line(&mut input)?;
         Ok(input.trim_end().to_string())

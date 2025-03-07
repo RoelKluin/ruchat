@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 #[derive(Parser, Debug)]
 pub struct Args {
     #[clap(subcommand)]
-    pub command: Commands,
+    pub command: Option<Commands>,
 
     #[clap(short, long, default_value = "qwen2.5-coder:32b")]
     pub(crate) model: String,
@@ -38,7 +38,7 @@ pub enum Commands {
 
 #[derive(Parser, Debug)]
 pub struct QueryArgs {
-    #[clap(short, long)]
+    #[clap(short, long, default_value = "What do you make of this?")]
     pub(crate) prompt: String,
 
     /// Request a certain output format, the default leaves the text as is
