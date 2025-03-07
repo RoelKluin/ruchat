@@ -9,10 +9,10 @@ pub mod ollama_query;
 
 use args::Args;
 use clap::Parser;
-use error::Error;
+use error::RuChatError;
 use ollama::handle_request;
 
-pub async fn run() -> Result<(), Error> {
+pub async fn run() -> Result<(), RuChatError> {
     env_logger::init();
     handle_request(Args::parse()).await
 }

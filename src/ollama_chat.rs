@@ -1,6 +1,6 @@
 use crate::args::{Args, ChatArgs};
 use crate::chat_io::ChatIO;
-use crate::error::Error;
+use crate::error::RuChatError;
 use crate::ollama::get_model_name;
 use ollama_rs::generation::chat::{request::ChatMessageRequest, ChatMessage};
 use ollama_rs::Ollama;
@@ -11,7 +11,7 @@ pub fn get_chat_message_request(model_name: String, prompt: String) -> ChatMessa
     ChatMessageRequest::new(model_name, vec![ChatMessage::user(prompt)])
 }
 
-pub async fn chat(ollama: Ollama, args: &Args, _chat_args: &ChatArgs) -> Result<(), Error> {
+pub async fn chat(ollama: Ollama, args: &Args, _chat_args: &ChatArgs) -> Result<(), RuChatError> {
     let mut cio = ChatIO::new();
     let history = Arc::new(Mutex::new(vec![]));
     let model_name = get_model_name(&ollama, &args.model).await?;
@@ -24,7 +24,7 @@ pub async fn chat(ollama: Ollama, args: &Args, _chat_args: &ChatArgs) -> Result<
         let mut stream = ollama
             .send_chat_messages_with_history_stream(history.clone(), request)
             .await
-            .map_err(|_| Error::StreamWriteError(std::io::ErrorKind::Other.into()))?;
+            .map_err(|_| RuChatError::StreamWriteError(std::io::ErrorKind::Other.into()))?;
 
         let mut response = String::new();
         while let Some(Ok(res)) = stream.next().await {

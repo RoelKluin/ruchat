@@ -1,4 +1,4 @@
-use crate::error::Error;
+use crate::error::RuChatError;
 use std::io::stdin;
 use tokio::io::AsyncWriteExt;
 
@@ -15,7 +15,7 @@ impl ChatIO {
         }
     }
 
-    pub(crate) async fn read_line(&mut self) -> Result<String, Error> {
+    pub(crate) async fn read_line(&mut self) -> Result<String, RuChatError> {
         self.stdout.write_all(b"\n> ").await?;
         self.stdout.flush().await?;
 
@@ -24,7 +24,7 @@ impl ChatIO {
         Ok(input.trim_end().to_string())
     }
 
-    pub(crate) async fn write_line(&mut self, line: &str) -> Result<(), Error> {
+    pub(crate) async fn write_line(&mut self, line: &str) -> Result<(), RuChatError> {
         self.stdout.write_all(line.as_bytes()).await?;
         self.stdout.flush().await?;
         Ok(())

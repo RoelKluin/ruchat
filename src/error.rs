@@ -1,58 +1,44 @@
 use ollama_rs::error::OllamaError;
-use std::fmt::{self, Display, Formatter};
+use serde_json::error::Error as SerdeError;
 use std::io::Error as IoError;
+use thiserror::Error;
 
-#[derive(Debug)]
-pub enum Error {
+#[derive(Error, Debug)]
+pub enum RuChatError {
+    #[error("Invalid model name: {0}")]
     InvalidModelName(String),
+    #[error("Model not found: {0}")]
     ModelNotFound(String),
+    #[error("Failed to read file: {0}")]
     FileReadError(IoError),
-    ConfigSerializationError(serde_json::Error),
-    ConfigDeserializationError(serde_json::Error),
+    #[error("Serde error: {0}")]
+    SerdeError(SerdeError),
+    #[error("Failed to read file: {0}")]
     ModelPullError(String),
+    #[error("Ollama error: {0}")]
     OllamaError(OllamaError),
+    #[error("Unable to parse arg --server: '{0}'")]
     ArgServerError(String),
+    #[error("Failed to read {0}: {1}")]
     ReadError(String, IoError),
+    #[error("Failed to write to stream: {0}")]
     StreamWriteError(IoError),
 }
 
-impl From<std::io::Error> for Error {
-    fn from(err: std::io::Error) -> Self {
-        Error::StreamWriteError(err)
+impl From<std::io::Error> for RuChatError {
+    fn from(err: IoError) -> Self {
+        RuChatError::StreamWriteError(err)
     }
 }
 
-impl From<serde_json::Error> for Error {
-    fn from(err: serde_json::Error) -> Self {
-        if err.is_data() || err.is_syntax() {
-            Error::ConfigDeserializationError(err)
-        } else {
-            Error::ConfigSerializationError(err)
-        }
-    }
-}
-
-impl From<OllamaError> for Error {
+impl From<OllamaError> for RuChatError {
     fn from(err: OllamaError) -> Self {
-        Error::OllamaError(err)
+        RuChatError::OllamaError(err)
     }
 }
 
-impl Display for Error {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        match self {
-            Error::InvalidModelName(name) => write!(f, "Invalid model name: {}", name),
-            Error::ModelNotFound(name) => write!(f, "Model not found: {}", name),
-            Error::FileReadError(e) => write!(f, "Failed to read file: {}", e),
-            Error::ConfigSerializationError(e) => write!(f, "Failed to serialize config: {}", e),
-            Error::ConfigDeserializationError(e) => {
-                write!(f, "Failed to deserialize config: {}", e)
-            }
-            Error::ModelPullError(name) => write!(f, "Failed to pull model: {}", name),
-            Error::ReadError(file, e) => write!(f, "Failed to read {}: {}", file, e),
-            Error::StreamWriteError(e) => write!(f, "Failed to write to stream: {}", e),
-            Error::OllamaError(e) => write!(f, "Ollama error: {}", e),
-            Error::ArgServerError(e) => write!(f, "Unable to parse arg --server: '{}'", e),
-        }
+impl From<SerdeError> for RuChatError {
+    fn from(err: SerdeError) -> Self {
+        RuChatError::SerdeError(err)
     }
 }
