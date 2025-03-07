@@ -1,4 +1,5 @@
 pub mod args;
+pub mod chat_io;
 pub mod chroma;
 pub mod config;
 pub mod ollama;

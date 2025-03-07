@@ -1,25 +1,20 @@
 use super::args::Args;
 use super::config::read_config_file;
-use crate::args::{ChatArgs, Commands, QueryArgs};
+use crate::args::{Commands, QueryArgs};
+use crate::chat_io::ChatIO;
 use crate::ollama_error::Error;
-use log::{error, info};
+use log::info;
 use ollama_rs::{
     generation::{
-        chat::{request::ChatMessageRequest, ChatMessage, ChatMessageResponseStream},
+        chat::{request::ChatMessageRequest, ChatMessage},
         completion::request::GenerationRequest,
-        embeddings::request::GenerateEmbeddingsRequest,
         options::GenerationOptions,
     },
-    headers::HeaderMap,
     Ollama,
 };
 use serde_json::Value;
 use std::sync::{Arc, Mutex};
-use std::{
-    fs,
-    io::{stdin, Read},
-};
-use tokio::io::AsyncWriteExt;
+use std::{fs, io::Read};
 use tokio_stream::StreamExt;
 
 // TODO: allow more prompt configurations
@@ -92,7 +87,7 @@ async fn get_model_name(ollama: &Ollama, name: &str) -> Result<String, Error> {
 pub async fn get_generation_request<'a>(
     args: &'a Args,
     model_name: &str,
-    prompt: String,
+    query_args: &QueryArgs,
 ) -> Result<GenerationRequest<'a>, Error> {
     let options = if let Some(config_path) = &args.config {
         let mut defaults = serde_json::to_value(GenerationOptions::default())
@@ -112,7 +107,8 @@ pub async fn get_generation_request<'a>(
     } else {
         GenerationOptions::default()
     };
-    Ok(GenerationRequest::new(model_name.to_string(), prompt).options(options))
+    generate_prompt(query_args)
+        .map(|prompt| GenerationRequest::new(model_name.to_string(), prompt).options(options))
 }
 
 pub fn get_chat_message_request(model_name: &str, prompt: String) -> ChatMessageRequest {
@@ -126,47 +122,13 @@ pub async fn handle_request(args: Args) -> Result<(), Error> {
         .and_then(|(host, port)| port.parse::<u16>().map(|p| Ollama::new(host, p)).ok())
         .ok_or_else(|| Error::OllamaServerError(server.to_string()))?;
 
-    let mut stdout = tokio::io::stdout();
-    let stdin = stdin();
+    let mut cio = ChatIO::new();
+
     let history = Arc::new(Mutex::new(vec![]));
     let model_name = get_model_name(&ollama, &args.model).await?;
-    let mut do_chat = true;
-    while do_chat {
-        let prompt = match &args.command {
-            Commands::Query(query_args) => {
-                do_chat = false;
-                generate_prompt(&query_args)?
-            }
-            Commands::Chat(_chat_args) => {
-                stdout.write_all(b"\n> ").await?;
-                stdout.flush().await?;
-
-                let mut input = String::new();
-                stdin.read_line(&mut input)?;
-
-                let input = input.trim_end();
-                if input.eq_ignore_ascii_case("q") {
-                    break;
-                }
-                input.to_string()
-            }
-        };
-
-        if do_chat {
-            let request = get_chat_message_request(&model_name, prompt);
-            let mut stream = ollama
-                .send_chat_messages_with_history_stream(history.clone(), request)
-                .await
-                .map_err(|_| Error::StreamWriteError(std::io::ErrorKind::Other.into()))?;
-
-            let mut response = String::new();
-            while let Some(Ok(res)) = stream.next().await {
-                stdout.write_all(res.message.content.as_bytes()).await?;
-                stdout.flush().await?;
-                response += res.message.content.as_str();
-            }
-        } else {
-            let request = get_generation_request(&args, &model_name, prompt).await?;
+    match &args.command {
+        Commands::Query(query_args) => {
+            let request = get_generation_request(&args, &model_name, query_args).await?;
             let mut stream = ollama
                 .generate_stream(request)
                 .await
@@ -174,11 +136,27 @@ pub async fn handle_request(args: Args) -> Result<(), Error> {
             while let Some(res) = stream.next().await {
                 let responses = res?;
                 for resp in responses {
-                    stdout.write_all(resp.response.as_bytes()).await?;
-                    stdout.flush().await?;
+                    cio.write_line(&resp.response).await?;
                 }
             }
         }
+        Commands::Chat(_chat_args) => loop {
+            let input = cio.read_line().await?;
+            if input.eq_ignore_ascii_case("q") {
+                break;
+            }
+            let request = get_chat_message_request(&model_name, input.to_string());
+            let mut stream = ollama
+                .send_chat_messages_with_history_stream(history.clone(), request)
+                .await
+                .map_err(|_| Error::StreamWriteError(std::io::ErrorKind::Other.into()))?;
+
+            let mut response = String::new();
+            while let Some(Ok(res)) = stream.next().await {
+                cio.write_line(&res.message.content).await?;
+                response += res.message.content.as_str();
+            }
+        },
     }
     dbg!(&history.lock().unwrap());
     Ok(())
