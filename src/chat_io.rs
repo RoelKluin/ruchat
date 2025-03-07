@@ -1,4 +1,4 @@
-use crate::ollama_error::Error;
+use crate::error::Error;
 use std::io::stdin;
 use tokio::io::AsyncWriteExt;
 

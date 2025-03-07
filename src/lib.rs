@@ -2,13 +2,14 @@ pub mod args;
 pub mod chat_io;
 pub mod chroma;
 pub mod config;
+pub mod error;
 pub mod ollama;
-pub mod ollama_error;
+pub mod ollama_chat;
 
 use args::Args;
 use clap::Parser;
+use error::Error;
 use ollama::handle_request;
-use ollama_error::Error;
 
 pub async fn run() -> Result<(), Error> {
     env_logger::init();

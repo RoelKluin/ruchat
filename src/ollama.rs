@@ -1,15 +1,11 @@
-use super::args::Args;
-use super::config::read_config_file;
-use crate::args::{Commands, QueryArgs};
+use crate::args::{Args, Commands, QueryArgs};
 use crate::chat_io::ChatIO;
-use crate::ollama_error::Error;
+use crate::config::read_config_file;
+use crate::error::Error;
+use crate::ollama_chat::chat;
 use log::info;
 use ollama_rs::{
-    generation::{
-        chat::{request::ChatMessageRequest, ChatMessage},
-        completion::request::GenerationRequest,
-        options::GenerationOptions,
-    },
+    generation::{completion::request::GenerationRequest, options::GenerationOptions},
     Ollama,
 };
 use serde_json::Value;
@@ -53,7 +49,7 @@ fn generate_prompt(query_args: &QueryArgs) -> Result<String, Error> {
     Ok(prompt)
 }
 
-async fn get_model_name(ollama: &Ollama, name: &str) -> Result<String, Error> {
+pub async fn get_model_name(ollama: &Ollama, name: &str) -> Result<String, Error> {
     if name.is_empty()
         || !name
             .chars()
@@ -111,10 +107,6 @@ pub async fn get_generation_request<'a>(
         .map(|prompt| GenerationRequest::new(model_name.to_string(), prompt).options(options))
 }
 
-pub fn get_chat_message_request(model_name: &str, prompt: String) -> ChatMessageRequest {
-    ChatMessageRequest::new(model_name.to_string(), vec![ChatMessage::user(prompt)])
-}
-
 pub async fn handle_request(args: Args) -> Result<(), Error> {
     let server = &args.server;
     let ollama: Ollama = server
@@ -124,10 +116,10 @@ pub async fn handle_request(args: Args) -> Result<(), Error> {
 
     let mut cio = ChatIO::new();
 
-    let history = Arc::new(Mutex::new(vec![]));
+    let history = Arc::new(Mutex::<Vec<String>>::new(Vec::new()));
     let model_name = get_model_name(&ollama, &args.model).await?;
-    match &args.command {
-        Commands::Query(query_args) => {
+    match args.command {
+        Commands::Query(ref query_args) => {
             let request = get_generation_request(&args, &model_name, query_args).await?;
             let mut stream = ollama
                 .generate_stream(request)
@@ -140,23 +132,7 @@ pub async fn handle_request(args: Args) -> Result<(), Error> {
                 }
             }
         }
-        Commands::Chat(_chat_args) => loop {
-            let input = cio.read_line().await?;
-            if input.eq_ignore_ascii_case("q") {
-                break;
-            }
-            let request = get_chat_message_request(&model_name, input.to_string());
-            let mut stream = ollama
-                .send_chat_messages_with_history_stream(history.clone(), request)
-                .await
-                .map_err(|_| Error::StreamWriteError(std::io::ErrorKind::Other.into()))?;
-
-            let mut response = String::new();
-            while let Some(Ok(res)) = stream.next().await {
-                cio.write_line(&res.message.content).await?;
-                response += res.message.content.as_str();
-            }
-        },
+        Commands::Chat(ref chat_args) => chat(ollama, &args, chat_args).await?,
     }
     dbg!(&history.lock().unwrap());
     Ok(())

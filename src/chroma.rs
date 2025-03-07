@@ -1,4 +1,4 @@
-use super::args::Args;
+use crate::args::Args;
 use anyhow::Result;
 use chromadb::client::{ChromaAuthMethod, ChromaClient, ChromaClientOptions, ChromaTokenHeader};
 
