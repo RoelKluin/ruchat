@@ -1,4 +1,4 @@
-use crate::args::{Args, AskArgs};
+use crate::args::AskArgs;
 use crate::chat_io::ChatIO;
 use crate::config::read_config_file;
 use crate::error::RuChatError;
@@ -10,9 +10,9 @@ use std::{fs, io::Read};
 use tokio_stream::StreamExt;
 
 // TODO: allow more prompt configurations
-fn generate_prompt(ask_args: &AskArgs) -> Result<String, RuChatError> {
+fn generate_prompt(args: &AskArgs) -> Result<String, RuChatError> {
     let mut prompt = String::new();
-    if let Some(text_files) = &ask_args.text_files {
+    if let Some(text_files) = &args.text_files {
         text_files.split(',').try_for_each(|file| {
             if prompt.is_empty() {
                 prompt.push_str("Concerning:\n");
@@ -41,16 +41,15 @@ fn generate_prompt(ask_args: &AskArgs) -> Result<String, RuChatError> {
             Ok::<(), RuChatError>(())
         })?;
     }
-    prompt.push_str(&ask_args.prompt);
-    if ask_args.output_format != "text" {
-        prompt.push_str("\nPlease generate your response in valid ");
-        prompt.push_str(&ask_args.output_format);
-        prompt.push_str(" output format.\n");
-    }
+    let question = args
+        .prompt
+        .as_deref()
+        .unwrap_or("What do you make of this?");
+    prompt.push_str(question);
     Ok(prompt)
 }
 
-async fn get_options(args: &Args) -> Result<ModelOptions, RuChatError> {
+async fn get_options(args: &AskArgs) -> Result<ModelOptions, RuChatError> {
     if let Some(config_path) = &args.config {
         let mut defaults = serde_json::to_value(ModelOptions::default())?;
 
@@ -70,14 +69,10 @@ async fn get_options(args: &Args) -> Result<ModelOptions, RuChatError> {
     }
 }
 
-pub(crate) async fn ask(
-    ollama: Ollama,
-    args: &Args,
-    ask_args: Option<&AskArgs>,
-) -> Result<(), RuChatError> {
+pub(crate) async fn ask(ollama: Ollama, args: &AskArgs) -> Result<(), RuChatError> {
     let mut cio = ChatIO::new();
-    let prompt = if let Some(ask_args) = ask_args {
-        generate_prompt(ask_args)?
+    let mut prompt = if args.prompt.is_some() || args.text_files.is_some() {
+        generate_prompt(args)?
     } else {
         let mut input = String::new();
         while let Ok(line) = cio.read_line(false).await {
@@ -88,6 +83,11 @@ pub(crate) async fn ask(
         }
         input
     };
+    if args.output_format != "text" {
+        prompt.push_str("\nPlease generate your response in valid ");
+        prompt.push_str(&args.output_format);
+        prompt.push_str(" output format.\n");
+    }
     let model_name = get_model_name(&ollama, &args.model).await?;
     let request = GenerationRequest::new(model_name, prompt).options(get_options(args).await?);
     let mut stream = ollama.generate_stream(request).await?;

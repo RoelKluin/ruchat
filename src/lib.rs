@@ -17,5 +17,6 @@ use ollama::handle_request;
 
 pub async fn run() -> Result<(), RuChatError> {
     env_logger::init();
-    handle_request(Args::parse()).await
+    let args = Args::parse();
+    handle_request(&args).await
 }

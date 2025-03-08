@@ -1,4 +1,4 @@
-use crate::args::Args;
+use crate::args::FuncArgs;
 use crate::chat_io::ChatIO;
 use crate::error::RuChatError;
 use crate::ollama::get_model_name;
@@ -19,7 +19,7 @@ use ollama_rs::{
     tool_group, Ollama,
 };
 
-pub(crate) async fn func(ollama: Ollama, args: &Args) -> Result<(), RuChatError> {
+pub(crate) async fn func(ollama: Ollama, args: &FuncArgs) -> Result<(), RuChatError> {
     // browserless requires an BROWSERLESS_TOKEN=... environment variable
     let tools = tool_group![
         Calculator {},

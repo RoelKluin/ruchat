@@ -1,4 +1,5 @@
-use crate::args::{Args, Commands};
+use crate::args::{Args, AskArgs, Commands, PullArgs};
+use crate::chroma::query;
 use crate::error::RuChatError;
 use crate::ollama_ask::ask;
 use crate::ollama_chat::chat;
@@ -54,35 +55,46 @@ fn format_size(size: u64) -> String {
     }
 }
 
-pub async fn handle_request(args: Args) -> Result<(), RuChatError> {
+pub fn get_ollama(args: &Args) -> Result<Ollama, RuChatError> {
     let server = &args.server;
-    let ollama: Ollama = server
+    server
         .rsplit_once(':')
         .and_then(|(host, port)| port.parse::<u16>().map(|p| Ollama::new(host, p)).ok())
-        .ok_or_else(|| RuChatError::ArgServerError(server.to_string()))?;
+        .ok_or_else(|| RuChatError::ArgServerError(server.to_string()))
+}
 
-    match args.command {
-        Some(Commands::Ask(ref ask_args)) => ask(ollama, &args, Some(ask_args)).await?,
-        Some(Commands::Chat) => chat(ollama, &args).await?,
-        Some(Commands::Embed(ref embed_args)) => embed(ollama, &args, embed_args).await?,
-        Some(Commands::Func) => func(ollama, &args).await?,
-        Some(Commands::FuncStruct) => func_struct(ollama, &args).await?,
-        Some(Commands::List) => {
-            let models = ollama.list_local_models().await?;
-            let max_length = models.iter().map(|m| m.name.len()).max().unwrap_or(0);
-            println!("Model name{}Size", " ".repeat(max_length - 8));
-            for model in models {
-                let size = format_size(model.size);
-                let padding_length = max_length - model.name.len() + 6 - size.len();
-                let padding = " ".repeat(padding_length);
-                println!("{}{}{}", model.name, padding, size);
-            }
-        }
-        Some(Commands::Pull) => {
-            let model_name = get_model_name(&ollama, &args.model).await?;
-            ollama.pull_model(model_name, false).await?;
-        }
-        None => ask(ollama, &args, None).await?,
+async fn list_models(args: &Args) -> Result<(), RuChatError> {
+    let ollama = get_ollama(args)?;
+    let models = ollama.list_local_models().await?;
+    let max_length = models.iter().map(|m| m.name.len()).max().unwrap_or(0);
+    println!("Model name{}Size", " ".repeat(max_length - 8));
+    for model in models {
+        let size = format_size(model.size);
+        let padding_length = max_length - model.name.len() + 6 - size.len();
+        let padding = " ".repeat(padding_length);
+        println!("{}{}{}", model.name, padding, size);
+    }
+    Ok(())
+}
+
+async fn pull_model(args: &Args, pull_args: &PullArgs) -> Result<(), RuChatError> {
+    let ollama = get_ollama(args)?;
+    let model_name = get_model_name(&ollama, &pull_args.model).await?;
+    ollama.pull_model(model_name, false).await?;
+    Ok(())
+}
+
+pub async fn handle_request(args: &Args) -> Result<(), RuChatError> {
+    let default = Commands::Ask(AskArgs::default());
+    match args.command.as_ref().unwrap_or(&default) {
+        Commands::Ask(ask_args) => ask(get_ollama(args)?, ask_args).await?,
+        Commands::Chat(chat_args) => chat(get_ollama(args)?, chat_args).await?,
+        Commands::Embed(embed_args) => embed(get_ollama(args)?, embed_args).await?,
+        Commands::Func(func_args) => func(get_ollama(args)?, func_args).await?,
+        Commands::FuncStruct(func_args) => func_struct(get_ollama(args)?, func_args).await?,
+        Commands::List => list_models(args).await?,
+        Commands::Pull(pull_args) => pull_model(args, pull_args).await?,
+        Commands::Query(query_args) => query(query_args).await?,
     }
     Ok(())
 }

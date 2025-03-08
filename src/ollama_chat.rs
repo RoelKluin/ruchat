@@ -1,4 +1,4 @@
-use crate::args::Args;
+use crate::args::ChatArgs;
 use crate::chat_io::ChatIO;
 use crate::error::RuChatError;
 use crate::ollama::get_model_name;
@@ -11,7 +11,7 @@ fn get_chat_message_request(model_name: String, prompt: String) -> ChatMessageRe
     ChatMessageRequest::new(model_name, vec![ChatMessage::user(prompt)])
 }
 
-pub(crate) async fn chat(ollama: Ollama, args: &Args) -> Result<(), RuChatError> {
+pub(crate) async fn chat(ollama: Ollama, args: &ChatArgs) -> Result<(), RuChatError> {
     let history = Arc::new(Mutex::new(vec![]));
     let model_name = get_model_name(&ollama, &args.model).await?;
     let mut cio = ChatIO::new();

@@ -1,4 +1,4 @@
-use crate::args::Args;
+use crate::args::FuncStructArgs;
 use crate::chat_io::ChatIO;
 use crate::error::RuChatError;
 use crate::ollama::get_model_name;
@@ -28,7 +28,7 @@ async fn get_weather(city: String) -> Result<String, Box<dyn std::error::Error +
     )
 }
 
-pub(crate) async fn func_struct(ollama: Ollama, args: &Args) -> Result<(), RuChatError> {
+pub(crate) async fn func_struct(ollama: Ollama, args: &FuncStructArgs) -> Result<(), RuChatError> {
     // browserless requires an BROWSERLESS_TOKEN=... environment variable
     let tools = tool_group![get_weather];
     let history = vec![];
