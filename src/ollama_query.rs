@@ -3,10 +3,7 @@ use crate::chat_io::ChatIO;
 use crate::config::read_config_file;
 use crate::error::RuChatError;
 use crate::ollama::get_model_name;
-use ollama_rs::{
-    generation::{completion::request::GenerationRequest, options::GenerationOptions},
-    Ollama,
-};
+use ollama_rs::{generation::completion::request::GenerationRequest, models::ModelOptions, Ollama};
 use serde_json::Value;
 use std::iter::Iterator;
 use std::{fs, io::Read};
@@ -53,9 +50,9 @@ fn generate_prompt(query_args: &QueryArgs) -> Result<String, RuChatError> {
     Ok(prompt)
 }
 
-async fn get_options(args: &Args) -> Result<GenerationOptions, RuChatError> {
+async fn get_options(args: &Args) -> Result<ModelOptions, RuChatError> {
     if let Some(config_path) = &args.config {
-        let mut defaults = serde_json::to_value(GenerationOptions::default())?;
+        let mut defaults = serde_json::to_value(ModelOptions::default())?;
 
         if let Value::Object(ref mut defaults) = defaults {
             let updates = read_config_file(config_path).await?;
@@ -69,7 +66,7 @@ async fn get_options(args: &Args) -> Result<GenerationOptions, RuChatError> {
         }
         serde_json::from_value(defaults).map_err(RuChatError::SerdeError)
     } else {
-        Ok(GenerationOptions::default())
+        Ok(ModelOptions::default())
     }
 }
 

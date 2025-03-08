@@ -32,8 +32,9 @@ pub struct Args {
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Query command for specific tasks
+    Chat,
+    Func,
     Query(QueryArgs),
-    Chat(ChatArgs),
     List,
 }
 
@@ -52,11 +53,5 @@ pub struct QueryArgs {
 
     /// History file to use as input - invokes chat mode. #TODO
     #[clap(short = 'H', long)]
-    pub(crate) history_file: Option<String>,
-}
-
-#[derive(Parser, Debug)]
-pub struct ChatArgs {
-    #[clap(short, long)]
     pub(crate) history_file: Option<String>,
 }

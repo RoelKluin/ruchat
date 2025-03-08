@@ -1,6 +1,7 @@
 use crate::args::{Args, Commands};
 use crate::error::RuChatError;
 use crate::ollama_chat::chat;
+use crate::ollama_func::func;
 use crate::ollama_query::query;
 use ollama_rs::Ollama;
 
@@ -59,8 +60,9 @@ pub async fn handle_request(args: Args) -> Result<(), RuChatError> {
         .ok_or_else(|| RuChatError::ArgServerError(server.to_string()))?;
 
     match args.command {
+        Some(Commands::Chat) => chat(ollama, &args).await?,
+        Some(Commands::Func) => func(ollama, &args).await?,
         Some(Commands::Query(ref query_args)) => query(ollama, &args, Some(query_args)).await?,
-        Some(Commands::Chat(ref chat_args)) => chat(ollama, &args, chat_args).await?,
         Some(Commands::List) => {
             let models = ollama.list_local_models().await?;
             let max_length = models.iter().map(|m| m.name.len()).max().unwrap_or(0);
