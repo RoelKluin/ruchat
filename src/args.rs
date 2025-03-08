@@ -34,6 +34,7 @@ pub enum Commands {
     /// Query command for specific tasks
     Chat,
     Func,
+    FuncStruct,
     Query(QueryArgs),
     List,
     Embed,

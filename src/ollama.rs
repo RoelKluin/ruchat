@@ -3,6 +3,7 @@ use crate::error::RuChatError;
 use crate::ollama_chat::chat;
 use crate::ollama_embed::embed;
 use crate::ollama_func::func;
+use crate::ollama_func_struct::func_struct;
 use crate::ollama_query::query;
 use ollama_rs::Ollama;
 
@@ -64,6 +65,7 @@ pub async fn handle_request(args: Args) -> Result<(), RuChatError> {
         Some(Commands::Chat) => chat(ollama, &args).await?,
         Some(Commands::Embed) => embed(ollama, &args).await?,
         Some(Commands::Func) => func(ollama, &args).await?,
+        Some(Commands::FuncStruct) => func_struct(ollama, &args).await?,
         Some(Commands::Query(ref query_args)) => query(ollama, &args, Some(query_args)).await?,
         Some(Commands::List) => {
             let models = ollama.list_local_models().await?;
