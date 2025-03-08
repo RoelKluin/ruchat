@@ -36,6 +36,7 @@ pub enum Commands {
     Func,
     Query(QueryArgs),
     List,
+    Embed,
 }
 
 #[derive(Parser, Debug)]
