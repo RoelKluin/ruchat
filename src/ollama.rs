@@ -62,11 +62,11 @@ pub async fn handle_request(args: Args) -> Result<(), RuChatError> {
         .ok_or_else(|| RuChatError::ArgServerError(server.to_string()))?;
 
     match args.command {
+        Some(Commands::Ask(ref ask_args)) => ask(ollama, &args, Some(ask_args)).await?,
         Some(Commands::Chat) => chat(ollama, &args).await?,
         Some(Commands::Embed(ref embed_args)) => embed(ollama, &args, embed_args).await?,
         Some(Commands::Func) => func(ollama, &args).await?,
         Some(Commands::FuncStruct) => func_struct(ollama, &args).await?,
-        Some(Commands::Ask(ref ask_args)) => ask(ollama, &args, Some(ask_args)).await?,
         Some(Commands::List) => {
             let models = ollama.list_local_models().await?;
             let max_length = models.iter().map(|m| m.name.len()).max().unwrap_or(0);
@@ -77,6 +77,10 @@ pub async fn handle_request(args: Args) -> Result<(), RuChatError> {
                 let padding = " ".repeat(padding_length);
                 println!("{}{}{}", model.name, padding, size);
             }
+        }
+        Some(Commands::Pull) => {
+            let model_name = get_model_name(&ollama, &args.model).await?;
+            ollama.pull_model(model_name, false).await?;
         }
         None => ask(ollama, &args, None).await?,
     }

@@ -32,12 +32,13 @@ pub struct Args {
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Query command for specific tasks
+    Ask(AskArgs),
     Chat,
+    Embed(EmbedArgs),
     Func,
     FuncStruct,
-    Ask(AskArgs),
     List,
-    Embed(EmbedArgs),
+    Pull,
 }
 
 #[derive(Parser, Debug)]
