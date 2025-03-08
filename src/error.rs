@@ -4,6 +4,8 @@ use thiserror::Error;
 pub enum RuChatError {
     #[error("Invalid model name: {0}")]
     InvalidModelName(String),
+    #[error("Invalid metadata: {0}")]
+    InvalidMetadata(String),
     #[error("Model not found: {0}")]
     ModelNotFound(String),
     #[error("Input/output error: {0}")]

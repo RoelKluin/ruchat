@@ -63,7 +63,7 @@ pub async fn handle_request(args: Args) -> Result<(), RuChatError> {
 
     match args.command {
         Some(Commands::Chat) => chat(ollama, &args).await?,
-        Some(Commands::Embed) => embed(ollama, &args).await?,
+        Some(Commands::Embed(ref embed_args)) => embed(ollama, &args, embed_args).await?,
         Some(Commands::Func) => func(ollama, &args).await?,
         Some(Commands::FuncStruct) => func_struct(ollama, &args).await?,
         Some(Commands::Query(ref query_args)) => query(ollama, &args, Some(query_args)).await?,

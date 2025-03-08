@@ -1,6 +1,7 @@
 use crate::args::Args;
 use anyhow::Result;
 use chromadb::client::{ChromaAuthMethod, ChromaClient, ChromaClientOptions, ChromaTokenHeader};
+use chromadb::collection::{ChromaCollection, CollectionEntries, GetOptions, GetResult};
 
 /// access a running chroma server to store and retrieve data for embeddings
 // You can use the following docker command to run a chroma database:
@@ -22,4 +23,16 @@ pub async fn create_chroma_client(args: &Args) -> Result<ChromaClient> {
         // Defaults to http://localhost:8000
         ChromaClient::new(Default::default()).await
     }
+}
+
+/// Create a collection in the chroma database
+pub async fn get_or_create_chroma_collection(
+    client: &ChromaClient,
+    collection: &str,
+) -> Result<String> {
+    // Get or create a collection with the given name and no metadata.
+    let collection: ChromaCollection = client.get_or_create_collection(collection, None).await?;
+
+    // Get the UUID of the collection
+    Ok(collection.id().to_string())
 }

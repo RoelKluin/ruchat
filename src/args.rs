@@ -37,7 +37,7 @@ pub enum Commands {
     FuncStruct,
     Query(QueryArgs),
     List,
-    Embed,
+    Embed(EmbedArgs),
 }
 
 #[derive(Parser, Debug)]
@@ -52,8 +52,18 @@ pub struct QueryArgs {
     /// Text files to use as input, seperated by commas
     #[clap(short = 'i', long)]
     pub(crate) text_files: Option<String>,
+}
 
-    /// History file to use as input - invokes chat mode. #TODO
-    #[clap(short = 'H', long)]
-    pub(crate) history_file: Option<String>,
+#[derive(Parser, Debug)]
+pub struct EmbedArgs {
+    #[clap(short, long, default_value = "What do you make of this?")]
+    pub(crate) prompt: String,
+
+    /// Chroma database collection name
+    #[clap(short, long, default_value = "default")]
+    pub(crate) collection: String,
+
+    /// Chroma database metadata, comma separated key:value pairs
+    #[clap(short, long, default_value = "version:0.01")]
+    pub(crate) metadata: Option<String>,
 }
