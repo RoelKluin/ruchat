@@ -35,13 +35,13 @@ pub enum Commands {
     Chat,
     Func,
     FuncStruct,
-    Query(QueryArgs),
+    Ask(AskArgs),
     List,
     Embed(EmbedArgs),
 }
 
 #[derive(Parser, Debug)]
-pub struct QueryArgs {
+pub struct AskArgs {
     #[clap(short, long, default_value = "What do you make of this?")]
     pub(crate) prompt: String,
 

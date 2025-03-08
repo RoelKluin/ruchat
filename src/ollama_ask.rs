@@ -1,4 +1,4 @@
-use crate::args::{Args, QueryArgs};
+use crate::args::{Args, AskArgs};
 use crate::chat_io::ChatIO;
 use crate::config::read_config_file;
 use crate::error::RuChatError;
@@ -10,9 +10,9 @@ use std::{fs, io::Read};
 use tokio_stream::StreamExt;
 
 // TODO: allow more prompt configurations
-fn generate_prompt(query_args: &QueryArgs) -> Result<String, RuChatError> {
+fn generate_prompt(ask_args: &AskArgs) -> Result<String, RuChatError> {
     let mut prompt = String::new();
-    if let Some(text_files) = &query_args.text_files {
+    if let Some(text_files) = &ask_args.text_files {
         text_files.split(',').try_for_each(|file| {
             if prompt.is_empty() {
                 prompt.push_str("Concerning:\n");
@@ -41,10 +41,10 @@ fn generate_prompt(query_args: &QueryArgs) -> Result<String, RuChatError> {
             Ok::<(), RuChatError>(())
         })?;
     }
-    prompt.push_str(&query_args.prompt);
-    if query_args.output_format != "text" {
+    prompt.push_str(&ask_args.prompt);
+    if ask_args.output_format != "text" {
         prompt.push_str("\nPlease generate your response in valid ");
-        prompt.push_str(&query_args.output_format);
+        prompt.push_str(&ask_args.output_format);
         prompt.push_str(" output format.\n");
     }
     Ok(prompt)
@@ -70,14 +70,14 @@ async fn get_options(args: &Args) -> Result<ModelOptions, RuChatError> {
     }
 }
 
-pub(crate) async fn query(
+pub(crate) async fn ask(
     ollama: Ollama,
     args: &Args,
-    query_args: Option<&QueryArgs>,
+    ask_args: Option<&AskArgs>,
 ) -> Result<(), RuChatError> {
     let mut cio = ChatIO::new();
-    let prompt = if let Some(query_args) = query_args {
-        generate_prompt(query_args)?
+    let prompt = if let Some(ask_args) = ask_args {
+        generate_prompt(ask_args)?
     } else {
         let mut input = String::new();
         while let Ok(line) = cio.read_line(false).await {

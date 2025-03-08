@@ -1,10 +1,10 @@
 use crate::args::{Args, Commands};
 use crate::error::RuChatError;
+use crate::ollama_ask::ask;
 use crate::ollama_chat::chat;
 use crate::ollama_embed::embed;
 use crate::ollama_func::func;
 use crate::ollama_func_struct::func_struct;
-use crate::ollama_query::query;
 use ollama_rs::Ollama;
 
 pub async fn get_model_name(ollama: &Ollama, name: &str) -> Result<String, RuChatError> {
@@ -66,7 +66,7 @@ pub async fn handle_request(args: Args) -> Result<(), RuChatError> {
         Some(Commands::Embed(ref embed_args)) => embed(ollama, &args, embed_args).await?,
         Some(Commands::Func) => func(ollama, &args).await?,
         Some(Commands::FuncStruct) => func_struct(ollama, &args).await?,
-        Some(Commands::Query(ref query_args)) => query(ollama, &args, Some(query_args)).await?,
+        Some(Commands::Ask(ref ask_args)) => ask(ollama, &args, Some(ask_args)).await?,
         Some(Commands::List) => {
             let models = ollama.list_local_models().await?;
             let max_length = models.iter().map(|m| m.name.len()).max().unwrap_or(0);
@@ -78,7 +78,7 @@ pub async fn handle_request(args: Args) -> Result<(), RuChatError> {
                 println!("{}{}{}", model.name, padding, size);
             }
         }
-        None => query(ollama, &args, None).await?,
+        None => ask(ollama, &args, None).await?,
     }
     Ok(())
 }

@@ -4,11 +4,11 @@ pub mod chroma;
 pub mod config;
 pub mod error;
 pub mod ollama;
+pub mod ollama_ask;
 pub mod ollama_chat;
 pub mod ollama_embed;
 pub mod ollama_func;
 pub mod ollama_func_struct;
-pub mod ollama_query;
 
 use args::Args;
 use clap::Parser;
