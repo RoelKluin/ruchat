@@ -1,12 +1,41 @@
-use crate::args::EmbedArgs;
 use crate::chroma::create_chroma_client;
 use crate::error::RuChatError;
 use crate::ollama::get_model_name;
 use chromadb::collection::{ChromaCollection, CollectionEntries};
+use clap::Parser;
 use log::warn;
 use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
 use ollama_rs::Ollama;
 use serde_json::{Map, Value};
+
+#[derive(Parser, Debug, Clone)]
+pub struct EmbedArgs {
+    #[clap(short, long, default_value = "nomic-embed-text:latest")]
+    pub(crate) model: String,
+
+    #[clap(short, long)]
+    pub(crate) prompt: String,
+
+    /// Chroma database server address and port
+    #[clap(short = 'C', long, default_value = "http://localhost:8000")]
+    pub(crate) chroma_server: String,
+
+    /// Chroma database name
+    #[clap(short = 'd', long, default_value = "default")]
+    pub(crate) chroma_database: String,
+
+    /// Chroma token for authentication
+    #[clap(short = 't', long)]
+    pub(crate) chroma_token: Option<String>,
+
+    /// Chroma database collection name
+    #[clap(short, long, default_value = "default")]
+    pub(crate) collection: String,
+
+    /// Chroma database metadata, comma separated key:value pairs
+    #[clap(short, long, default_value = "version:0.01")]
+    pub(crate) metadata: Option<String>,
+}
 
 pub(crate) async fn embed(ollama: Ollama, args: &EmbedArgs) -> Result<(), RuChatError> {
     let model_name = get_model_name(&ollama, &args.model).await?;

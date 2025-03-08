@@ -1,11 +1,17 @@
-use crate::args::ChatArgs;
 use crate::chat_io::ChatIO;
 use crate::error::RuChatError;
 use crate::ollama::get_model_name;
+use clap::Parser;
 use ollama_rs::generation::chat::{request::ChatMessageRequest, ChatMessage};
 use ollama_rs::Ollama;
 use std::sync::{Arc, Mutex};
 use tokio_stream::StreamExt;
+
+#[derive(Parser, Debug, Clone)]
+pub struct ChatArgs {
+    #[clap(short, long, default_value = "qwen2.5-coder:32b")]
+    pub(crate) model: String,
+}
 
 fn get_chat_message_request(model_name: String, prompt: String) -> ChatMessageRequest {
     ChatMessageRequest::new(model_name, vec![ChatMessage::user(prompt)])

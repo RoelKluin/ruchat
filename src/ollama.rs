@@ -1,11 +1,12 @@
-use crate::args::{Args, AskArgs, Commands, PullArgs};
+use crate::args::{Args, Commands};
 use crate::chroma::query;
 use crate::error::RuChatError;
-use crate::ollama_ask::ask;
+use crate::ollama_ask::{ask, AskArgs};
 use crate::ollama_chat::chat;
 use crate::ollama_embed::embed;
 use crate::ollama_func::func;
 use crate::ollama_func_struct::func_struct;
+use clap::Parser;
 use ollama_rs::Ollama;
 
 pub async fn get_model_name(ollama: &Ollama, name: &str) -> Result<String, RuChatError> {
@@ -75,6 +76,12 @@ async fn list_models(args: &Args) -> Result<(), RuChatError> {
         println!("{}{}{}", model.name, padding, size);
     }
     Ok(())
+}
+
+#[derive(Parser, Debug, Clone)]
+pub struct PullArgs {
+    #[clap(short, long)]
+    pub(crate) model: String,
 }
 
 async fn pull_model(args: &Args, pull_args: &PullArgs) -> Result<(), RuChatError> {

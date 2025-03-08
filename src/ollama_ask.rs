@@ -1,13 +1,35 @@
-use crate::args::AskArgs;
 use crate::chat_io::ChatIO;
 use crate::config::read_config_file;
 use crate::error::RuChatError;
 use crate::ollama::get_model_name;
+use clap::Parser;
 use ollama_rs::{generation::completion::request::GenerationRequest, models::ModelOptions, Ollama};
 use serde_json::Value;
 use std::iter::Iterator;
 use std::{fs, io::Read};
 use tokio_stream::StreamExt;
+
+#[derive(Parser, Debug, Clone, Default)]
+pub struct AskArgs {
+    #[clap(short, long, default_value = "qwen2.5-coder:32b")]
+    pub(crate) model: String,
+
+    #[clap(short, long)]
+    pub(crate) prompt: Option<String>,
+
+    /// Request a certain output format, the default leaves the text as is
+    #[clap(short, long, default_value_t = String::from("text"))]
+    pub(crate) output_format: String,
+
+    /// Text files to use as input, seperated by commas
+    #[clap(short = 'i', long)]
+    pub(crate) text_files: Option<String>,
+
+    /// Path to a JSON file to amend default generation options, listed in
+    /// https://docs.rs/ollama-rs/latest/ollama_rs/generation/options/struct.GenerationOptions.html
+    #[clap(short, long)]
+    pub(crate) config: Option<String>,
+}
 
 // TODO: allow more prompt configurations
 fn generate_prompt(args: &AskArgs) -> Result<String, RuChatError> {

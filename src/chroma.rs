@@ -1,8 +1,8 @@
-use crate::args::QueryArgs;
 use crate::error::RuChatError;
 use anyhow::Result;
 use chromadb::client::{ChromaAuthMethod, ChromaClient, ChromaClientOptions, ChromaTokenHeader};
 use chromadb::collection::{ChromaCollection, GetOptions, GetResult};
+use clap::Parser;
 use serde_json::json;
 
 /// access a running chroma server to store and retrieve data for embeddings
@@ -41,6 +41,35 @@ pub async fn get_or_create_chroma_collection(
 
     // Get the UUID of the collection
     Ok(collection.id().to_string())
+}
+
+#[derive(Parser, Debug, Clone)]
+pub struct QueryArgs {
+    #[clap(short, long)]
+    pub(crate) query: String,
+
+    #[clap(short, long, default_value = "1")]
+    pub(crate) count: usize,
+
+    /// Chroma database collection name
+    #[clap(short, long, default_value = "default")]
+    pub(crate) collection: String,
+
+    /// Chroma database metadata, comma separated key:value pairs
+    #[clap(short, long)]
+    pub(crate) metadata: Option<String>,
+
+    /// Chroma database server address and port
+    #[clap(short = 'C', long, default_value = "http://localhost:8000")]
+    pub(crate) chroma_server: String,
+
+    /// Chroma database name
+    #[clap(short = 'd', long, default_value = "default")]
+    pub(crate) chroma_database: String,
+
+    /// Chroma token for authentication
+    #[clap(short = 't', long)]
+    pub(crate) chroma_token: Option<String>,
 }
 
 pub(crate) async fn query(args: &QueryArgs) -> Result<(), RuChatError> {

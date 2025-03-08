@@ -1,7 +1,7 @@
-use crate::args::FuncStructArgs;
 use crate::chat_io::ChatIO;
 use crate::error::RuChatError;
 use crate::ollama::get_model_name;
+use clap::Parser;
 use ollama_rs::models::ModelOptions;
 use ollama_rs::{
     coordinator::Coordinator,
@@ -11,8 +11,13 @@ use ollama_rs::{
     },
     tool_group, Ollama,
 };
-
 use serde::Deserialize;
+
+#[derive(Parser, Debug, Clone)]
+pub struct FuncStructArgs {
+    #[clap(short, long, default_value = "qwen2.5-coder:32b")]
+    pub(crate) model: String,
+}
 
 /// Get the weather for a given city.
 ///
