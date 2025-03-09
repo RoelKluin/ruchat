@@ -71,8 +71,8 @@ fn generate_prompt(args: &AskArgs) -> Result<String, RuChatError> {
     Ok(prompt)
 }
 
-async fn get_options(args: &AskArgs) -> Result<ModelOptions, RuChatError> {
-    if let Some(config_path) = &args.config {
+pub(crate) async fn get_options(config: &Option<String>) -> Result<ModelOptions, RuChatError> {
+    if let Some(config_path) = config {
         let mut defaults = serde_json::to_value(ModelOptions::default())?;
 
         if let Value::Object(ref mut defaults) = defaults {
@@ -111,7 +111,8 @@ pub(crate) async fn ask(ollama: Ollama, args: &AskArgs) -> Result<(), RuChatErro
         prompt.push_str(" output format.\n");
     }
     let model_name = get_model_name(&ollama, &args.model).await?;
-    let request = GenerationRequest::new(model_name, prompt).options(get_options(args).await?);
+    let request =
+        GenerationRequest::new(model_name, prompt).options(get_options(&args.config).await?);
     let mut stream = ollama.generate_stream(request).await?;
     while let Some(res) = stream.next().await {
         let responses = res?;

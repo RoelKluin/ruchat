@@ -101,7 +101,7 @@ pub async fn handle_request(args: &Args) -> Result<(), RuChatError> {
         Commands::FuncStruct(func_args) => func_struct(get_ollama(args)?, func_args).await?,
         Commands::List => list_models(args).await?,
         Commands::Pull(pull_args) => pull_model(args, pull_args).await?,
-        Commands::Query(query_args) => query(query_args).await?,
+        Commands::Query(query_args) => query(get_ollama(args)?, query_args).await?,
     }
     Ok(())
 }
