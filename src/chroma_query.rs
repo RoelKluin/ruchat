@@ -14,7 +14,7 @@ use tokio_stream::StreamExt;
 
 #[derive(Parser, Debug, Clone)]
 pub struct QueryArgs {
-    #[clap(short, long, default_value = "qwen2.5-coder:32b")]
+    #[clap(short, long, default_value = "qwen2.5-coder:14b")]
     pub(crate) model: String,
 
     #[clap(short, long)]
