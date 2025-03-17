@@ -21,7 +21,7 @@ use ollama_rs::{
 
 #[derive(Parser, Debug, Clone)]
 pub struct FuncArgs {
-    #[clap(short, long, default_value = "qwen2.5-coder:14b")]
+    #[clap(short, long, default_value = "qwen2.5-coder:32b")]
     pub(crate) model: String,
 }
 

@@ -12,7 +12,7 @@ pub struct Args {
     #[clap(subcommand)]
     pub command: Option<Commands>,
 
-    #[clap(short, long, default_value = "http://172.30.138.132:11434")]
+    #[clap(short, long, default_value = "http://0.0.0.0:11434")]
     pub(crate) server: String,
 }
 
