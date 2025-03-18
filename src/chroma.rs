@@ -147,6 +147,9 @@ pub struct SimilarityArgs {
     #[clap(short, long, default_value = "1")]
     pub(crate) count: usize,
 
+    #[clap(short, long, default_value = "5")]
+    pub(crate) similarity_count: usize,
+
     /// Chroma database collection name
     #[clap(short, long, default_value = "default")]
     pub(crate) collection: String,
@@ -211,7 +214,7 @@ pub(crate) async fn similarity_search(args: &SimilarityArgs) -> Result<(), RuCha
             .map(|embeddings| embeddings.into_iter().flatten().collect()),
         where_metadata: None,
         where_document: None,
-        n_results: Some(5),
+        n_results: Some(args.similarity_count),
         include: None,
     };
 
