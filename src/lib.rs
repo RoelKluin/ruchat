@@ -1,7 +1,9 @@
 pub mod args;
+pub mod bufcursor;
 pub mod chat_io;
 pub mod chroma;
 pub mod config;
+pub mod conversation_tree;
 pub mod error;
 pub mod ollama;
 pub mod ollama_ask;

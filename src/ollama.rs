@@ -13,7 +13,7 @@ pub async fn get_model_name(ollama: &Ollama, name: &str) -> Result<String, RuCha
     if name.is_empty()
         || !name
             .chars()
-            .all(|c| c.is_alphanumeric() || c == ':' || c == '-' || c == '.')
+            .all(|c| c.is_alphanumeric() || c == ':' || c == '-' || c == '.' || c == '/')
     {
         return Err(RuChatError::InvalidModelName(name.to_string()));
     }

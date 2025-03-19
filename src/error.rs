@@ -20,4 +20,12 @@ pub enum RuChatError {
     ArgServerError(String),
     #[error("Chroma error: {0}")]
     ChromaError(#[from] anyhow::Error),
+    #[error("TryFromIntError: {0}")]
+    TryFromIntError(#[from] std::num::TryFromIntError),
+    #[error("Cursor.0 out of bounds")]
+    Cursor0OutOfBounds,
+    #[error("Cursor.1 out of bounds")]
+    Cursor1OutOfBounds,
+    #[error("Join error: {0}")]
+    JoinError(#[from] tokio::task::JoinError),
 }
