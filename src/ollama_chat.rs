@@ -66,7 +66,7 @@ fn redraw_screen(
     );
     let mut remaining_lines = term_lines.saturating_sub(text_view.len());
 
-    while question_id != 0 && remaining_lines > 0 {
+    while text_view.len() < term_lines {
         if let Some((mut question, mut response)) = chat_history.get_qa(question_id, answer_id) {
             question_id = match chat_history.find_parent(question_id) {
                 Some(id) => id,
@@ -74,23 +74,23 @@ fn redraw_screen(
             };
             answer_id = chat_history.get_current_answer_id(question_id);
 
-            let mut text = response.split_off(remaining_lines.saturating_sub(1));
-            text.push(chat_history.get_answer_nr_of_total(question_id, answer_id) + " 🗘 ");
-            remaining_lines = remaining_lines.saturating_sub(text.len());
-            text.append(&mut text_view);
-            text_view = text;
-            if remaining_lines == 0 {
-                break;
+            response.push(chat_history.get_answer_nr_of_total(answer_id) + "[Redo][Del]");
+            response.append(&mut text_view);
+            text_view = response;
+            if text_view.len() < term_lines {
+                question.push(chat_history.get_question_nr_of_total(question_id) + "[Edit][Del]");
+                question.append(&mut text_view);
+                text_view = question;
             }
-            text = question.split_off(remaining_lines.saturating_sub(1));
-            text.push(chat_history.get_question_nr_of_total(question_id) + " 🗘 ");
-            remaining_lines = remaining_lines.saturating_sub(text.len());
-            text.append(&mut text_view);
-            text_view = text;
+        } else {
+            break;
         }
     }
+    if text_view.len() > term_lines {
+        text_view = text_view.split_off(term_lines);
+    }
     let cp = bufcursor.get_cursor(); // Cursor position editing the question
-    print!("{}", text_view.join("\n"));
+    print!("{}", text_view.join("\n\r"));
     stdout.flush()?;
 
     // Move the cursor to the correct position
@@ -123,6 +123,19 @@ async fn handle_question() {
 
 pub(crate) async fn chat(ollama: Ollama, args: &ChatArgs) -> Result<(), RuChatError> {
     let chat_history = Arc::new(Mutex::new(ConversationTree::new()));
+
+    // For debugging.
+    let qid = chat_history.lock().unwrap().add_question(vec!["What is the meaning of life?".to_string()]);
+    chat_history.lock().unwrap().answer(qid, vec!["42".to_string()])?;
+    chat_history.lock().unwrap().add_answer(qid, vec!["To be or not to be".to_string()])?;
+
+    let qid = chat_history.lock().unwrap().add_question(vec!["Why is the sky blue?".to_string()]);
+    chat_history.lock().unwrap().answer(qid, vec!["Because of Rayleigh scattering".to_string()])?;
+    chat_history.lock().unwrap().add_answer(qid, vec!["Because of the ocean".to_string()])?;
+    
+    let qid = chat_history.lock().unwrap().edit_question(qid, vec!["What is the capital of France?".to_string()])?;
+    chat_history.lock().unwrap().add_answer(qid, vec!["Paris".to_string()])?;
+
     //let running = Arc::new(Mutex::new(true))
     let mut stdout = io::stdout();
     let mut bufcursor = BufCursor::new();
@@ -159,15 +172,15 @@ pub(crate) async fn chat(ollama: Ollama, args: &ChatArgs) -> Result<(), RuChatEr
                                 response.push(res.message.content);
                             }
                             let mut chat_hist = chat_hist_clone.lock().unwrap();
-                            chat_hist.answer(question_id, response);
+                            let _ = chat_hist.answer(question_id, response);
                         }
                         Ok(Err(e)) => {
                             let mut chat_hist = chat_hist_clone.lock().unwrap();
-                            chat_hist.answer(question_id, vec![format!("Error: {}", e)]);
+                            let _ = chat_hist.answer(question_id, vec![format!("Error: {}", e)]);
                         }
                         Err(_) => {
                             let mut chat_hist = chat_hist_clone.lock().unwrap();
-                            chat_hist.answer(question_id, vec!["Timeout".to_string()]);
+                            let _ = chat_hist.answer(question_id, vec!["Timeout".to_string()]);
                         }
                     }
                 });

@@ -28,4 +28,8 @@ pub enum RuChatError {
     Cursor1OutOfBounds,
     #[error("Join error: {0}")]
     JoinError(#[from] tokio::task::JoinError),
+    #[error("Request not found")]
+    QuestionNotFound,
+    #[error("Answer not found")]
+    AnswerNotFound,
 }
