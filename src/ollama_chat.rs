@@ -11,6 +11,7 @@ use crossterm::{
 };
 use ollama_rs::generation::chat::{request::ChatMessageRequest, ChatMessage};
 use ollama_rs::Ollama;
+use std::cmp::min;
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 use tokio::task;
@@ -36,7 +37,6 @@ fn redraw_screen(
     stdout.execute(Clear(ClearType::All))?;
     stdout.execute(MoveTo(0, 0))?;
 
-    let term_lines = terminal::size()?.1 as usize;
     // text_view is the text that is currently being displayed
     // Add the current question to the text view
     let mut text_view: Vec<String> = bufcursor.view_buffer();
@@ -45,34 +45,29 @@ fn redraw_screen(
                                      // the last line is a status line. The second to last line is the last line of the question
     text_view.push("Enter your question (Esc to quit):".to_string());
 
-    while text_view.len() < term_lines {
-        let question_id = match it.next() {
-            Some(id) => *id,
-            None => break,
-        };
+    while let Some(&question_id) = it.next() {
         let answer_id = chat_history.get_current_answer_id(question_id);
         if let Some((mut question, mut response)) = chat_history.get_qa(question_id, answer_id) {
             response.push(chat_history.get_answer_nr_of_total(answer_id) + "[Redo][Del]");
             response.append(&mut text_view);
             text_view = response;
-            if text_view.len() < term_lines {
-                question.push(chat_history.get_question_nr_of_total(question_id) + "[Edit][Del]");
-                question.append(&mut text_view);
-                text_view = question;
-            }
+            question.push(chat_history.get_question_nr_of_total(question_id) + "[Edit][Del]");
+            question.append(&mut text_view);
+            text_view = question;
         } else {
             text_view.push("No more questions".to_string());
             break;
         }
     }
-    if text_view.len() > term_lines {
-        text_view = text_view.split_off(term_lines);
-    }
     print!("{}", text_view.join("\n\r"));
     stdout.flush()?;
+    text_view = text_view.split_off(text_view.len().saturating_sub(terminal::size()?.1 as usize));
 
     // Move the cursor to the correct position
-    stdout.execute(MoveTo(cp.0.try_into()?, text_view.len() as u16 - 2))?;
+    stdout.execute(MoveTo(
+        cp.0.try_into()?,
+        min(terminal::size()?.1 - 2, text_view.len() as u16 - 2),
+    ))?;
 
     Ok(())
 }
@@ -136,11 +131,21 @@ async fn chat_raw_mode(ollama: Ollama, args: &ChatArgs) -> Result<(), RuChatErro
                                 while let Some((first, second)) =
                                     res.message.content.split_once('\n')
                                 {
+                                    if response[last].len() + first.len()
+                                        > terminal::size().expect("terminal size").0 as usize
+                                    {
+                                        response.push("".to_string());
+                                    }
                                     response[last].push_str(first);
                                     response.push("".to_string());
                                     res.message.content = second.to_string();
                                 }
                                 if !res.message.content.is_empty() {
+                                    if response[last].len() + res.message.content.len()
+                                        > terminal::size().expect("terminal size").1 as usize
+                                    {
+                                        response.push("".to_string());
+                                    }
                                     response[last].push_str(&res.message.content);
                                 }
                             }

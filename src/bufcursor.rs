@@ -106,7 +106,7 @@ impl BufCursor {
                     self.cursor = (column, row);
                 }
             }
-            Event::Mouse(MouseEvent {
+            /*Event::Mouse(MouseEvent {
                 kind: MouseEventKind::ScrollUp,
                 ..
             }) => {
@@ -117,7 +117,7 @@ impl BufCursor {
                 ..
             }) => {
                 self.cursor.1 += 1;
-            }
+            }*/
             x => {
                 //self.debug(x)?;
             }
