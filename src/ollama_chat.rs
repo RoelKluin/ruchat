@@ -35,20 +35,10 @@ fn get_chat_message_request(model_name: String, prompt: String) -> ChatMessageRe
     ChatMessageRequest::new(model_name, vec![ChatMessage::user(prompt)])
 }
 
-fn prepend_text(text_view: &mut Vec<String>, question: Vec<String>, remaining_lines: &mut usize) {
-    for line in question.into_iter().rev() {
-        text_view.insert(0, line);
-        *remaining_lines -= 1;
-        if *remaining_lines == 0 {
-            return;
-        }
-    }
-}
-
 fn redraw_screen(
     stdout: &mut io::Stdout,
     chat_history: &ConversationTree,
-    bufcursor: &BufCursor,
+    bufcursor: &mut BufCursor,
 ) -> Result<(), RuChatError> {
     // Clear the screen
     stdout.execute(Clear(ClearType::All))?;
@@ -58,43 +48,42 @@ fn redraw_screen(
     // text_view is the text that is currently being displayed
     // Add the current question to the text view
     let mut text_view: Vec<String> = bufcursor.view_buffer();
-    let mut question_id = chat_history.get_current_question_id();
-    let mut answer_id = chat_history.get_current_answer_id(question_id);
+    let mut it = chat_history.get_current_question_ids().iter().rev();
+    let cp = bufcursor.get_cursor(); // Cursor position editing the question
+    let mut cursor_offset = cp.1.try_into()?;
     // the last line is a status line. The second to last line is the last line of the question
-    text_view.push(
-        chat_history.get_question_nr_of_total(question_id) + ": Enter your question (Esc to quit):",
-    );
-    let mut remaining_lines = term_lines.saturating_sub(text_view.len());
+    text_view.push("Enter your question (Esc to quit):".to_string());
 
     while text_view.len() < term_lines {
+        let question_id = match it.next() {
+            Some(id) => *id,
+            None => break,
+        };
+        let answer_id = chat_history.get_current_answer_id(question_id);
         if let Some((mut question, mut response)) = chat_history.get_qa(question_id, answer_id) {
-            question_id = match chat_history.find_parent(question_id) {
-                Some(id) => id,
-                None => break,
-            };
-            answer_id = chat_history.get_current_answer_id(question_id);
-
             response.push(chat_history.get_answer_nr_of_total(answer_id) + "[Redo][Del]");
+            cursor_offset += response.len() as u16;
             response.append(&mut text_view);
             text_view = response;
             if text_view.len() < term_lines {
                 question.push(chat_history.get_question_nr_of_total(question_id) + "[Edit][Del]");
+                cursor_offset += question.len() as u16;
                 question.append(&mut text_view);
                 text_view = question;
             }
         } else {
+            text_view.push("No more questions".to_string());
             break;
         }
     }
     if text_view.len() > term_lines {
         text_view = text_view.split_off(term_lines);
     }
-    let cp = bufcursor.get_cursor(); // Cursor position editing the question
     print!("{}", text_view.join("\n\r"));
     stdout.flush()?;
 
     // Move the cursor to the correct position
-    stdout.execute(MoveTo(cp.0.try_into()?, cp.1.try_into()?))?;
+    stdout.execute(MoveTo(cp.0.try_into()?, cursor_offset))?;
 
     Ok(())
 }
@@ -121,27 +110,12 @@ async fn handle_question() {
     sleep(Duration::from_secs(5)).await;
 }
 
-pub(crate) async fn chat(ollama: Ollama, args: &ChatArgs) -> Result<(), RuChatError> {
+async fn chat_raw_mode(ollama: Ollama, args: &ChatArgs) -> Result<(), RuChatError> {
     let chat_history = Arc::new(Mutex::new(ConversationTree::new()));
-
-    // For debugging.
-    let qid = chat_history.lock().unwrap().add_question(vec!["What is the meaning of life?".to_string()]);
-    chat_history.lock().unwrap().answer(qid, vec!["42".to_string()])?;
-    chat_history.lock().unwrap().add_answer(qid, vec!["To be or not to be".to_string()])?;
-
-    let qid = chat_history.lock().unwrap().add_question(vec!["Why is the sky blue?".to_string()]);
-    chat_history.lock().unwrap().answer(qid, vec!["Because of Rayleigh scattering".to_string()])?;
-    chat_history.lock().unwrap().add_answer(qid, vec!["Because of the ocean".to_string()])?;
-    
-    let qid = chat_history.lock().unwrap().edit_question(qid, vec!["What is the capital of France?".to_string()])?;
-    chat_history.lock().unwrap().add_answer(qid, vec!["Paris".to_string()])?;
 
     //let running = Arc::new(Mutex::new(true))
     let mut stdout = io::stdout();
     let mut bufcursor = BufCursor::new();
-
-    // Enter raw mode and alternate screen
-    terminal::enable_raw_mode()?;
     stdout.execute(EnterAlternateScreen)?;
     stdout.execute(EnableMouseCapture)?;
 
@@ -192,8 +166,21 @@ pub(crate) async fn chat(ollama: Ollama, args: &ChatArgs) -> Result<(), RuChatEr
     }
 
     // Leave raw mode and alternate screen
-    terminal::disable_raw_mode()?;
     stdout.execute(LeaveAlternateScreen)?;
     stdout.execute(DisableMouseCapture)?;
+    Ok(())
+}
+
+pub(crate) async fn chat(ollama: Ollama, args: &ChatArgs) -> Result<(), RuChatError> {
+    // Enter raw mode and alternate screen
+    terminal::enable_raw_mode()?;
+    match chat_raw_mode(ollama, args).await {
+        Ok(_) => {}
+        Err(e) => {
+            terminal::disable_raw_mode()?;
+            return Err(e);
+        }
+    }
+    terminal::disable_raw_mode()?;
     Ok(())
 }

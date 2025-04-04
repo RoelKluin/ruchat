@@ -32,4 +32,8 @@ pub enum RuChatError {
     QuestionNotFound,
     #[error("Answer not found")]
     AnswerNotFound,
+    #[error("Question already exists")]
+    QuestionAlreadyExists,
+    #[error("Answer already exists")]
+    AnswerAlreadyExists,
 }
