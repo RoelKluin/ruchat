@@ -1,26 +1,18 @@
 use crate::bufcursor::BufCursor;
-use crate::chat_io::ChatIO;
 use crate::conversation_tree::ConversationTree;
 use crate::error::RuChatError;
 use crate::ollama::get_model_name;
 use clap::Parser;
 use crossterm::{
-    cursor::{self, MoveDown, MoveLeft, MoveRight, MoveTo, MoveUp},
-    event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
-    },
-    execute,
+    cursor::MoveTo,
+    event::{self, DisableMouseCapture, EnableMouseCapture},
     terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand,
 };
 use ollama_rs::generation::chat::{request::ChatMessageRequest, ChatMessage};
 use ollama_rs::Ollama;
-use std::cmp::min;
-use std::collections::HashMap;
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
-use tokio::sync::mpsc;
-use tokio::sync::Mutex as TokioMutex;
 use tokio::task;
 use tokio::time::{sleep, timeout, Duration};
 use tokio_stream::StreamExt;
@@ -50,8 +42,7 @@ fn redraw_screen(
     let mut text_view: Vec<String> = bufcursor.view_buffer();
     let mut it = chat_history.get_current_question_ids().iter().rev();
     let cp = bufcursor.get_cursor(); // Cursor position editing the question
-    let mut cursor_offset = cp.1.try_into()?;
-    // the last line is a status line. The second to last line is the last line of the question
+                                     // the last line is a status line. The second to last line is the last line of the question
     text_view.push("Enter your question (Esc to quit):".to_string());
 
     while text_view.len() < term_lines {
@@ -62,12 +53,10 @@ fn redraw_screen(
         let answer_id = chat_history.get_current_answer_id(question_id);
         if let Some((mut question, mut response)) = chat_history.get_qa(question_id, answer_id) {
             response.push(chat_history.get_answer_nr_of_total(answer_id) + "[Redo][Del]");
-            cursor_offset += response.len() as u16;
             response.append(&mut text_view);
             text_view = response;
             if text_view.len() < term_lines {
                 question.push(chat_history.get_question_nr_of_total(question_id) + "[Edit][Del]");
-                cursor_offset += question.len() as u16;
                 question.append(&mut text_view);
                 text_view = question;
             }
@@ -83,7 +72,7 @@ fn redraw_screen(
     stdout.flush()?;
 
     // Move the cursor to the correct position
-    stdout.execute(MoveTo(cp.0.try_into()?, cursor_offset))?;
+    stdout.execute(MoveTo(cp.0.try_into()?, text_view.len() as u16 - 2))?;
 
     Ok(())
 }
@@ -124,14 +113,14 @@ async fn chat_raw_mode(ollama: Ollama, args: &ChatArgs) -> Result<(), RuChatErro
     loop {
         // TODO: not clear the whole screen for every keystroke?
         // Clear the screen
-        redraw_screen(&mut stdout, &chat_history.lock().unwrap(), &bufcursor)?;
+        redraw_screen(&mut stdout, &chat_history.lock().unwrap(), &mut bufcursor)?;
 
         // Wait for an event
         match bufcursor.handle_key_event(event::read()?)? {
             b'q' => break,
             b'\n' => {
                 let request = get_chat_message_request(model_name.to_string(), bufcursor.read());
-                let question_id = chat_history.lock().unwrap().add_question(bufcursor.drain());
+                let question_id = chat_history.lock().unwrap().question(bufcursor.drain())?;
 
                 let chat_hist_clone = chat_history.clone();
                 let hist = history.clone();
@@ -139,22 +128,33 @@ async fn chat_raw_mode(ollama: Ollama, args: &ChatArgs) -> Result<(), RuChatErro
 
                 let task = task::spawn(async move {
                     let result = ol.send_chat_messages_with_history_stream(hist, request);
-                    match timeout(Duration::from_secs(10), async { result.await }).await {
+                    match timeout(Duration::from_secs(600), async { result.await }).await {
                         Ok(Ok(mut stream)) => {
-                            let mut response = vec![];
-                            while let Some(Ok(res)) = stream.next().await {
-                                response.push(res.message.content);
+                            let mut response = vec!["".to_string()];
+                            while let Some(Ok(mut res)) = stream.next().await {
+                                let last = response.len() - 1;
+                                while let Some((first, second)) =
+                                    res.message.content.split_once('\n')
+                                {
+                                    response[last].push_str(first);
+                                    response.push("".to_string());
+                                    res.message.content = second.to_string();
+                                }
+                                if !res.message.content.is_empty() {
+                                    response[last].push_str(&res.message.content);
+                                }
                             }
                             let mut chat_hist = chat_hist_clone.lock().unwrap();
-                            let _ = chat_hist.answer(question_id, response);
+                            let _ = chat_hist.add_answer(question_id, response);
                         }
                         Ok(Err(e)) => {
                             let mut chat_hist = chat_hist_clone.lock().unwrap();
-                            let _ = chat_hist.answer(question_id, vec![format!("Error: {}", e)]);
+                            let _ =
+                                chat_hist.add_answer(question_id, vec![format!("Error: {}", e)]);
                         }
                         Err(_) => {
                             let mut chat_hist = chat_hist_clone.lock().unwrap();
-                            let _ = chat_hist.answer(question_id, vec!["Timeout".to_string()]);
+                            let _ = chat_hist.add_answer(question_id, vec!["Timeout".to_string()]);
                         }
                     }
                 });
