@@ -16,7 +16,7 @@ use ollama_rs::{
             // SerperSearchToo // seems to have issue and SERPER_API_KEY=... is required
         },
     },
-    tool_group, Ollama,
+    Ollama,
 };
 
 #[derive(Parser, Debug, Clone)]
@@ -26,19 +26,16 @@ pub struct FuncArgs {
 }
 
 pub(crate) async fn func(ollama: Ollama, args: &FuncArgs) -> Result<(), RuChatError> {
-    // browserless requires an BROWSERLESS_TOKEN=... environment variable
-    let tools = tool_group![
-        Calculator {},
-        DDGSearcher::new(),
-        Scraper {},
-        StockScraper::new(),
-        Browserless {},
-    ];
     let history = vec![];
     let model_name = get_model_name(&ollama, &args.model).await?;
-    let mut coordinator =
-        Coordinator::new_with_tools(ollama, model_name.to_string(), history, tools)
-            .options(ModelOptions::default().num_ctx(16384));
+    let mut coordinator = Coordinator::new(ollama, model_name.to_string(), history)
+        .options(ModelOptions::default().num_ctx(16384))
+        .add_tool(Calculator {})
+        .add_tool(DDGSearcher::new())
+        .add_tool(Scraper {})
+        .add_tool(StockScraper::new())
+        .add_tool(Browserless {});
+    // browserless requires an BROWSERLESS_TOKEN=... environment variable
 
     let mut cio = ChatIO::new();
     cio.write_line("Enter prompt or 'q' to quit:").await?;

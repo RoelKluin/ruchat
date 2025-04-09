@@ -31,8 +31,8 @@ impl ChatIO {
         Ok(())
     }
 
-    pub (crate) async fn write(&mut self, s: &str) -> Result<(), RuChatError> {
-        self.stdout.write(s.as_bytes()).await?;
+    pub(crate) async fn write(&mut self, s: &str) -> Result<(), RuChatError> {
+        self.stdout.write_all(s.as_bytes()).await?;
         self.stdout.flush().await?;
         Ok(())
     }

@@ -45,7 +45,7 @@ fn redraw_screen(
                                      // the last line is a status line. The second to last line is the last line of the question
     text_view.push("Enter your question (Esc to quit):".to_string());
 
-    while let Some(&question_id) = it.next() {
+    for &question_id in it {
         let answer_id = chat_history.get_current_answer_id(question_id);
         if let Some((mut question, mut response)) = chat_history.get_qa(question_id, answer_id) {
             response.push(chat_history.get_answer_nr_of_total(answer_id) + "[Redo][Del]");
@@ -74,7 +74,7 @@ fn redraw_screen(
 
 async fn display_runner(running: Arc<Mutex<bool>>) {
     let mut position = 0;
-    let runner_chars = vec!['|', '/', '-', '\\'];
+    let runner_chars = ['|', '/', '-', '\\'];
     while *running.lock().unwrap() {
         print!("\r{}", runner_chars[position]);
         position = (position + 1) % runner_chars.len();
@@ -123,7 +123,7 @@ async fn chat_raw_mode(ollama: Ollama, args: &ChatArgs) -> Result<(), RuChatErro
 
                 let task = task::spawn(async move {
                     let result = ol.send_chat_messages_with_history_stream(hist, request);
-                    match timeout(Duration::from_secs(600), async { result.await }).await {
+                    match timeout(Duration::from_secs(600), result).await {
                         Ok(Ok(mut stream)) => {
                             let mut response = vec!["".to_string()];
                             while let Some(Ok(mut res)) = stream.next().await {

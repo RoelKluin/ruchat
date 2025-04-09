@@ -9,9 +9,10 @@ use ollama_rs::{
         chat::ChatMessage,
         parameters::{FormatType, JsonSchema, JsonStructure},
     },
-    tool_group, Ollama,
+    Ollama,
 };
 use serde::Deserialize;
+use std::path::PathBuf;
 
 #[derive(Parser, Debug, Clone)]
 pub struct FuncStructArgs {
@@ -33,18 +34,32 @@ async fn get_weather(city: String) -> Result<String, Box<dyn std::error::Error +
     )
 }
 
+/// Get the available space in bytes for a given path.
+///
+/// * path - Path to check available space for.
+#[ollama_rs::function]
+async fn get_available_space(
+    path: PathBuf,
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    Ok(fs2::available_space(path).map_or_else(
+        // Note: this will let LLM handle the error. Return `Err` if you want to bubble it up.
+        |err| format!("failed to get available space: {err}"),
+        |space| space.to_string(),
+    ))
+}
+
 pub(crate) async fn func_struct(ollama: Ollama, args: &FuncStructArgs) -> Result<(), RuChatError> {
     // browserless requires an BROWSERLESS_TOKEN=... environment variable
-    let tools = tool_group![get_weather];
     let history = vec![];
     let model_name = get_model_name(&ollama, &args.model).await?;
 
     let format = FormatType::StructuredJson(JsonStructure::new::<Weather>());
 
-    let mut coordinator =
-        Coordinator::new_with_tools(ollama, model_name.to_string(), history, tools)
-            .format(format)
-            .options(ModelOptions::default().temperature(0.0));
+    let mut coordinator = Coordinator::new(ollama, model_name.to_string(), history)
+        .add_tool(get_weather)
+        .add_tool(get_available_space)
+        .format(format)
+        .options(ModelOptions::default().temperature(0.0));
 
     let mut cio = ChatIO::new();
     cio.write_line("Ask about the weather somewhere or 'q' to quit:")

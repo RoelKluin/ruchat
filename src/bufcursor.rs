@@ -144,10 +144,6 @@ impl BufCursor {
         self.buffer.iter().map(|line| line.len()).sum::<usize>() + self.buffer.len() - 1
     }
 
-    fn to_string(&self) -> String {
-        self.buffer.join("\n")
-    }
-
     fn line_len(&self) -> Result<usize, RuChatError> {
         Ok(self
             .buffer
