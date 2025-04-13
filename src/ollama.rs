@@ -1,5 +1,6 @@
 use crate::args::{Args, Commands};
 use crate::chroma_query::query;
+use crate::chroma_similarity_search::similarity_search;
 use crate::error::RuChatError;
 use crate::ollama_ask::{ask, AskArgs};
 use crate::ollama_chat::chat;
@@ -102,6 +103,7 @@ pub async fn handle_request(args: &Args) -> Result<(), RuChatError> {
         Commands::List => list_models(args).await?,
         Commands::Pull(pull_args) => pull_model(args, pull_args).await?,
         Commands::Query(query_args) => query(get_ollama(args)?, query_args).await?,
+        Commands::Similarity(similarity_args) => similarity_search(similarity_args).await?,
     }
     Ok(())
 }

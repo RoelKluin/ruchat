@@ -1,4 +1,5 @@
 use crate::chroma_query::QueryArgs;
+use crate::chroma_similarity_search::SimilarityArgs;
 use crate::ollama::PullArgs;
 use crate::ollama_ask::AskArgs;
 use crate::ollama_chat::ChatArgs;
@@ -27,4 +28,5 @@ pub enum Commands {
     List,
     Pull(PullArgs),
     Query(QueryArgs),
+    Similarity(SimilarityArgs),
 }
