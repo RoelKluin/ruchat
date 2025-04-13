@@ -1,4 +1,4 @@
-use crate::chroma::QueryArgs;
+use crate::chroma_query::QueryArgs;
 use crate::ollama::PullArgs;
 use crate::ollama_ask::AskArgs;
 use crate::ollama_chat::ChatArgs;

@@ -1,5 +1,5 @@
 use crate::args::{Args, Commands};
-use crate::chroma::query;
+use crate::chroma_query::query;
 use crate::error::RuChatError;
 use crate::ollama_ask::{ask, AskArgs};
 use crate::ollama_chat::chat;
