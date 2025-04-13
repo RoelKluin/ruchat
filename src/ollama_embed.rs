@@ -2,6 +2,7 @@ use crate::chroma::create_chroma_client;
 use crate::error::RuChatError;
 use crate::ollama::get_model_name;
 use chromadb::collection::{ChromaCollection, CollectionEntries};
+use chromadb::embeddings::EmbeddingFunction;
 use clap::Parser;
 use log::warn;
 use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
@@ -78,16 +79,20 @@ pub(crate) async fn embed(ollama: Ollama, args: &EmbedArgs) -> Result<(), RuChat
     let collection: ChromaCollection = client
         .get_or_create_collection(&args.collection, collection_metadata)
         .await?;
-    let count_str = collection.count().await?.to_string();
+    let id = collection.id().to_string();
 
     let collection_entries = CollectionEntries {
-        ids: vec![count_str.as_str()],
+        ids: vec![id.as_str()],
         embeddings: Some(res.embeddings),
         metadatas: entries_metadata.map(|md| vec![md]),
         documents: Some(vec![&args.prompt]),
     };
+    // The function to use to compute the embeddings. If None, embeddings must be provided.
+    let embedding_function: Option<Box<dyn EmbeddingFunction>> = None;
 
-    let result: Value = collection.upsert(collection_entries, None).await?;
+    let result: Value = collection
+        .upsert(collection_entries, embedding_function)
+        .await?;
     eprintln!("{:?}", result);
     Ok(())
 }
