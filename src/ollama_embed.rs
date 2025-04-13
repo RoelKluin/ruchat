@@ -32,18 +32,21 @@ pub struct EmbedArgs {
     #[clap(short, long, default_value = "default")]
     pub(crate) collection: String,
 
-    /// Chroma database metadata, comma separated key:value pairs
+    /// Chroma collection metadata, comma separated key:value pairs
     #[clap(short, long, default_value = "version:0.01")]
-    pub(crate) metadata: Option<String>,
+    pub(crate) collection_metadata: Option<String>,
+
+    /// Chroma entries metadata, comma separated key:value pairs
+    #[clap(short, long, default_value = "version:0.01")]
+    pub(crate) entries_metadata: Option<String>,
 }
 
-pub(crate) async fn embed(ollama: Ollama, args: &EmbedArgs) -> Result<(), RuChatError> {
-    let model_name = get_model_name(&ollama, &args.model).await?;
-    if !model_name.contains("embed") {
-        warn!("Model {} might not be an embeddings model", model_name);
+fn get_metadata(arg_metadata: &Option<String>) -> Result<Option<Map<String, Value>>, RuChatError> {
+    if arg_metadata.is_none() {
+        return Ok(None);
     }
     let mut metadata = Map::new();
-    if let Some(md) = &args.metadata {
+    if let Some(md) = arg_metadata {
         for s in md.split(',') {
             match s.split_once(':') {
                 Some((k, v)) => _ = metadata.insert(k.to_string(), v.into()),
@@ -51,6 +54,15 @@ pub(crate) async fn embed(ollama: Ollama, args: &EmbedArgs) -> Result<(), RuChat
             }
         }
     }
+    Ok(Some(metadata))
+}
+
+pub(crate) async fn embed(ollama: Ollama, args: &EmbedArgs) -> Result<(), RuChatError> {
+    let model_name = get_model_name(&ollama, &args.model).await?;
+    if !model_name.contains("embed") {
+        warn!("Model {} might not be an embeddings model", model_name);
+    }
+    let entries_metadata = get_metadata(&args.entries_metadata)?;
 
     let request = GenerateEmbeddingsRequest::new(model_name, vec![args.prompt.as_str()].into());
     let client = create_chroma_client(
@@ -61,15 +73,17 @@ pub(crate) async fn embed(ollama: Ollama, args: &EmbedArgs) -> Result<(), RuChat
     .await?;
     let res = ollama.generate_embeddings(request).await?;
 
+    let collection_metadata = get_metadata(&args.collection_metadata)?;
+
     let collection: ChromaCollection = client
-        .get_or_create_collection(&args.collection, None)
+        .get_or_create_collection(&args.collection, collection_metadata)
         .await?;
     let count_str = collection.count().await?.to_string();
 
     let collection_entries = CollectionEntries {
         ids: vec![count_str.as_str()],
         embeddings: Some(res.embeddings),
-        metadatas: Some(vec![metadata]),
+        metadatas: entries_metadata.map(|md| vec![md]),
         documents: Some(vec![&args.prompt]),
     };
 
