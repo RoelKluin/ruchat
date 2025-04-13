@@ -1,3 +1,4 @@
+use crate::chroma_ls::ChromaLsArgs;
 use crate::chroma_query::QueryArgs;
 use crate::chroma_similarity_search::SimilarityArgs;
 use crate::ollama::PullArgs;
@@ -29,4 +30,5 @@ pub enum Commands {
     Pull(PullArgs),
     Query(QueryArgs),
     Similarity(SimilarityArgs),
+    ChromaLs(ChromaLsArgs),
 }

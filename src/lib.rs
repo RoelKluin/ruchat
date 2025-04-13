@@ -2,6 +2,7 @@ pub mod args;
 pub mod bufcursor;
 pub mod chat_io;
 pub mod chroma;
+pub mod chroma_ls;
 pub mod chroma_query;
 pub mod chroma_similarity_search;
 pub mod config;

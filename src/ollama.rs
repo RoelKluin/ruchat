@@ -1,4 +1,5 @@
 use crate::args::{Args, Commands};
+use crate::chroma_ls::chroma_ls;
 use crate::chroma_query::query;
 use crate::chroma_similarity_search::similarity_search;
 use crate::error::RuChatError;
@@ -104,6 +105,7 @@ pub async fn handle_request(args: &Args) -> Result<(), RuChatError> {
         Commands::Pull(pull_args) => pull_model(args, pull_args).await?,
         Commands::Query(query_args) => query(get_ollama(args)?, query_args).await?,
         Commands::Similarity(similarity_args) => similarity_search(similarity_args).await?,
+        Commands::ChromaLs(chroma_ls_args) => chroma_ls(chroma_ls_args).await?,
     }
     Ok(())
 }

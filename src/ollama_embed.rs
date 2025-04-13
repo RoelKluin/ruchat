@@ -76,10 +76,17 @@ pub(crate) async fn embed(ollama: Ollama, args: &EmbedArgs) -> Result<(), RuChat
 
     let collection_metadata = get_metadata(&args.collection_metadata)?;
 
+    eprintln!("Collection name: {}", args.collection);
+    // XXX error here.
     let collection: ChromaCollection = client
         .get_or_create_collection(&args.collection, collection_metadata)
         .await?;
+
     let id = collection.id().to_string();
+    eprintln!("Collection Name: {}", collection.name());
+    eprintln!("Collection ID: {}", id);
+    eprintln!("Collection Metadata: {:?}", collection.metadata());
+    eprintln!("Collection Count: {}", collection.count().await?);
 
     let collection_entries = CollectionEntries {
         ids: vec![id.as_str()],
