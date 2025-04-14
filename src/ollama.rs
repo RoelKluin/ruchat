@@ -17,12 +17,12 @@ pub async fn get_model_name(ollama: &Ollama, name: &str) -> Result<String, RuCha
             .chars()
             .all(|c| c.is_alphanumeric() || c == ':' || c == '-' || c == '.' || c == '/')
     {
-        return Err(RuChatError::InvalidModelName(name.to_string()));
+        return Err(RuChatError::ModelError(format!("invalid name: {name}")));
     }
     let model_list = ollama
         .list_local_models()
         .await
-        .map_err(|_| RuChatError::ModelNotFound(name.to_string()))?;
+        .map_err(|_| RuChatError::ModelError(format!("{name} not found")))?;
     let model = model_list.iter().find(|m| {
         if name.contains(":") {
             m.name == name
@@ -85,28 +85,46 @@ async fn list_models(args: &Args) -> Result<(), RuChatError> {
 
 #[derive(Parser, Debug, Clone)]
 pub struct RmArgs {
+    /// specify the model to remove using the --model or -m flag
     #[clap(short, long)]
-    pub(crate) model: String,
+    model: Option<String>,
+
+    /// specify the model to pull using the positional argument
+    positional_model: Option<String>,
 }
 
 async fn remove_model(args: &Args, rm_args: &RmArgs) -> Result<(), RuChatError> {
     let ollama = get_ollama(args)?;
-    let model_name = get_model_name(&ollama, &rm_args.model).await?;
-    ollama.delete_model(model_name).await?;
-    Ok(())
+    match rm_args.model.as_deref().or(rm_args.positional_model.as_deref()) {
+        Some(model) if !model.is_empty() => {
+            let model_name = get_model_name(&ollama, model).await?;
+            ollama.delete_model(model_name).await?;
+            Ok(())
+        }
+        _ => Err(RuChatError::ModelError("Model name is required".to_string())),
+    }
 }
 
 #[derive(Parser, Debug, Clone)]
 pub struct PullArgs {
+    /// specify the model to pull using the --model or -m flag
     #[clap(short, long)]
-    pub(crate) model: String,
+    model: Option<String>,
+
+    /// specify the model to pull using the positional argument
+    positional_model: Option<String>,
 }
 
 async fn pull_model(args: &Args, pull_args: &PullArgs) -> Result<(), RuChatError> {
     let ollama = get_ollama(args)?;
-    let model_name = get_model_name(&ollama, &pull_args.model).await?;
-    ollama.pull_model(model_name, false).await?;
-    Ok(())
+    match pull_args.model.as_deref().or(pull_args.positional_model.as_deref()) {
+        Some(model) if !model.is_empty() => {
+            let model_name = get_model_name(&ollama, model).await?;
+            ollama.pull_model(model_name, false).await?;
+            Ok(())
+        }
+        _ => Err(RuChatError::ModelError("Model name is required".to_string())),
+    }
 }
 
 
