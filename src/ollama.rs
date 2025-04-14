@@ -84,6 +84,19 @@ async fn list_models(args: &Args) -> Result<(), RuChatError> {
 }
 
 #[derive(Parser, Debug, Clone)]
+pub struct RmArgs {
+    #[clap(short, long)]
+    pub(crate) model: String,
+}
+
+async fn remove_model(args: &Args, rm_args: &RmArgs) -> Result<(), RuChatError> {
+    let ollama = get_ollama(args)?;
+    let model_name = get_model_name(&ollama, &rm_args.model).await?;
+    ollama.delete_model(model_name).await?;
+    Ok(())
+}
+
+#[derive(Parser, Debug, Clone)]
 pub struct PullArgs {
     #[clap(short, long)]
     pub(crate) model: String,
@@ -95,6 +108,7 @@ async fn pull_model(args: &Args, pull_args: &PullArgs) -> Result<(), RuChatError
     ollama.pull_model(model_name, false).await?;
     Ok(())
 }
+
 
 pub async fn handle_request(args: &Args) -> Result<(), RuChatError> {
     let default = Commands::Ask(AskArgs::default());
@@ -108,7 +122,8 @@ pub async fn handle_request(args: &Args) -> Result<(), RuChatError> {
         Commands::Embed(embed_args) => embed(get_ollama(args)?, embed_args).await?,
         Commands::Func(func_args) => func(get_ollama(args)?, func_args).await?,
         Commands::FuncStruct(func_args) => func_struct(get_ollama(args)?, func_args).await?,
-        Commands::List => list_models(args).await?,
+        Commands::Ls => list_models(args).await?,
+        Commands::Rm(rm_args) => remove_model(args, rm_args).await?,
         Commands::Pull(pull_args) => pull_model(args, pull_args).await?,
         Commands::Query(query_args) => query(get_ollama(args)?, query_args).await?,
         Commands::Similarity(similarity_args) => similarity_search(similarity_args).await?,

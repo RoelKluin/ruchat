@@ -1,6 +1,5 @@
 use crate::error::RuChatError;
 use anyhow::Result;
-use chromadb::client::{ChromaAuthMethod, ChromaClient, ChromaClientOptions, ChromaTokenHeader};
 use chromadb::collection::{ChromaCollection, GetOptions, GetResult, QueryOptions, QueryResult};
 use clap::Parser;
 use serde_json::json;

@@ -18,6 +18,7 @@ use tokio::task;
 use tokio::time::{sleep, timeout, Duration};
 use tokio_stream::StreamExt;
 
+
 #[derive(Parser, Debug, Clone)]
 pub struct ChatArgs {
     #[clap(short, long, default_value = "qwen2.5-coder:14b")]
@@ -40,7 +41,7 @@ fn redraw_screen(
     // text_view is the text that is currently being displayed
     // Add the current question to the text view
     let mut text_view: Vec<String> = bufcursor.view_buffer();
-    let mut it = chat_history.get_current_question_ids().iter().rev();
+    let it = chat_history.get_current_question_ids().iter().rev();
     let cp = bufcursor.get_cursor(); // Cursor position editing the question
                                      // the last line is a status line. The second to last line is the last line of the question
     text_view.push("Enter your question (Esc to quit):".to_string());

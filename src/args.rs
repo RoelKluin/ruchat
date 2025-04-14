@@ -1,7 +1,7 @@
 use crate::chroma_ls::ChromaLsArgs;
 use crate::chroma_query::QueryArgs;
 use crate::chroma_similarity_search::SimilarityArgs;
-use crate::ollama::PullArgs;
+use crate::ollama::{PullArgs, RmArgs};
 use crate::ollama_ask::AskArgs;
 use crate::ollama_chat::ChatArgs;
 use crate::ollama_embed::EmbedArgs;
@@ -29,7 +29,8 @@ pub enum Commands {
     Embed(EmbedArgs),
     Func(FuncArgs),
     FuncStruct(FuncStructArgs),
-    List,
+    Ls,
+    Rm(RmArgs),
     Pull(PullArgs),
     Query(QueryArgs),
     Similarity(SimilarityArgs),
