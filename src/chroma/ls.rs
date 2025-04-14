@@ -1,4 +1,4 @@
-use crate::chroma::create_chroma_client;
+use crate::chroma::create_client;
 use crate::error::RuChatError;
 use anyhow::Result;
 use chromadb::collection::ChromaCollection;
@@ -25,7 +25,7 @@ pub struct ChromaLsArgs {
 
 pub(crate) async fn chroma_ls(args: &ChromaLsArgs) -> Result<(), RuChatError> {
     // Instantiate a ChromaClient to connect to the Chroma database
-    let client = create_chroma_client(
+    let client = create_client(
         args.chroma_token.as_deref(),
         &args.chroma_server,
         &args.chroma_database,

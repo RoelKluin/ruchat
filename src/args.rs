@@ -1,12 +1,13 @@
-use crate::chroma_ls::ChromaLsArgs;
-use crate::chroma_query::QueryArgs;
-use crate::chroma_similarity_search::SimilarityArgs;
-use crate::ollama::{PullArgs, RmArgs};
-use crate::ollama_ask::AskArgs;
-use crate::ollama_chat::ChatArgs;
-use crate::ollama_embed::EmbedArgs;
-use crate::ollama_func::FuncArgs;
-use crate::ollama_func_struct::FuncStructArgs;
+use crate::chroma::ls::ChromaLsArgs;
+use crate::chroma::query::QueryArgs;
+use crate::chroma::similarity::SimilarityArgs;
+use crate::ollama::model::pull::PullArgs;
+use crate::ollama::model::rm::RmArgs;
+use crate::ollama::ask::AskArgs;
+use crate::ollama::chat::ChatArgs;
+use crate::embed::EmbedArgs;
+use crate::ollama::func::FuncArgs;
+use crate::ollama::func::strukt::FuncStructArgs;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser, Debug)]

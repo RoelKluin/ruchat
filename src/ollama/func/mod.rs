@@ -1,6 +1,7 @@
-use crate::chat_io::ChatIO;
+pub(crate) mod strukt;
+use crate::io::Io;
 use crate::error::RuChatError;
-use crate::ollama::get_model_name;
+use crate::ollama::model::get_name;
 use clap::Parser;
 use ollama_rs::models::ModelOptions;
 use ollama_rs::{
@@ -27,7 +28,7 @@ pub struct FuncArgs {
 
 pub(crate) async fn func(ollama: Ollama, args: &FuncArgs) -> Result<(), RuChatError> {
     let history = vec![];
-    let model_name = get_model_name(&ollama, &args.model).await?;
+    let model_name = get_name(&ollama, &args.model).await?;
     let mut coordinator = Coordinator::new(ollama, model_name.to_string(), history)
         .options(ModelOptions::default().num_ctx(16384))
         .add_tool(Calculator {})
@@ -37,7 +38,7 @@ pub(crate) async fn func(ollama: Ollama, args: &FuncArgs) -> Result<(), RuChatEr
         .add_tool(Browserless {});
     // browserless requires an BROWSERLESS_TOKEN=... environment variable
 
-    let mut cio = ChatIO::new();
+    let mut cio = Io::new();
     cio.write_line("Enter prompt or 'q' to quit:").await?;
     loop {
         let input = cio.read_line(true).await?;

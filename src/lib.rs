@@ -1,24 +1,16 @@
-pub mod args;
-pub mod bufcursor;
-pub mod chat_io;
-pub mod chroma;
-pub mod chroma_ls;
-pub mod chroma_query;
-pub mod chroma_similarity_search;
-pub mod config;
-pub mod conversation_tree;
-pub mod error;
-pub mod ollama;
-pub mod ollama_ask;
-pub mod ollama_chat;
-pub mod ollama_embed;
-pub mod ollama_func;
-pub mod ollama_func_struct;
+pub(crate) mod args;
+pub(crate) mod io;
+pub(crate) mod chroma;
+pub(crate) mod ollama;
+pub(crate) mod subcommand;
+pub(crate) mod config;
+pub(crate) mod error;
+pub(crate) mod embed;
 
 use args::Args;
 use clap::Parser;
 use error::RuChatError;
-use ollama::handle_request;
+use subcommand::handle_request;
 
 pub async fn run() -> Result<(), RuChatError> {
     env_logger::init();

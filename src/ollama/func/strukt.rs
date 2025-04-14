@@ -1,6 +1,6 @@
-use crate::chat_io::ChatIO;
+use crate::io::Io;
 use crate::error::RuChatError;
-use crate::ollama::get_model_name;
+use crate::ollama::model::get_name;
 use clap::Parser;
 use ollama_rs::models::ModelOptions;
 use ollama_rs::{
@@ -51,7 +51,7 @@ async fn get_available_space(
 pub(crate) async fn func_struct(ollama: Ollama, args: &FuncStructArgs) -> Result<(), RuChatError> {
     // browserless requires an BROWSERLESS_TOKEN=... environment variable
     let history = vec![];
-    let model_name = get_model_name(&ollama, &args.model).await?;
+    let model_name = get_name(&ollama, &args.model).await?;
 
     let format = FormatType::StructuredJson(JsonStructure::new::<Weather>());
 
@@ -61,7 +61,7 @@ pub(crate) async fn func_struct(ollama: Ollama, args: &FuncStructArgs) -> Result
         .format(format)
         .options(ModelOptions::default().temperature(0.0));
 
-    let mut cio = ChatIO::new();
+    let mut cio = Io::new();
     cio.write_line("Ask about the weather somewhere or 'q' to quit:")
         .await?;
     loop {

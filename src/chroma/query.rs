@@ -1,20 +1,32 @@
+use crate::chroma::create_client;
 use crate::error::RuChatError;
+use crate::ollama::model::get_name;
+use crate::ollama::ask::get_options;
+use crate::io::Io;
 use anyhow::Result;
-use chromadb::collection::{ChromaCollection, GetOptions, GetResult, QueryOptions, QueryResult};
+use chromadb::collection::{ChromaCollection, GetOptions, GetResult};
 use clap::Parser;
+use ollama_rs::generation::completion::request::GenerationRequest;
+use ollama_rs::Ollama;
 use serde_json::json;
-use crate::chroma::create_chroma_client;
+use tokio_stream::StreamExt;
 
 #[derive(Parser, Debug, Clone)]
-pub struct SimilarityArgs {
+pub struct QueryArgs {
+    #[clap(short, long, default_value = "qwen2.5-coder:14b")]
+    pub(crate) model: String,
+
+    #[clap(short, long)]
+    pub(crate) config: Option<String>,
+
     #[clap(short, long)]
     pub(crate) query: String,
 
+    #[clap(short, long)]
+    pub(crate) prompt: String,
+
     #[clap(short, long, default_value = "1")]
     pub(crate) count: usize,
-
-    #[clap(short, long, default_value = "5")]
-    pub(crate) similarity_count: usize,
 
     /// Chroma database collection name
     #[clap(short, long, default_value = "default")]
@@ -37,16 +49,13 @@ pub struct SimilarityArgs {
     pub(crate) chroma_token: Option<String>,
 }
 
-pub(crate) async fn similarity_search(args: &SimilarityArgs) -> Result<(), RuChatError> {
-    // Instantiate a ChromaClient to connect to the Chroma database
-    let client = create_chroma_client(
+pub(crate) async fn query(ollama: Ollama, args: &QueryArgs) -> Result<(), RuChatError> {
+    let client = create_client(
         args.chroma_token.as_deref(),
         &args.chroma_server,
         &args.chroma_database,
     )
     .await?;
-
-    // Instantiate a ChromaCollection to perform operations on a collection
     let collection: ChromaCollection = client
         .get_or_create_collection(&args.collection, None)
         .await?;
@@ -69,23 +78,26 @@ pub(crate) async fn similarity_search(args: &SimilarityArgs) -> Result<(), RuCha
         include: Some(vec!["documents".into(), "embeddings".into()]),
     };
     let get_result: GetResult = collection.get(get_query).await?;
+    let res: Vec<_> = get_result
+        .embeddings
+        .map(|embeddings| embeddings.into_iter().flatten().collect())
+        .unwrap_or_default();
+    eprintln!("Get result: {:?}", res);
+    let prompt = format!(
+        "Using this data: {:?}, respond to this prompt: {}",
+        res, args.prompt
+    );
 
-    // FIXME: This is a placeholder for the actual embeddings
-    // Instantiate QueryOptions to perform a similarity search on the collection
-    // Alternatively, an embedding_function can also be provided with query_texts to perform the search
-    let query = QueryOptions {
-        query_texts: None,
-        query_embeddings: get_result
-            .embeddings
-            .map(|embeddings| embeddings.into_iter().flatten().collect()),
-        where_metadata: None,
-        where_document: None,
-        n_results: Some(args.similarity_count),
-        include: None,
-    };
-
-    let query_result: QueryResult = collection.query(query, None).await?;
-    println!("Query result: {:?}", query_result);
-
+    let mut cio = Io::new();
+    let model_name = get_name(&ollama, &args.model).await?;
+    let request =
+        GenerationRequest::new(model_name, prompt).options(get_options(&args.config).await?);
+    let mut stream = ollama.generate_stream(request).await?;
+    while let Some(res) = stream.next().await {
+        let responses = res?;
+        for resp in responses {
+            cio.write_line(&resp.response).await?;
+        }
+    }
     Ok(())
 }

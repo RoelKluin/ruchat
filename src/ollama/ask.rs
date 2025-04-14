@@ -1,7 +1,7 @@
-use crate::chat_io::ChatIO;
+use crate::io::Io;
 use crate::config::read_config_file;
 use crate::error::RuChatError;
-use crate::ollama::get_model_name;
+use crate::ollama::model::get_name;
 use clap::Parser;
 use ollama_rs::{generation::completion::request::GenerationRequest, models::ModelOptions, Ollama};
 use serde_json::Value;
@@ -92,7 +92,7 @@ pub(crate) async fn get_options(config: &Option<String>) -> Result<ModelOptions,
 }
 
 pub(crate) async fn ask(ollama: Ollama, args: &AskArgs) -> Result<(), RuChatError> {
-    let mut cio = ChatIO::new();
+    let mut cio = Io::new();
     let mut prompt = if args.prompt.is_some() || args.text_files.is_some() {
         generate_prompt(args)?
     } else {
@@ -110,7 +110,7 @@ pub(crate) async fn ask(ollama: Ollama, args: &AskArgs) -> Result<(), RuChatErro
         prompt.push_str(&args.output_format);
         prompt.push_str(" output format.\n");
     }
-    let model_name = get_model_name(&ollama, &args.model).await?;
+    let model_name = get_name(&ollama, &args.model).await?;
     let request =
         GenerationRequest::new(model_name, prompt).options(get_options(&args.config).await?);
     let mut stream = ollama.generate_stream(request).await?;

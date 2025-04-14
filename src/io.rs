@@ -2,12 +2,12 @@ use crate::error::RuChatError;
 use std::io::stdin;
 use tokio::io::AsyncWriteExt;
 
-pub(crate) struct ChatIO {
+pub(crate) struct Io {
     stdin: std::io::Stdin,
     stdout: tokio::io::Stdout,
 }
 
-impl ChatIO {
+impl Io {
     pub(crate) fn new() -> Self {
         Self {
             stdin: stdin(),

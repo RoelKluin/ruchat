@@ -1,6 +1,6 @@
-use crate::chroma::create_chroma_client;
+use crate::chroma::create_client;
 use crate::error::RuChatError;
-use crate::ollama::get_model_name;
+use crate::ollama::model::get_name;
 use chromadb::collection::{ChromaCollection, CollectionEntries};
 use chromadb::embeddings::EmbeddingFunction;
 use clap::Parser;
@@ -59,14 +59,14 @@ fn get_metadata(arg_metadata: &Option<String>) -> Result<Option<Map<String, Valu
 }
 
 pub(crate) async fn embed(ollama: Ollama, args: &EmbedArgs) -> Result<(), RuChatError> {
-    let model_name = get_model_name(&ollama, &args.model).await?;
+    let model_name = get_name(&ollama, &args.model).await?;
     if !model_name.contains("embed") {
         warn!("Model {} might not be an embeddings model", model_name);
     }
     let entries_metadata = get_metadata(&args.entries_metadata)?;
 
     let request = GenerateEmbeddingsRequest::new(model_name, vec![args.prompt.as_str()].into());
-    let client = create_chroma_client(
+    let client = create_client(
         args.chroma_token.as_deref(),
         &args.chroma_server,
         &args.chroma_database,

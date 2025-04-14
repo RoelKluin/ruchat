@@ -1,7 +1,9 @@
-use crate::bufcursor::BufCursor;
-use crate::conversation_tree::ConversationTree;
+mod bufcursor;
+mod conversation_tree;
+use bufcursor::BufCursor;
+use conversation_tree::ConversationTree;
 use crate::error::RuChatError;
-use crate::ollama::get_model_name;
+use crate::ollama::model::get_name;
 use clap::Parser;
 use crossterm::{
     cursor::MoveTo,
@@ -101,7 +103,7 @@ async fn chat_raw_mode(ollama: Ollama, args: &ChatArgs) -> Result<(), RuChatErro
     //let running = Arc::new(Mutex::new(true))
     let mut stdout = io::stdout();
     let mut bufcursor = BufCursor::new();
-    let model_name = get_model_name(&ollama, &args.model).await?;
+    let model_name = get_name(&ollama, &args.model).await?;
     stdout.execute(EnterAlternateScreen)?;
     stdout.execute(EnableMouseCapture)?;
 
