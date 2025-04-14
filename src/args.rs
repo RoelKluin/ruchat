@@ -14,8 +14,11 @@ pub struct Args {
     #[clap(subcommand)]
     pub command: Option<Commands>,
 
-    #[clap(short, long, default_value = "http://172.30.138.132:11434")]
+    #[clap(short, long, default_value = "http://172.18.0.1:11434")]
     pub(crate) server: String,
+
+    #[clap(short, long, default_value = "false")]
+    pub(crate) verbose: bool,
 }
 
 #[derive(Subcommand, Debug, Clone)]

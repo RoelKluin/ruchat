@@ -60,6 +60,9 @@ fn format_size(size: u64) -> String {
 
 pub fn get_ollama(args: &Args) -> Result<Ollama, RuChatError> {
     let server = &args.server;
+    if args.verbose {
+        println!("Connecting to Ollama server at {}", server);
+    }
     server
         .rsplit_once(':')
         .and_then(|(host, port)| port.parse::<u16>().map(|p| Ollama::new(host, p)).ok())
@@ -95,6 +98,10 @@ async fn pull_model(args: &Args, pull_args: &PullArgs) -> Result<(), RuChatError
 
 pub async fn handle_request(args: &Args) -> Result<(), RuChatError> {
     let default = Commands::Ask(AskArgs::default());
+    if args.verbose {
+        let command_line = std::env::args().collect::<Vec<String>>().join(" ");
+        println!("Command line: {}", command_line);
+    }
     match args.command.as_ref().unwrap_or(&default) {
         Commands::Ask(ask_args) => ask(get_ollama(args)?, ask_args).await?,
         Commands::Chat(chat_args) => chat(get_ollama(args)?, chat_args).await?,

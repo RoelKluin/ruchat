@@ -100,11 +100,11 @@ async fn chat_raw_mode(ollama: Ollama, args: &ChatArgs) -> Result<(), RuChatErro
     //let running = Arc::new(Mutex::new(true))
     let mut stdout = io::stdout();
     let mut bufcursor = BufCursor::new();
+    let model_name = get_model_name(&ollama, &args.model).await?;
     stdout.execute(EnterAlternateScreen)?;
     stdout.execute(EnableMouseCapture)?;
 
     let history = Arc::new(Mutex::new(vec![]));
-    let model_name = get_model_name(&ollama, &args.model).await?;
     loop {
         // TODO: not clear the whole screen for every keystroke?
         // Clear the screen
