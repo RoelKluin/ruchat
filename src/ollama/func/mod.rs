@@ -20,12 +20,14 @@ use ollama_rs::{
     Ollama,
 };
 
+/// query model using a function
 #[derive(Parser, Debug, Clone)]
 pub struct FuncArgs {
     #[clap(short, long, default_value = "qwen2.5-coder:14b")]
     pub(crate) model: String,
 }
 
+/// subcommand to run a function using a model
 pub(crate) async fn func(ollama: Ollama, args: &FuncArgs) -> Result<(), RuChatError> {
     let history = vec![];
     let model_name = get_name(&ollama, &args.model).await?;

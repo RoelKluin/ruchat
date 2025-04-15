@@ -4,16 +4,18 @@ use crate::ollama::model::get_name;
 use crate::ollama::init;
 use crate::error::RuChatError;
 
+/// Remove a model from the local Ollama instance
 #[derive(Parser, Debug, Clone)]
 pub struct RmArgs {
     /// specify the model to remove using the --model or -m flag
     #[clap(short, long)]
     model: Option<String>,
 
-    /// specify the model to pull using the positional argument
+    /// alternative positional argument to specify the model to remove
     positional_model: Option<String>,
 }
 
+/// Subcommand to remove a model from the local Ollama instance
 pub(crate) async fn remove(args: &Args, rm_args: &RmArgs) -> Result<(), RuChatError> {
     let ollama = init(args)?;
     match rm_args.model.as_deref().or(rm_args.positional_model.as_deref()) {

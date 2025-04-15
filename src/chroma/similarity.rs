@@ -5,14 +5,18 @@ use clap::Parser;
 use serde_json::json;
 use crate::chroma::create_client;
 
+/// Chroma database similarity search command line arguments
 #[derive(Parser, Debug, Clone)]
 pub struct SimilarityArgs {
+    /// query string to search for similar embeddings
     #[clap(short, long)]
     pub(crate) query: String,
 
+    /// number of embeddings to return
     #[clap(short, long, default_value = "1")]
     pub(crate) count: usize,
 
+    /// number of similar embeddings to return
     #[clap(short, long, default_value = "5")]
     pub(crate) similarity_count: usize,
 
@@ -37,6 +41,8 @@ pub struct SimilarityArgs {
     pub(crate) chroma_token: Option<String>,
 }
 
+
+/// Subcommand to find similar embeddings in Chroma database
 pub(crate) async fn similarity_search(args: &SimilarityArgs) -> Result<(), RuChatError> {
     // Instantiate a ChromaClient to connect to the Chroma database
     let client = create_client(

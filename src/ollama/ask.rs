@@ -9,11 +9,14 @@ use std::iter::Iterator;
 use std::{fs, io::Read};
 use tokio_stream::StreamExt;
 
+/// Ask a question to a model and get a response
 #[derive(Parser, Debug, Clone, Default)]
 pub struct AskArgs {
+    /// model to (down)load and use
     #[clap(short, long, default_value = "qwen2.5-coder:14b")]
     pub(crate) model: String,
 
+    /// prompt to use, if not provided, stdin will be used
     #[clap(short, long)]
     pub(crate) prompt: Option<String>,
 
@@ -26,9 +29,12 @@ pub struct AskArgs {
     pub(crate) text_files: Option<String>,
 
     /// Path to a JSON file to amend default generation options, listed in
-    /// https://docs.rs/ollama-rs/latest/ollama_rs/generation/options/struct.GenerationOptions.html
+    /// https://docs.rs/ollama-rs/0.3.0/src/ollama_rs/models.rs.html#61-94
     #[clap(short, long)]
     pub(crate) config: Option<String>,
+
+    /// Specify the prompt using a positional argument
+    pub(crate) positional_prompt: Option<String>,
 }
 
 // TODO: allow more prompt configurations
@@ -66,11 +72,13 @@ fn generate_prompt(args: &AskArgs) -> Result<String, RuChatError> {
     let question = args
         .prompt
         .as_deref()
+        .or(args.positional_prompt.as_deref())
         .unwrap_or("What do you make of this?");
     prompt.push_str(question);
     Ok(prompt)
 }
 
+/// Get model options for prompt handling from a JSON file
 pub(crate) async fn get_options(config: &Option<String>) -> Result<ModelOptions, RuChatError> {
     if let Some(config_path) = config {
         let mut defaults = serde_json::to_value(ModelOptions::default())?;
@@ -91,9 +99,10 @@ pub(crate) async fn get_options(config: &Option<String>) -> Result<ModelOptions,
     }
 }
 
+/// The ask command handles prompted questions with context using a model
 pub(crate) async fn ask(ollama: Ollama, args: &AskArgs) -> Result<(), RuChatError> {
     let mut cio = Io::new();
-    let mut prompt = if args.prompt.is_some() || args.text_files.is_some() {
+    let mut prompt = if args.prompt.is_some() || args.positional_prompt.is_some() || args.text_files.is_some() {
         generate_prompt(args)?
     } else {
         let mut input = String::new();

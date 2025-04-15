@@ -2,6 +2,7 @@ use crate::ollama::init;
 use crate::error::RuChatError;
 use crate::args::Args;
 
+/// pretty print the size of a model
 fn format_size(size: u64) -> String {
     const KIB: f64 = 1024.0;
     const MIB: f64 = KIB * 1024.0;
@@ -20,6 +21,7 @@ fn format_size(size: u64) -> String {
     }
 }
 
+/// subcommand to list all models
 pub(crate) async fn list(args: &Args) -> Result<(), RuChatError> {
     let ollama = init(args)?;
     let models = ollama.list_local_models().await?;
