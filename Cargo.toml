@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 authors = ["Roelof J.C. Kluin"]
-repository = "https://gitlab.nki.nl/gcf/ruchat"
+repository = "https://github.com/RoelKluin/ruchat"
 description = "ollama/chroma command-line AI chat tool"
 
 [dependencies]
