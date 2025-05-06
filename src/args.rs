@@ -4,6 +4,7 @@ use crate::chroma::similarity::SimilarityArgs;
 use crate::ollama::model::pull::PullArgs;
 use crate::ollama::model::rm::RmArgs;
 use crate::ollama::ask::AskArgs;
+use crate::ollama::pipe::PipeArgs;
 use crate::ollama::chat::ChatArgs;
 use crate::embed::EmbedArgs;
 use crate::ollama::func::FuncArgs;
@@ -30,6 +31,8 @@ pub struct Args {
 pub enum Commands {
     /// Query language model using a prompt, you may including file context
     Ask(AskArgs),
+    /// Pipe markdown to language model seperated by three hyphens/dashes, asterisks or underscores
+    Pipe(PipeArgs),
     /// Chat with a language model
     Chat(ChatArgs),
     /// List models

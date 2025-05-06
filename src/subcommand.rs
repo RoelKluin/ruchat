@@ -3,7 +3,8 @@ use crate::chroma::ls::chroma_ls;
 use crate::chroma::query::query;
 use crate::chroma::similarity::similarity_search;
 use crate::error::RuChatError;
-use crate::ollama::ask::{ask, AskArgs};
+use crate::ollama::ask::ask;
+use crate::ollama::pipe::{pipe, PipeArgs};
 use crate::ollama::chat::chat;
 use crate::embed::embed;
 use crate::ollama::model::ls::list;
@@ -15,13 +16,14 @@ use crate::ollama::init;
 
 /// Handle the command line arguments and execute the corresponding function
 pub async fn handle_request(args: &Args) -> Result<(), RuChatError> {
-    let default = Commands::Ask(AskArgs::default());
+    let default = Commands::Pipe(PipeArgs::default());
     if args.verbose {
         let command_line = std::env::args().collect::<Vec<String>>().join(" ");
         println!("Command line: {}", command_line);
     }
     match args.command.as_ref().unwrap_or(&default) {
         Commands::Ask(ask_args) => ask(init(args)?, ask_args).await?,
+        Commands::Pipe(pipe_args) => pipe(init(args)?, pipe_args).await?,
         Commands::Chat(chat_args) => chat(init(args)?, chat_args).await?,
         Commands::Ls => list(args).await?,
         Commands::Rm(rm_args) => remove(args, rm_args).await?,

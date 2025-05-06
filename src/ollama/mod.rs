@@ -1,4 +1,5 @@
 pub(crate) mod ask;
+pub(crate) mod pipe;
 pub(crate) mod model;
 pub(crate) mod func;
 pub(crate) mod chat;
