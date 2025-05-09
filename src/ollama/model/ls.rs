@@ -2,7 +2,18 @@ use crate::ollama::init;
 use crate::error::RuChatError;
 use crate::args::Args;
 
-/// pretty print the size of a model
+/// Pretty print the size of a model.
+///
+/// This function formats the size of a model in a human-readable
+/// format, using units such as K (kilobytes), M (megabytes), and G (gigabytes).
+///
+/// # Parameters
+///
+/// - `size`: The size of the model in bytes.
+///
+/// # Returns
+///
+/// A `String` representing the formatted size.
 fn format_size(size: u64) -> String {
     const KIB: f64 = 1024.0;
     const MIB: f64 = KIB * 1024.0;
@@ -21,7 +32,19 @@ fn format_size(size: u64) -> String {
     }
 }
 
-/// subcommand to list all models
+/// Subcommand to list all models.
+///
+/// This function connects to the Ollama server, retrieves the list
+/// of local models, and prints their names and sizes in a formatted
+/// table.
+///
+/// # Parameters
+///
+/// - `args`: The command-line arguments containing the server information.
+///
+/// # Returns
+///
+/// A `Result` indicating success or failure.
 pub(crate) async fn list(args: &Args) -> Result<(), RuChatError> {
     let ollama = init(args)?;
     let models = ollama.list_local_models().await?;

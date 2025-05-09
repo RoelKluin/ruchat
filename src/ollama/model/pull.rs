@@ -4,18 +4,33 @@ use crate::ollama::model::get_name;
 use crate::ollama::init;
 use crate::error::RuChatError;
 
-/// Pull a model from the main Ollama server
+/// Command-line arguments for pulling a model from the main Ollama server.
+///
+/// This struct defines the arguments required to pull a model
+/// from the main Ollama server, including model details.
 #[derive(Parser, Debug, Clone)]
 pub struct PullArgs {
-    /// specify the model to pull using the --model or -m flag
+    /// Specify the model to pull using the --model or -m flag.
     #[clap(short, long)]
     model: Option<String>,
 
-    /// alternative positional argument to specify the model to pull
+    /// Alternative positional argument to specify the model to pull.
     positional_model: Option<String>,
 }
 
-/// subcommand to pull a model from the main Ollama server
+/// Subcommand to pull a model from the main Ollama server.
+///
+/// This function connects to the Ollama server, retrieves the specified
+/// model, and pulls it to the local environment.
+///
+/// # Parameters
+///
+/// - `args`: The command-line arguments containing the server information.
+/// - `pull_args`: The command-line arguments for the pull operation.
+///
+/// # Returns
+///
+/// A `Result` indicating success or failure.
 pub(crate) async fn pull(args: &Args, pull_args: &PullArgs) -> Result<(), RuChatError> {
     let ollama = init(args)?;
     match pull_args.model.as_deref().or(pull_args.positional_model.as_deref()) {

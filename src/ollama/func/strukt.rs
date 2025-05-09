@@ -14,15 +14,29 @@ use ollama_rs::{
 use serde::Deserialize;
 use std::path::PathBuf;
 
+/// Command-line arguments for querying a model using structured functions.
+///
+/// This struct defines the arguments required to query a model
+/// using structured functions, including model details.
 #[derive(Parser, Debug, Clone)]
 pub struct FuncStructArgs {
+    /// The model to use for the structured function query.
     #[clap(short, long, default_value = "qwen2.5-coder:14b")]
     pub(crate) model: String,
 }
 
 /// Get the weather for a given city.
 ///
-/// * city - City to get the weather for.
+/// This function retrieves the weather information for a specified city
+/// using an external weather service.
+///
+/// # Parameters
+///
+/// - `city`: The city to get the weather for.
+///
+/// # Returns
+///
+/// A `Result` containing the weather information as a `String` or an error.
 #[ollama_rs::function]
 async fn get_weather(city: String) -> Result<String, Box<dyn std::error::Error + Sync + Send>> {
     println!("Get weather function called for {city}");
@@ -36,7 +50,15 @@ async fn get_weather(city: String) -> Result<String, Box<dyn std::error::Error +
 
 /// Get the available space in bytes for a given path.
 ///
-/// * path - Path to check available space for.
+/// This function retrieves the available disk space for a specified path.
+///
+/// # Parameters
+///
+/// - `path`: The path to check available space for.
+///
+/// # Returns
+///
+/// A `Result` containing the available space as a `String` or an error.
 #[ollama_rs::function]
 async fn get_available_space(
     path: PathBuf,
@@ -48,6 +70,20 @@ async fn get_available_space(
     ))
 }
 
+/// Subcommand to run a structured function using a model.
+///
+/// This function connects to a model using the provided arguments,
+/// sets up a coordinator with structured functions, and allows the user
+/// to enter prompts to query the model.
+///
+/// # Parameters
+///
+/// - `ollama`: The Ollama client for generating responses.
+/// - `args`: The command-line arguments for the structured function query.
+///
+/// # Returns
+///
+/// A `Result` indicating success or failure.
 pub(crate) async fn func_struct(ollama: Ollama, args: &FuncStructArgs) -> Result<(), RuChatError> {
     // browserless requires an BROWSERLESS_TOKEN=... environment variable
     let history = vec![];

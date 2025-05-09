@@ -9,39 +9,55 @@ use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
 use ollama_rs::Ollama;
 use serde_json::{Map, Value};
 
+/// Command-line arguments for embedding data into a Chroma database.
+///
+/// This struct defines the arguments required to perform an embedding
+/// operation in a Chroma database, including model details, prompt,
+/// and database connection information.
 #[derive(Parser, Debug, Clone)]
 pub struct EmbedArgs {
+    /// The model to use for generating embeddings.
     #[clap(short, long, default_value = "nomic-embed-text:latest")]
     pub(crate) model: String,
 
+    /// The prompt to embed.
     #[clap(short, long)]
     pub(crate) prompt: String,
 
-    /// Chroma database server address and port
+    /// Chroma database server address and port.
     #[clap(short = 'C', long, default_value = "http://localhost:8000")]
     pub(crate) chroma_server: String,
 
-    /// Chroma database name
+    /// Chroma database name.
     #[clap(short = 'd', long, default_value = "default")]
     pub(crate) chroma_database: String,
 
-    /// Chroma token for authentication
+    /// Chroma token for authentication.
     #[clap(short = 't', long)]
     pub(crate) chroma_token: Option<String>,
 
-    /// Chroma database collection name
+    /// Chroma database collection name.
     #[clap(short, long, default_value = "default")]
     pub(crate) collection: String,
 
-    /// Chroma collection metadata, comma separated key:value pairs
+    /// Chroma collection metadata, comma separated key:value pairs.
     #[clap(short, long, default_value = "version:0.01")]
     pub(crate) collection_metadata: Option<String>,
 
-    /// Chroma entries metadata, comma separated key:value pairs
+    /// Chroma entries metadata, comma separated key:value pairs.
     #[clap(short, long, default_value = "version:0.01")]
     pub(crate) entries_metadata: Option<String>,
 }
 
+/// Parses metadata from a string of comma-separated key:value pairs.
+///
+/// # Parameters
+///
+/// - `arg_metadata`: An optional string containing metadata.
+///
+/// # Returns
+///
+/// A `Result` containing an optional map of metadata or a `RuChatError`.
 fn get_metadata(arg_metadata: &Option<String>) -> Result<Option<Map<String, Value>>, RuChatError> {
     if arg_metadata.is_none() {
         return Ok(None);
@@ -58,6 +74,20 @@ fn get_metadata(arg_metadata: &Option<String>) -> Result<Option<Map<String, Valu
     Ok(Some(metadata))
 }
 
+/// Embeds data into a Chroma database.
+///
+/// This function connects to a Chroma database using the provided
+/// arguments, generates embeddings for the specified prompt, and
+/// stores the embeddings in the database.
+///
+/// # Parameters
+///
+/// - `ollama`: The Ollama client for generating embeddings.
+/// - `args`: The command-line arguments for the embedding operation.
+///
+/// # Returns
+///
+/// A `Result` indicating success or failure.
 pub(crate) async fn embed(ollama: Ollama, args: &EmbedArgs) -> Result<(), RuChatError> {
     let model_name = get_name(&ollama, &args.model).await?;
     if !model_name.contains("embed") {

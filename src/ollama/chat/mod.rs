@@ -20,17 +20,48 @@ use tokio::task;
 use tokio::time::{sleep, timeout, Duration};
 use tokio_stream::StreamExt;
 
-
+/// Command-line arguments for interactive chat sessions with a model.
+///
+/// This struct defines the arguments required to start an interactive
+/// chat session with a model, including model details.
 #[derive(Parser, Debug, Clone)]
 pub struct ChatArgs {
+    /// The model to use for the chat session.
     #[clap(short, long, default_value = "qwen2.5-coder:14b")]
     pub(crate) model: String,
 }
 
+/// Creates a chat message request for the model.
+///
+/// This function constructs a chat message request using the specified
+/// model name and user prompt.
+///
+/// # Parameters
+///
+/// - `model_name`: The name of the model to use.
+/// - `prompt`: The user prompt to send to the model.
+///
+/// # Returns
+///
+/// A `ChatMessageRequest` containing the model name and user prompt.
 fn get_chat_message_request(model_name: String, prompt: String) -> ChatMessageRequest {
     ChatMessageRequest::new(model_name, vec![ChatMessage::user(prompt)])
 }
 
+/// Redraws the chat screen with the current chat history and buffer cursor.
+///
+/// This function clears the screen and displays the current chat history
+/// and buffer cursor position.
+///
+/// # Parameters
+///
+/// - `stdout`: The standard output stream.
+/// - `chat_history`: The conversation tree containing the chat history.
+/// - `bufcursor`: The buffer cursor for editing the current question.
+///
+/// # Returns
+///
+/// A `Result` indicating success or failure.
 fn redraw_screen(
     stdout: &mut io::Stdout,
     chat_history: &ConversationTree,
@@ -75,28 +106,19 @@ fn redraw_screen(
     Ok(())
 }
 
-async fn display_runner(running: Arc<Mutex<bool>>) {
-    let mut position = 0;
-    let runner_chars = ['|', '/', '-', '\\'];
-    while *running.lock().unwrap() {
-        print!("\r{}", runner_chars[position]);
-        position = (position + 1) % runner_chars.len();
-        sleep(Duration::from_millis(100)).await;
-    }
-    print!("\r "); // Clear the runner character
-}
-
-async fn generate_response(question: String) -> Result<String, &'static str> {
-    // Simulate server response generation
-    sleep(Duration::from_secs(3)).await;
-    Ok(format!("Response to: {}", question))
-}
-
-async fn handle_question() {
-    // Simulate handling a question
-    sleep(Duration::from_secs(5)).await;
-}
-
+/// Runs the chat session in raw mode.
+///
+/// This function sets up the chat session in raw mode, allowing the user
+/// to interact with the model in an interactive chat session.
+///
+/// # Parameters
+///
+/// - `ollama`: The Ollama client for generating responses.
+/// - `args`: The command-line arguments for the chat session.
+///
+/// # Returns
+///
+/// A `Result` indicating success or failure.
 async fn chat_raw_mode(ollama: Ollama, args: &ChatArgs) -> Result<(), RuChatError> {
     let chat_history = Arc::new(Mutex::new(ConversationTree::new()));
 
@@ -179,6 +201,20 @@ async fn chat_raw_mode(ollama: Ollama, args: &ChatArgs) -> Result<(), RuChatErro
     Ok(())
 }
 
+/// Starts an interactive chat session with a model.
+///
+/// This function enters raw mode and sets up an interactive chat session
+/// with the specified model, allowing the user to enter prompts and receive
+/// responses.
+///
+/// # Parameters
+///
+/// - `ollama`: The Ollama client for generating responses.
+/// - `args`: The command-line arguments for the chat session.
+///
+/// # Returns
+///
+/// A `Result` indicating success or failure.
 pub(crate) async fn chat(ollama: Ollama, args: &ChatArgs) -> Result<(), RuChatError> {
     // Enter raw mode and alternate screen
     terminal::enable_raw_mode()?;

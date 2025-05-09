@@ -5,44 +5,58 @@ use clap::Parser;
 use serde_json::json;
 use crate::chroma::create_client;
 
-/// Chroma database similarity search command line arguments
+/// Chroma database similarity search command line arguments.
+///
+/// This struct defines the arguments required to perform a similarity
+/// search in a Chroma database, including query parameters and database
+/// connection information.
 #[derive(Parser, Debug, Clone)]
 pub struct SimilarityArgs {
-    /// query string to search for similar embeddings
+    /// Query string to search for similar embeddings.
     #[clap(short, long)]
     pub(crate) query: String,
 
-    /// number of embeddings to return
+    /// Number of embeddings to return.
     #[clap(short, long, default_value = "1")]
     pub(crate) count: usize,
 
-    /// number of similar embeddings to return
+    /// Number of similar embeddings to return.
     #[clap(short, long, default_value = "5")]
     pub(crate) similarity_count: usize,
 
-    /// Chroma database collection name
+    /// Chroma database collection name.
     #[clap(short, long, default_value = "default")]
     pub(crate) collection: String,
 
-    /// Chroma database metadata, comma separated key:value pairs
+    /// Chroma database metadata, comma separated key:value pairs.
     #[clap(short, long)]
     pub(crate) metadata: Option<String>,
 
-    /// Chroma database server address and port
+    /// Chroma database server address and port.
     #[clap(short = 'C', long, default_value = "http://localhost:8000")]
     pub(crate) chroma_server: String,
 
-    /// Chroma database name
+    /// Chroma database name.
     #[clap(short = 'd', long, default_value = "default")]
     pub(crate) chroma_database: String,
 
-    /// Chroma token for authentication
+    /// Chroma token for authentication.
     #[clap(short = 't', long)]
     pub(crate) chroma_token: Option<String>,
 }
 
-
-/// Subcommand to find similar embeddings in Chroma database
+/// Subcommand to find similar embeddings in a Chroma database.
+///
+/// This function connects to a Chroma database using the provided
+/// arguments, performs a similarity search, and returns the results.
+///
+/// # Parameters
+///
+/// - `args`: The command-line arguments for the similarity search.
+///
+/// # Returns
+///
+/// A `Result` indicating success or failure.
 pub(crate) async fn similarity_search(args: &SimilarityArgs) -> Result<(), RuChatError> {
     // Instantiate a ChromaClient to connect to the Chroma database
     let client = create_client(

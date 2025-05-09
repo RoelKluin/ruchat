@@ -11,44 +11,68 @@ use ollama_rs::Ollama;
 use serde_json::json;
 use tokio_stream::StreamExt;
 
+/// Command-line arguments for querying a Chroma database.
+///
+/// This struct defines the arguments required to perform a query
+/// in a Chroma database, including model details, query parameters,
+/// and database connection information.
 #[derive(Parser, Debug, Clone)]
 pub struct QueryArgs {
+    /// The model to use for the query.
     #[clap(short, long, default_value = "qwen2.5-coder:14b")]
     pub(crate) model: String,
 
+    /// Optional configuration file for model options.
     #[clap(short, long)]
     pub(crate) config: Option<String>,
 
+    /// The query string to search for in the database.
     #[clap(short, long)]
     pub(crate) query: String,
 
+    /// The prompt to use for generating a response.
     #[clap(short, long)]
     pub(crate) prompt: String,
 
+    /// The number of results to return.
     #[clap(short, long, default_value = "1")]
     pub(crate) count: usize,
 
-    /// Chroma database collection name
+    /// Chroma database collection name.
     #[clap(short, long, default_value = "default")]
     pub(crate) collection: String,
 
-    /// Chroma database metadata, comma separated key:value pairs
+    /// Chroma database metadata, comma separated key:value pairs.
     #[clap(short, long)]
     pub(crate) metadata: Option<String>,
 
-    /// Chroma database server address and port
+    /// Chroma database server address and port.
     #[clap(short = 'C', long, default_value = "http://localhost:8000")]
     pub(crate) chroma_server: String,
 
-    /// Chroma database name
+    /// Chroma database name.
     #[clap(short = 'd', long, default_value = "default")]
     pub(crate) chroma_database: String,
 
-    /// Chroma token for authentication
+    /// Chroma token for authentication.
     #[clap(short = 't', long)]
     pub(crate) chroma_token: Option<String>,
 }
 
+/// Performs a query on a Chroma database and generates a response.
+///
+/// This function connects to a Chroma database using the provided
+/// arguments, performs a query, and generates a response using the
+/// specified model.
+///
+/// # Parameters
+///
+/// - `ollama`: The Ollama client for generating responses.
+/// - `args`: The command-line arguments for the query.
+///
+/// # Returns
+///
+/// A `Result` indicating success or failure.
 pub(crate) async fn query(ollama: Ollama, args: &QueryArgs) -> Result<(), RuChatError> {
     let client = create_client(
         args.chroma_token.as_deref(),

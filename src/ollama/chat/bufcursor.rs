@@ -2,12 +2,22 @@ use crate::error::RuChatError;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use crossterm::terminal;
 
+/// A struct for managing a buffer cursor in a text-based interface.
+///
+/// This struct provides methods for handling key events, navigating
+/// the buffer, and editing text.
 pub(crate) struct BufCursor {
     buffer: Vec<String>,
     cursor: (usize, usize),
 }
 
 impl BufCursor {
+    /// Creates a new `BufCursor` instance.
+    ///
+    /// # Returns
+    ///
+    /// A new instance of `BufCursor` with an empty buffer and cursor
+    /// positioned at the start.
     pub(crate) fn new() -> Self {
         Self {
             buffer: vec![String::new()],
@@ -15,10 +25,23 @@ impl BufCursor {
         }
     }
 
+    /// Reads the current buffer as a single string.
+    ///
+    /// # Returns
+    ///
+    /// A `String` containing the contents of the buffer.
     pub(crate) fn read(&self) -> String {
         self.buffer.join("\n")
     }
 
+    /// Returns a view of the buffer for display purposes.
+    ///
+    /// This function returns a vector of strings representing the
+    /// current view of the buffer, limited by the terminal size.
+    ///
+    /// # Returns
+    ///
+    /// A `Vec<String>` containing the lines of the buffer to display.
     pub(crate) fn view_buffer(&self) -> Vec<String> {
         let term_lines = (terminal::size().unwrap().1 as usize).saturating_sub(1);
         self.buffer
@@ -39,6 +62,18 @@ impl BufCursor {
         Ok(())
     }
 
+    /// Handles a key event and updates the buffer and cursor accordingly.
+    ///
+    /// This function processes key events to perform actions such as
+    /// moving the cursor, editing text, and handling special keys.
+    ///
+    /// # Parameters
+    ///
+    /// - `evt`: The key event to handle.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing a byte representing the key action or a `RuChatError`.
     pub(crate) fn handle_key_event(&mut self, evt: Event) -> Result<u8, RuChatError> {
         match evt {
             Event::Key(KeyEvent {
@@ -125,6 +160,14 @@ impl BufCursor {
         Ok(b'\0')
     }
 
+    /// Drains the buffer and returns its contents.
+    ///
+    /// This function clears the buffer and returns its contents as a vector
+    /// of strings.
+    ///
+    /// # Returns
+    ///
+    /// A `Vec<String>` containing the contents of the buffer.
     pub(crate) fn drain(&mut self) -> Vec<String> {
         let buffer = self.buffer.clone();
         self.buffer = vec![String::new()];
@@ -132,10 +175,20 @@ impl BufCursor {
         buffer
     }
 
+    /// Sets the cursor position.
+    ///
+    /// # Parameters
+    ///
+    /// - `cursor`: The new cursor position as a tuple of (column, row).
     pub(crate) fn set_cursor(&mut self, cursor: (usize, usize)) {
         self.cursor = cursor;
     }
 
+    /// Gets the current cursor position.
+    ///
+    /// # Returns
+    ///
+    /// A tuple of (column, row) representing the current cursor position.
     pub(crate) fn get_cursor(&self) -> (usize, usize) {
         self.cursor
     }

@@ -4,25 +4,42 @@ use anyhow::Result;
 use chromadb::collection::ChromaCollection;
 use clap::Parser;
 
+/// Command-line arguments for listing Chroma database collections.
+///
+/// This struct defines the arguments required to list collections
+/// in a Chroma database, including the collection name, server address,
+/// database name, and an optional authentication token.
 #[derive(Parser, Debug, Clone)]
 pub struct ChromaLsArgs {
-    /// Chroma database collection name
+    /// Chroma database collection name.
     #[clap(short, long, default_value = "default")]
     pub(crate) collection: String,
 
-    /// Chroma database server address and port
+    /// Chroma database server address and port.
     #[clap(short = 'C', long, default_value = "http://localhost:8000")]
     pub(crate) chroma_server: String,
 
-    /// Chroma database name
+    /// Chroma database name.
     #[clap(short = 'd', long, default_value = "default")]
     pub(crate) chroma_database: String,
 
-    /// Chroma token for authentication
+    /// Chroma token for authentication.
     #[clap(short = 't', long)]
     pub(crate) chroma_token: Option<String>,
 }
 
+/// Lists collections in a Chroma database.
+///
+/// This function connects to a Chroma database using the provided
+/// arguments and lists the details of the specified collection.
+///
+/// # Parameters
+///
+/// - `args`: The command-line arguments for listing collections.
+///
+/// # Returns
+///
+/// A `Result` indicating success or failure.
 pub(crate) async fn chroma_ls(args: &ChromaLsArgs) -> Result<(), RuChatError> {
     // Instantiate a ChromaClient to connect to the Chroma database
     let client = create_client(

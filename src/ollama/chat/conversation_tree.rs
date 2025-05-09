@@ -1,6 +1,7 @@
 use crate::error::RuChatError;
 use std::collections::HashMap;
 
+/// Represents an answer in the conversation tree.
 #[derive(Debug, Clone)]
 struct Answer {
     id: usize,
@@ -11,6 +12,7 @@ struct Answer {
     prev_edited_answer_id: Option<usize>,
 }
 
+/// Represents a question in the conversation tree.
 #[derive(Debug, Clone)]
 struct Question {
     id: usize,
@@ -23,6 +25,10 @@ struct Question {
     prev_edited_question_id: Option<usize>,
 }
 
+/// A struct for managing a conversation tree structure.
+///
+/// This struct provides methods for adding and editing questions and answers,
+/// navigating the conversation tree, and retrieving question and answer details.
 #[derive(Debug, Clone)]
 pub(crate) struct ConversationTree {
     questions: HashMap<usize, Question>,
@@ -34,6 +40,11 @@ pub(crate) struct ConversationTree {
 }
 
 impl ConversationTree {
+    /// Creates a new `ConversationTree` instance.
+    ///
+    /// # Returns
+    ///
+    /// A new instance of `ConversationTree` with empty questions and answers.
     pub(crate) fn new() -> Self {
         ConversationTree {
             questions: HashMap::new(),
@@ -45,6 +56,18 @@ impl ConversationTree {
         }
     }
 
+    /// Adds a new question to the conversation tree.
+    ///
+    /// This function creates a new question and a default answer, and adds
+    /// them to the conversation tree.
+    ///
+    /// # Parameters
+    ///
+    /// - `question_text`: The text of the question to add.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the question ID or a `RuChatError`.
     pub(crate) fn question(&mut self, question_text: Vec<String>) -> Result<usize, RuChatError> {
         let question_id = self.next_question_id;
         self.next_question_id += 1;
@@ -84,6 +107,19 @@ impl ConversationTree {
         Ok(question_id)
     }
 
+    /// Edits an existing question in the conversation tree.
+    ///
+    /// This function creates a new version of the question with the specified
+    /// text and updates the conversation tree.
+    ///
+    /// # Parameters
+    ///
+    /// - `question_id`: The ID of the question to edit.
+    /// - `new_question_text`: The new text for the question.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the new question ID or a `RuChatError`.
     pub(crate) fn edit_question(
         &mut self,
         question_id: usize,
@@ -141,10 +177,28 @@ impl ConversationTree {
         Ok(new_question_id)
     }
 
+    /// Retrieves the current question IDs in the conversation tree.
+    ///
+    /// # Returns
+    ///
+    /// A reference to a vector of current question IDs.
     pub(crate) fn get_current_question_ids(&self) -> &Vec<usize> {
         &self.current_question_ids
     }
 
+    /// Adds an answer to a question in the conversation tree.
+    ///
+    /// This function adds a new answer to the specified question and updates
+    /// the conversation tree.
+    ///
+    /// # Parameters
+    ///
+    /// - `question_id`: The ID of the question to add the answer to.
+    /// - `text`: The text of the answer to add.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` indicating success or failure.
     pub(crate) fn add_answer(
         &mut self,
         question_id: usize,
@@ -188,6 +242,18 @@ impl ConversationTree {
         Ok(())
     }
 
+    /// Retrieves the question number and total count for a question.
+    ///
+    /// This function returns a string representing the question number
+    /// and total count in the format "[current/total]".
+    ///
+    /// # Parameters
+    ///
+    /// - `question_id`: The ID of the question to retrieve the number for.
+    ///
+    /// # Returns
+    ///
+    /// A `String` representing the question number and total count.
     pub(crate) fn get_question_nr_of_total(&self, question_id: usize) -> String {
         if let Some(question) = self.questions.get(&question_id) {
             let mut prev_next = question.prev_edited_question_id;
@@ -220,6 +286,18 @@ impl ConversationTree {
         }
     }
 
+    /// Retrieves the answer number and total count for an answer.
+    ///
+    /// This function returns a string representing the answer number
+    /// and total count in the format "[current/total]".
+    ///
+    /// # Parameters
+    ///
+    /// - `answer_id`: The ID of the answer to retrieve the number for.
+    ///
+    /// # Returns
+    ///
+    /// A `String` representing the answer number and total count.
     pub(crate) fn get_answer_nr_of_total(&self, answer_id: usize) -> String {
         if let Some(answer) = self.answers.get(&answer_id) {
             let mut prev_next = answer.prev_edited_answer_id;
@@ -251,12 +329,31 @@ impl ConversationTree {
         }
     }
 
+    /// Finds the parent question ID for a given question.
+    ///
+    /// # Parameters
+    ///
+    /// - `question_id`: The ID of the question to find the parent for.
+    ///
+    /// # Returns
+    ///
+    /// An `Option` containing the parent question ID, or `None` if not found.
     pub(crate) fn find_parent(&self, question_id: usize) -> Option<usize> {
         self.questions
             .get(&question_id)
             .and_then(|q| q.parent_question_id)
     }
 
+    /// Retrieves the question and answer text for a given question and answer ID.
+    ///
+    /// # Parameters
+    ///
+    /// - `question_id`: The ID of the question to retrieve the text for.
+    /// - `answer_id`: The ID of the answer to retrieve the text for.
+    ///
+    /// # Returns
+    ///
+    /// An `Option` containing a tuple of question and answer text, or `None` if not found.
     pub(crate) fn get_qa(
         &self,
         question_id: usize,
@@ -274,6 +371,11 @@ impl ConversationTree {
         }
     }
 
+    /// Retrieves the current question ID in the conversation tree.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the current question ID or a `RuChatError`.
     pub(crate) fn get_current_question_id(&self) -> Result<usize, RuChatError> {
         self.current_question_ids
             .get(self.at_question - 1)
@@ -281,6 +383,15 @@ impl ConversationTree {
             .copied()
     }
 
+    /// Retrieves the current answer ID for a given question.
+    ///
+    /// # Parameters
+    ///
+    /// - `current_question_id`: The ID of the current question.
+    ///
+    /// # Returns
+    ///
+    /// The current answer ID for the specified question.
     pub(crate) fn get_current_answer_id(&self, current_question_id: usize) -> usize {
         self.questions
             .get(&current_question_id)

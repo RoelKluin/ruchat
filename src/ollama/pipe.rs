@@ -6,23 +6,37 @@ use clap::Parser;
 use ollama_rs::{generation::completion::request::GenerationRequest, Ollama};
 use tokio_stream::StreamExt;
 
-/// Pipe a question to a model and get a response
+/// Command-line arguments for piping a question to a model.
+///
+/// This struct defines the arguments required to pipe a question
+/// to a model, including model details and configuration options.
 #[derive(Parser, Debug, Clone, Default)]
 pub struct PipeArgs {
-    /// initial model to (down)load and use
+    /// Initial model to (down)load and use.
     #[clap(short, long, default_value = "qwen2.5-coder:14b")]
     pub(crate) model: Option<String>,
 
-    /// Path to a JSON file to amend default generation options, listed in
-    /// https://docs.rs/ollama-rs/0.3.0/src/ollama_rs/models.rs.html#61-94
+    /// Path to a JSON file to amend default generation options.
     #[clap(short, long)]
     pub(crate) config: Option<String>,
 
-    /// Specify the model using a positional argument
+    /// Specify the model using a positional argument.
     pub(crate) positional_model: Option<String>,
 }
 
-/// The pipe command handles prompted questions with context using a model
+/// The pipe command handles prompted questions with context using a model.
+///
+/// This function connects to a model using the provided arguments,
+/// generates a response to the specified prompt, and outputs the response.
+///
+/// # Parameters
+///
+/// - `ollama`: The Ollama client for generating responses.
+/// - `args`: The command-line arguments for the pipe operation.
+///
+/// # Returns
+///
+/// A `Result` indicating success or failure.
 pub(crate) async fn pipe(ollama: Ollama, args: &PipeArgs) -> Result<(), RuChatError> {
     let mut cio = Io::new();
     let mut done = false;

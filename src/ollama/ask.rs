@@ -8,35 +8,48 @@ use std::iter::Iterator;
 use std::{fs, io::Read};
 use tokio_stream::StreamExt;
 
-/// Ask a question to a model and get a response
+/// Command-line arguments for asking a question to a model.
+///
+/// This struct defines the arguments required to ask a question
+/// to a model, including model details, prompt, and input options.
 #[derive(Parser, Debug, Clone, Default)]
 pub struct AskArgs {
-    /// model to (down)load and use
+    /// Model to (down)load and use.
     #[clap(short, long, default_value = "qwen2.5-coder:14b")]
     pub(crate) model: String,
 
-    /// prompt to use, if not provided, stdin will be used
+    /// Prompt to use, if not provided, stdin will be used.
     #[clap(short, long)]
     pub(crate) prompt: Option<String>,
 
-    /// Request a certain output format, the default leaves the text as is
+    /// Request a certain output format, the default leaves the text as is.
     #[clap(short, long, default_value_t = String::from("text"))]
     pub(crate) output_format: String,
 
-    /// Text files to use as input, seperated by commas
+    /// Text files to use as input, separated by commas.
     #[clap(short = 'i', long)]
     pub(crate) text_files: Option<String>,
 
-    /// Path to a JSON file to amend default generation options, listed in
-    /// https://docs.rs/ollama-rs/0.3.0/src/ollama_rs/models.rs.html#61-94
+    /// Path to a JSON file to amend default generation options.
     #[clap(short, long)]
     pub(crate) config: Option<String>,
 
-    /// Specify the prompt using a positional argument
+    /// Specify the prompt using a positional argument.
     pub(crate) positional_prompt: Option<String>,
 }
 
-// TODO: allow more prompt configurations
+/// Generates a prompt based on the provided arguments.
+///
+/// This function constructs a prompt string using the specified
+/// text files, prompt, and positional prompt.
+///
+/// # Parameters
+///
+/// - `args`: The command-line arguments for the ask operation.
+///
+/// # Returns
+///
+/// A `Result` containing the generated prompt or a `RuChatError`.
 fn generate_prompt(args: &AskArgs) -> Result<String, RuChatError> {
     let mut prompt = String::new();
     if let Some(text_files) = &args.text_files {
@@ -77,7 +90,19 @@ fn generate_prompt(args: &AskArgs) -> Result<String, RuChatError> {
     Ok(prompt)
 }
 
-/// The ask command handles prompted questions with context using a model
+/// The ask command handles prompted questions with context using a model.
+///
+/// This function connects to a model using the provided arguments,
+/// generates a response to the specified prompt, and outputs the response.
+///
+/// # Parameters
+///
+/// - `ollama`: The Ollama client for generating responses.
+/// - `args`: The command-line arguments for the ask operation.
+///
+/// # Returns
+///
+/// A `Result` indicating success or failure.
 pub(crate) async fn ask(ollama: Ollama, args: &AskArgs) -> Result<(), RuChatError> {
     let mut cio = Io::new();
     let mut prompt = if args.prompt.is_some() || args.positional_prompt.is_some() || args.text_files.is_some() {

@@ -11,46 +11,55 @@ use crate::ollama::func::FuncArgs;
 use crate::ollama::func::strukt::FuncStructArgs;
 use clap::{Parser, Subcommand};
 
-/// main command line interface for RuChat
+/// Main command line interface for RuChat.
+///
+/// This struct defines the command-line arguments and options available
+/// for the RuChat application. It uses the `clap` crate to parse and
+/// handle command-line input.
 #[derive(Parser, Debug)]
 pub struct Args {
+    /// The subcommand to execute.
     #[clap(subcommand)]
     pub command: Option<Commands>,
 
-    /// address and port of the ollama server
+    /// Address and port of the ollama server.
     #[clap(short, long, default_value = "http://172.18.0.1:11434")]
     pub(crate) server: String,
 
-    /// toggle verbose mode
+    /// Toggle verbose mode.
     #[clap(short, long, default_value = "false")]
     pub(crate) verbose: bool,
 }
 
-/// Subcommands for RuChat
+/// Subcommands for RuChat.
+///
+/// This enum defines the various subcommands that can be executed
+/// by the RuChat application. Each variant corresponds to a specific
+/// operation or functionality.
 #[derive(Subcommand, Debug, Clone)]
 pub enum Commands {
-    /// Query language model using a prompt, you may including file context
+    /// Query language model using a prompt, you may include file context.
     Ask(AskArgs),
-    /// Pipe markdown to language model seperated by three hyphens/dashes, asterisks or underscores
+    /// Pipe markdown to language model separated by three hyphens/dashes, asterisks, or underscores.
     Pipe(PipeArgs),
-    /// Chat with a language model
+    /// Chat with a language model.
     Chat(ChatArgs),
-    /// List models
+    /// List models.
     Ls,
-    /// Remove a model
+    /// Remove a model.
     Rm(RmArgs),
-    /// Pull a model from a remote ollama server
+    /// Pull a model from a remote ollama server.
     Pull(PullArgs),
-    /// Run a function using a language model
+    /// Run a function using a language model.
     Func(FuncArgs),
-    /// Run a function using a language model with structured input
+    /// Run a function using a language model with structured input.
     FuncStruct(FuncStructArgs),
-    /// use embedding model to create embeddings in Chroma
+    /// Use embedding model to create embeddings in Chroma.
     Embed(EmbedArgs),
-    /// Query Chroma database
+    /// Query Chroma database.
     Query(QueryArgs),
-    /// Find similar embeddings in Chroma database
+    /// Find similar embeddings in Chroma database.
     Similarity(SimilarityArgs),
-    /// List Chroma database collections
+    /// List Chroma database collections.
     ChromaLs(ChromaLsArgs),
 }
