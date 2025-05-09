@@ -1,7 +1,7 @@
 use crate::chroma::create_client;
 use crate::error::RuChatError;
 use crate::ollama::model::get_name;
-use crate::ollama::ask::get_options;
+use crate::config::get_options;
 use crate::io::Io;
 use anyhow::Result;
 use chromadb::collection::{ChromaCollection, GetOptions, GetResult};

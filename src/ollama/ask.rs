@@ -1,10 +1,9 @@
 use crate::io::Io;
-use crate::config::read_config_file;
+use crate::config::get_options;
 use crate::error::RuChatError;
 use crate::ollama::model::get_name;
 use clap::Parser;
-use ollama_rs::{generation::completion::request::GenerationRequest, models::ModelOptions, Ollama};
-use serde_json::Value;
+use ollama_rs::{generation::completion::request::GenerationRequest, Ollama};
 use std::iter::Iterator;
 use std::{fs, io::Read};
 use tokio_stream::StreamExt;
@@ -76,27 +75,6 @@ fn generate_prompt(args: &AskArgs) -> Result<String, RuChatError> {
         .unwrap_or("What do you make of this?");
     prompt.push_str(question);
     Ok(prompt)
-}
-
-/// Get model options for prompt handling from a JSON file
-pub(crate) async fn get_options(config: &Option<String>) -> Result<ModelOptions, RuChatError> {
-    if let Some(config_path) = config {
-        let mut defaults = serde_json::to_value(ModelOptions::default())?;
-
-        if let Value::Object(ref mut defaults) = defaults {
-            let updates = read_config_file(config_path).await?;
-            if let Value::Object(config_updates) = updates {
-                for (k, v) in config_updates.into_iter() {
-                    if defaults.contains_key(&k) && !v.is_null() {
-                        defaults[&k] = v.clone();
-                    }
-                }
-            }
-        }
-        serde_json::from_value(defaults).map_err(RuChatError::SerdeError)
-    } else {
-        Ok(ModelOptions::default())
-    }
 }
 
 /// The ask command handles prompted questions with context using a model
