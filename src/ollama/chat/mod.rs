@@ -7,7 +7,7 @@ use clap::Parser;
 use conversation_tree::ConversationTree;
 use crossterm::{
     ExecutableCommand,
-    cursor::MoveTo,
+    cursor::{MoveTo, Show, Hide},
     event::{self, DisableMouseCapture, EnableMouseCapture},
     terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -17,7 +17,8 @@ use std::cmp::min;
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 use tokio::task;
-use tokio::time::{Duration, timeout};
+use tokio::io::stdout;
+use tokio::time::{Duration, timeout, sleep};
 use tokio_stream::StreamExt;
 
 /// Command-line arguments for interactive chat sessions with a model.
@@ -106,6 +107,23 @@ fn redraw_screen(
     Ok(())
 }
 
+// Function to display a simple spinner
+async fn show_spinner(x: usize, y: usize) {
+    let mut stdout = io::stdout();
+    let spinner_chars = vec!['⠋', '⠙', '⠹', '⠼', '⠶', '⠦', '⠤'];
+    let mut index = 0;
+    // get current cursor position
+
+    loop {
+        stdout.execute(Hide).expect("Hide cursor");
+        stdout.execute(MoveTo(x as u16, y as u16)).expect("Move cursor");
+        print!("{}", spinner_chars[index]);
+        stdout.flush().unwrap();
+        index = (index + 1) % spinner_chars.len();
+        sleep(Duration::from_millis(100)).await;
+    }
+}
+
 /// Runs the chat session in raw mode.
 ///
 /// This function sets up the chat session in raw mode, allowing the user
@@ -133,6 +151,7 @@ async fn chat_raw_mode(ollama: Ollama, args: &ChatArgs) -> Result<(), RuChatErro
     loop {
         // TODO: not clear the whole screen for every keystroke?
         // Clear the screen
+        let (x, y) = bufcursor.get_cursor();
         redraw_screen(&mut stdout, &chat_history.lock().unwrap(), &mut bufcursor)?;
 
         // Wait for an event
@@ -145,6 +164,10 @@ async fn chat_raw_mode(ollama: Ollama, args: &ChatArgs) -> Result<(), RuChatErro
                 let chat_hist_clone = chat_history.clone();
                 let hist = history.clone();
                 let ol = ollama.clone();
+
+                // Start the spinner in a separate task
+                let spinner_handle = task::spawn(show_spinner(x, y));
+                let mut stdout = io::stdout();
 
                 let task = task::spawn(async move {
                     let result = ol.send_chat_messages_with_history_stream(hist, request);
@@ -187,6 +210,10 @@ async fn chat_raw_mode(ollama: Ollama, args: &ChatArgs) -> Result<(), RuChatErro
                             let _ = chat_hist.add_answer(question_id, vec!["Timeout".to_string()]);
                         }
                     }
+                    // Stop the spinner
+                    spinner_handle.abort();
+                    stdout.execute(Show).unwrap();
+                    stdout.execute(Clear(ClearType::CurrentLine)).unwrap();
                 });
 
                 task.await?;
