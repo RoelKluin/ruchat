@@ -1,30 +1,30 @@
 mod bufcursor;
 mod conversation_tree;
-use bufcursor::BufCursor;
-use conversation_tree::ConversationTree;
 use crate::error::RuChatError;
 use crate::ollama::model::get_name;
+use bufcursor::BufCursor;
 use clap::Parser;
+use conversation_tree::ConversationTree;
 use crossterm::{
+    ExecutableCommand,
     cursor::MoveTo,
     event::{self, DisableMouseCapture, EnableMouseCapture},
     terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
-    ExecutableCommand,
 };
-use ollama_rs::generation::chat::{request::ChatMessageRequest, ChatMessage};
 use ollama_rs::Ollama;
+use ollama_rs::generation::chat::{ChatMessage, request::ChatMessageRequest};
 use std::cmp::min;
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 use tokio::task;
-use tokio::time::{sleep, timeout, Duration};
+use tokio::time::{Duration, timeout};
 use tokio_stream::StreamExt;
 
 /// Command-line arguments for interactive chat sessions with a model.
 ///
 /// This struct defines the arguments required to start an interactive
 /// chat session with a model, including model details.
-#[derive(Parser, Debug, Clone)]
+#[derive(Parser, Debug, Clone, PartialEq)]
 pub struct ChatArgs {
     /// The model to use for the chat session.
     #[clap(short, long, default_value = "qwen2.5-coder:14b")]
@@ -76,7 +76,7 @@ fn redraw_screen(
     let mut text_view: Vec<String> = bufcursor.view_buffer();
     let it = chat_history.get_current_question_ids().iter().rev();
     let cp = bufcursor.get_cursor(); // Cursor position editing the question
-                                     // the last line is a status line. The second to last line is the last line of the question
+    // the last line is a status line. The second to last line is the last line of the question
     text_view.push("Enter your question (Esc to quit):".to_string());
 
     for &question_id in it {

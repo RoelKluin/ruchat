@@ -1,6 +1,6 @@
 use crate::error::RuChatError;
-use serde_json::Value;
 use ollama_rs::models::ModelOptions;
+use serde_json::Value;
 
 /// Reads a JSON file containing model options.
 ///
@@ -49,5 +49,40 @@ pub(crate) async fn get_options(config: &Option<String>) -> Result<ModelOptions,
         serde_json::from_value(defaults).map_err(RuChatError::SerdeError)
     } else {
         Ok(ModelOptions::default())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::Path;
+
+    #[tokio::test]
+    async fn test_read_options_file() {
+        let path = "test_options.json";
+        fs::write(path, r#"{\"option1\": \"value1\"}"#).unwrap();
+        let result = read_options_file(path).await;
+        assert!(result.is_ok());
+        let value = result.unwrap();
+        assert_eq!(value["option1"], "value1");
+        fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_get_options_with_file() {
+        let path = "test_options.json";
+        fs::write(path, r#"{\"option1\": \"value1\"}"#).unwrap();
+        let config = Some(path.to_string());
+        let result = get_options(&config).await;
+        assert!(result.is_ok());
+        fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_get_options_without_file() {
+        let config = None;
+        let result = get_options(&config).await;
+        assert!(result.is_ok());
     }
 }

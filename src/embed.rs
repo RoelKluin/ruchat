@@ -5,8 +5,8 @@ use chromadb::collection::{ChromaCollection, CollectionEntries};
 use chromadb::embeddings::EmbeddingFunction;
 use clap::Parser;
 use log::warn;
-use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
 use ollama_rs::Ollama;
+use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
 use serde_json::{Map, Value};
 
 /// Command-line arguments for embedding data into a Chroma database.
@@ -14,7 +14,7 @@ use serde_json::{Map, Value};
 /// This struct defines the arguments required to perform an embedding
 /// operation in a Chroma database, including model details, prompt,
 /// and database connection information.
-#[derive(Parser, Debug, Clone)]
+#[derive(Parser, Debug, Clone, PartialEq)]
 pub struct EmbedArgs {
     /// The model to use for generating embeddings.
     #[clap(short, long, default_value = "nomic-embed-text:latest")]
@@ -132,4 +132,26 @@ pub(crate) async fn embed(ollama: Ollama, args: &EmbedArgs) -> Result<(), RuChat
         .await?;
     eprintln!("{:?}", result);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_metadata_valid() {
+        let metadata_str = Some("key1:value1,key2:value2".to_string());
+        let result = get_metadata(&metadata_str);
+        assert!(result.is_ok());
+        let metadata = result.unwrap().unwrap();
+        assert_eq!(metadata["key1"], "value1");
+        assert_eq!(metadata["key2"], "value2");
+    }
+
+    #[test]
+    fn test_get_metadata_invalid() {
+        let metadata_str = Some("key1value1".to_string());
+        let result = get_metadata(&metadata_str);
+        assert!(result.is_err());
+    }
 }

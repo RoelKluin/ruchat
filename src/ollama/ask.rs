@@ -1,18 +1,17 @@
-use crate::io::Io;
-use crate::config::get_options;
 use crate::error::RuChatError;
+use crate::io::Io;
 use crate::ollama::model::get_name;
+use crate::options::get_options;
 use clap::Parser;
-use ollama_rs::{generation::completion::request::GenerationRequest, Ollama};
+use ollama_rs::{Ollama, generation::completion::request::GenerationRequest};
 use std::iter::Iterator;
 use std::{fs, io::Read};
 use tokio_stream::StreamExt;
-
 /// Command-line arguments for asking a question to a model.
 ///
 /// This struct defines the arguments required to ask a question
 /// to a model, including model details, prompt, and input options.
-#[derive(Parser, Debug, Clone, Default)]
+#[derive(Parser, Debug, Clone, Default, PartialEq)]
 pub struct AskArgs {
     /// Model to (down)load and use.
     #[clap(short, long, default_value = "qwen2.5-coder:14b")]
@@ -32,7 +31,7 @@ pub struct AskArgs {
 
     /// Path to a JSON file to amend default generation options.
     #[clap(short, long)]
-    pub(crate) config: Option<String>,
+    pub(crate) options: Option<String>,
 
     /// Specify the prompt using a positional argument.
     pub(crate) positional_prompt: Option<String>,
@@ -105,18 +104,19 @@ fn generate_prompt(args: &AskArgs) -> Result<String, RuChatError> {
 /// A `Result` indicating success or failure.
 pub(crate) async fn ask(ollama: Ollama, args: &AskArgs) -> Result<(), RuChatError> {
     let mut cio = Io::new();
-    let mut prompt = if args.prompt.is_some() || args.positional_prompt.is_some() || args.text_files.is_some() {
-        generate_prompt(args)?
-    } else {
-        let mut input = String::new();
-        while let Ok(line) = cio.read_line(false).await {
-            if line.is_empty() {
-                break;
+    let mut prompt =
+        if args.prompt.is_some() || args.positional_prompt.is_some() || args.text_files.is_some() {
+            generate_prompt(args)?
+        } else {
+            let mut input = String::new();
+            while let Ok(line) = cio.read_line(false).await {
+                if line.is_empty() {
+                    break;
+                }
+                input += line.as_str();
             }
-            input += line.as_str();
-        }
-        input
-    };
+            input
+        };
     if args.output_format != "text" {
         prompt.push_str("\nPlease generate your response in valid ");
         prompt.push_str(&args.output_format);
@@ -124,7 +124,7 @@ pub(crate) async fn ask(ollama: Ollama, args: &AskArgs) -> Result<(), RuChatErro
     }
     let model_name = get_name(&ollama, &args.model).await?;
     let request =
-        GenerationRequest::new(model_name, prompt).options(get_options(&args.config).await?);
+        GenerationRequest::new(model_name, prompt).options(get_options(&args.options).await?);
     let mut stream = ollama.generate_stream(request).await?;
     while let Some(res) = stream.next().await {
         let responses = res?;

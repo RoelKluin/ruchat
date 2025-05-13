@@ -1,16 +1,16 @@
-use crate::io::Io;
-use crate::config::get_options;
 use crate::error::RuChatError;
+use crate::io::Io;
 use crate::ollama::model::get_name;
+use crate::options::get_options;
 use clap::Parser;
-use ollama_rs::{generation::completion::request::GenerationRequest, Ollama};
+use ollama_rs::{Ollama, generation::completion::request::GenerationRequest};
 use tokio_stream::StreamExt;
 
 /// Command-line arguments for piping a question to a model.
 ///
 /// This struct defines the arguments required to pipe a question
 /// to a model, including model details and configuration options.
-#[derive(Parser, Debug, Clone, Default)]
+#[derive(Parser, Debug, Clone, Default, PartialEq)]
 pub struct PipeArgs {
     /// Initial model to (down)load and use.
     #[clap(short, long, default_value = "qwen2.5-coder:14b")]
@@ -42,10 +42,12 @@ pub(crate) async fn pipe(ollama: Ollama, args: &PipeArgs) -> Result<(), RuChatEr
     let mut done = false;
     let mut options = get_options(&args.config).await?;
     let mut model_name = match args.model.as_deref().or(args.positional_model.as_deref()) {
-        Some(model) if !model.is_empty() => {
-            get_name(&ollama, model).await?
+        Some(model) if !model.is_empty() => get_name(&ollama, model).await?,
+        _ => {
+            return Err(RuChatError::ModelError(
+                "Model name is required".to_string(),
+            ));
         }
-        _ => return Err(RuChatError::ModelError("Model name is required".to_string())),
     };
     while !done {
         let mut prompt = String::new();
@@ -61,8 +63,7 @@ pub(crate) async fn pipe(ollama: Ollama, args: &PipeArgs) -> Result<(), RuChatEr
         }
 
         prompt.push_str("\nRespond in CommonMark format.\n");
-        let request =
-            GenerationRequest::new(model_name.clone(), prompt).options(options.clone());
+        let request = GenerationRequest::new(model_name.clone(), prompt).options(options.clone());
         let mut stream = ollama.generate_stream(request).await?;
         while let Some(res) = stream.next().await {
             let responses = res?;

@@ -66,3 +66,35 @@ pub enum RuChatError {
     #[error("Answer already exists")]
     AnswerAlreadyExists,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_model_error() {
+        let error = RuChatError::ModelError("Test model error".to_string());
+        assert_eq!(format!("{}", error), "Model Error: Test model error");
+    }
+
+    #[test]
+    fn test_invalid_metadata_error() {
+        let error = RuChatError::InvalidMetadata("Test invalid metadata".to_string());
+        assert_eq!(
+            format!("{}", error),
+            "Invalid metadata: Test invalid metadata"
+        );
+    }
+
+    #[test]
+    fn test_cursor0_out_of_bounds_error() {
+        let error = RuChatError::Cursor0OutOfBounds;
+        assert_eq!(format!("{}", error), "Cursor.0 out of bounds");
+    }
+
+    #[test]
+    fn test_cursor1_out_of_bounds_error() {
+        let error = RuChatError::Cursor1OutOfBounds;
+        assert_eq!(format!("{}", error), "Cursor.1 out of bounds");
+    }
+}

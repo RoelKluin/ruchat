@@ -1,10 +1,11 @@
 pub(crate) mod strukt;
-use crate::io::Io;
 use crate::error::RuChatError;
+use crate::io::Io;
 use crate::ollama::model::get_name;
 use clap::Parser;
 use ollama_rs::models::ModelOptions;
 use ollama_rs::{
+    Ollama,
     coordinator::Coordinator,
     generation::{
         chat::ChatMessage,
@@ -17,14 +18,13 @@ use ollama_rs::{
             // SerperSearchToo // seems to have issue and SERPER_API_KEY=... is required
         },
     },
-    Ollama,
 };
 
 /// Command-line arguments for querying a model using a function.
 ///
 /// This struct defines the arguments required to query a model
 /// using a function, including model details.
-#[derive(Parser, Debug, Clone)]
+#[derive(Parser, Debug, Clone, PartialEq)]
 pub struct FuncArgs {
     /// The model to use for the function query.
     #[clap(short, long, default_value = "qwen2.5-coder:14b")]

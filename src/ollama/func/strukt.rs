@@ -1,15 +1,15 @@
-use crate::io::Io;
 use crate::error::RuChatError;
+use crate::io::Io;
 use crate::ollama::model::get_name;
 use clap::Parser;
 use ollama_rs::models::ModelOptions;
 use ollama_rs::{
+    Ollama,
     coordinator::Coordinator,
     generation::{
         chat::ChatMessage,
         parameters::{FormatType, JsonSchema, JsonStructure},
     },
-    Ollama,
 };
 use serde::Deserialize;
 use std::path::PathBuf;
@@ -18,7 +18,7 @@ use std::path::PathBuf;
 ///
 /// This struct defines the arguments required to query a model
 /// using structured functions, including model details.
-#[derive(Parser, Debug, Clone)]
+#[derive(Parser, Debug, Clone, PartialEq)]
 pub struct FuncStructArgs {
     /// The model to use for the structured function query.
     #[clap(short, long, default_value = "qwen2.5-coder:14b")]

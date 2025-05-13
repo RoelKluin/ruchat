@@ -1,14 +1,14 @@
-use clap::Parser;
 use crate::args::Args;
-use crate::ollama::model::get_name;
-use crate::ollama::init;
 use crate::error::RuChatError;
+use crate::ollama::init;
+use crate::ollama::model::get_name;
+use clap::Parser;
 
 /// Command-line arguments for removing a model from the local Ollama instance.
 ///
 /// This struct defines the arguments required to remove a model
 /// from the local Ollama instance, including model details.
-#[derive(Parser, Debug, Clone)]
+#[derive(Parser, Debug, Clone, PartialEq)]
 pub struct RmArgs {
     /// Specify the model to remove using the --model or -m flag.
     #[clap(short, long)]
@@ -33,12 +33,18 @@ pub struct RmArgs {
 /// A `Result` indicating success or failure.
 pub(crate) async fn remove(args: &Args, rm_args: &RmArgs) -> Result<(), RuChatError> {
     let ollama = init(args)?;
-    match rm_args.model.as_deref().or(rm_args.positional_model.as_deref()) {
+    match rm_args
+        .model
+        .as_deref()
+        .or(rm_args.positional_model.as_deref())
+    {
         Some(model) if !model.is_empty() => {
             let model_name = get_name(&ollama, model).await?;
             ollama.delete_model(model_name).await?;
             Ok(())
         }
-        _ => Err(RuChatError::ModelError("Model name is required".to_string())),
+        _ => Err(RuChatError::ModelError(
+            "Model name is required".to_string(),
+        )),
     }
 }

@@ -75,3 +75,25 @@ impl Io {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{self, AsyncWriteExt};
+
+    #[tokio::test]
+    async fn test_write_line() {
+        let mut io = Io::new();
+        let line = "Hello, world!";
+        let result = io.write_line(line).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_write() {
+        let mut io = Io::new();
+        let text = "Hello, world!";
+        let result = io.write(text).await;
+        assert!(result.is_ok());
+    }
+}

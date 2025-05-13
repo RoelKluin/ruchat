@@ -9,7 +9,7 @@ use clap::Parser;
 /// This struct defines the arguments required to list collections
 /// in a Chroma database, including the collection name, server address,
 /// database name, and an optional authentication token.
-#[derive(Parser, Debug, Clone)]
+#[derive(Parser, Debug, Clone, PartialEq)]
 pub struct ChromaLsArgs {
     /// Chroma database collection name.
     #[clap(short, long, default_value = "default")]

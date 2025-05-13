@@ -1,13 +1,13 @@
 use crate::chroma::create_client;
 use crate::error::RuChatError;
-use crate::ollama::model::get_name;
-use crate::config::get_options;
 use crate::io::Io;
+use crate::ollama::model::get_name;
+use crate::options::get_options;
 use anyhow::Result;
 use chromadb::collection::{ChromaCollection, GetOptions, GetResult};
 use clap::Parser;
-use ollama_rs::generation::completion::request::GenerationRequest;
 use ollama_rs::Ollama;
+use ollama_rs::generation::completion::request::GenerationRequest;
 use serde_json::json;
 use tokio_stream::StreamExt;
 
@@ -16,7 +16,7 @@ use tokio_stream::StreamExt;
 /// This struct defines the arguments required to perform a query
 /// in a Chroma database, including model details, query parameters,
 /// and database connection information.
-#[derive(Parser, Debug, Clone)]
+#[derive(Parser, Debug, Clone, PartialEq)]
 pub struct QueryArgs {
     /// The model to use for the query.
     #[clap(short, long, default_value = "qwen2.5-coder:14b")]

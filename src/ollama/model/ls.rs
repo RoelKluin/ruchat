@@ -1,6 +1,6 @@
-use crate::ollama::init;
-use crate::error::RuChatError;
 use crate::args::Args;
+use crate::error::RuChatError;
+use crate::ollama::init;
 
 /// Pretty print the size of a model.
 ///

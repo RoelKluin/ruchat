@@ -1,16 +1,14 @@
-pub(crate) mod args;
+pub mod args;
+pub mod chroma;
+pub mod embed;
+pub mod error;
 pub(crate) mod io;
-pub(crate) mod chroma;
-pub(crate) mod ollama;
-pub(crate) mod subcommand;
-pub(crate) mod config;
-pub(crate) mod error;
-pub(crate) mod embed;
+pub mod ollama;
+pub(crate) mod options;
 
 use args::Args;
 use clap::Parser;
 use error::RuChatError;
-use subcommand::handle_request;
 
 /// Runs the RuChat application.
 ///
@@ -29,5 +27,50 @@ use subcommand::handle_request;
 pub async fn run() -> Result<(), RuChatError> {
     env_logger::init();
     let args = Args::parse();
-    handle_request(&args).await
+    args.handle_request().await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::args::Commands;
+    use crate::ollama::ask::AskArgs;
+    use args::Args;
+
+    #[tokio::test]
+    async fn test_server_run_success() {
+        // Create a mock Args instance
+        let args = Args {
+            command: Some(Commands::Ask(AskArgs {
+                model: "qwen2.5-coder:14b".to_string(),
+                prompt: Some("Testing, please ignore".to_string()),
+                output_format: "text".to_string(),
+                text_files: None,
+                options: None,
+                positional_prompt: None,
+            })),
+            verbose: true,
+            server: "localhost".to_string() + ":8080",
+        };
+        eprintln!("If this errors, your server may also be down.");
+        assert!(args.handle_request().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_no_model_failure() {
+        // Create a mock Args instance
+        let args = Args {
+            command: Some(Commands::Ask(AskArgs {
+                model: "NO_MODEL".to_string(),
+                prompt: Some("Testing, please ignore".to_string()),
+                output_format: "text".to_string(),
+                text_files: None,
+                options: None,
+                positional_prompt: None,
+            })),
+            verbose: true,
+            server: "localhost".to_string() + ":8080",
+        };
+        assert!(args.handle_request().await.is_err());
+    }
 }

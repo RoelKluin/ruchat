@@ -1,16 +1,16 @@
+use crate::chroma::create_client;
 use crate::error::RuChatError;
 use anyhow::Result;
 use chromadb::collection::{ChromaCollection, GetOptions, GetResult, QueryOptions, QueryResult};
 use clap::Parser;
 use serde_json::json;
-use crate::chroma::create_client;
 
 /// Chroma database similarity search command line arguments.
 ///
 /// This struct defines the arguments required to perform a similarity
 /// search in a Chroma database, including query parameters and database
 /// connection information.
-#[derive(Parser, Debug, Clone)]
+#[derive(Parser, Debug, Clone, PartialEq)]
 pub struct SimilarityArgs {
     /// Query string to search for similar embeddings.
     #[clap(short, long)]

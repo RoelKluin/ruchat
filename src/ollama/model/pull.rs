@@ -1,14 +1,14 @@
-use clap::Parser;
 use crate::args::Args;
-use crate::ollama::model::get_name;
-use crate::ollama::init;
 use crate::error::RuChatError;
+use crate::ollama::init;
+use crate::ollama::model::get_name;
+use clap::Parser;
 
 /// Command-line arguments for pulling a model from the main Ollama server.
 ///
 /// This struct defines the arguments required to pull a model
 /// from the main Ollama server, including model details.
-#[derive(Parser, Debug, Clone)]
+#[derive(Parser, Debug, Clone, PartialEq)]
 pub struct PullArgs {
     /// Specify the model to pull using the --model or -m flag.
     #[clap(short, long)]
@@ -33,12 +33,18 @@ pub struct PullArgs {
 /// A `Result` indicating success or failure.
 pub(crate) async fn pull(args: &Args, pull_args: &PullArgs) -> Result<(), RuChatError> {
     let ollama = init(args)?;
-    match pull_args.model.as_deref().or(pull_args.positional_model.as_deref()) {
+    match pull_args
+        .model
+        .as_deref()
+        .or(pull_args.positional_model.as_deref())
+    {
         Some(model) if !model.is_empty() => {
             let model_name = get_name(&ollama, model).await?;
             ollama.pull_model(model_name, false).await?;
             Ok(())
         }
-        _ => Err(RuChatError::ModelError("Model name is required".to_string())),
+        _ => Err(RuChatError::ModelError(
+            "Model name is required".to_string(),
+        )),
     }
 }
