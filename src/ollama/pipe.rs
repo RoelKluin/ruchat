@@ -16,9 +16,10 @@ pub struct PipeArgs {
     #[clap(short, long, default_value = "qwen2.5-coder:14b")]
     pub(crate) model: Option<String>,
 
-    /// Path to a JSON file to amend default generation options.
+    /// Path to a JSON file to amend default generation options, or a string
+    /// representing the options in JSON format.
     #[clap(short, long)]
-    pub(crate) config: Option<String>,
+    pub(crate) options: Option<String>,
 
     /// Specify the model using a positional argument.
     pub(crate) positional_model: Option<String>,
@@ -40,7 +41,7 @@ pub struct PipeArgs {
 pub(crate) async fn pipe(ollama: Ollama, args: &PipeArgs) -> Result<(), RuChatError> {
     let mut cio = Io::new();
     let mut done = false;
-    let mut options = get_options(&args.config).await?;
+    let mut options = get_options(args.options.as_deref()).await?;
     let mut model_name = match args.model.as_deref().or(args.positional_model.as_deref()) {
         Some(model) if !model.is_empty() => get_name(&ollama, model).await?,
         _ => {
@@ -49,6 +50,7 @@ pub(crate) async fn pipe(ollama: Ollama, args: &PipeArgs) -> Result<(), RuChatEr
             ));
         }
     };
+
     while !done {
         let mut prompt = String::new();
         while let Ok(line) = cio.read_line(false).await {
@@ -58,6 +60,19 @@ pub(crate) async fn pipe(ollama: Ollama, args: &PipeArgs) -> Result<(), RuChatEr
                     break;
                 }
                 "---" | "***" | "___" => break,
+                _ if line.starts_with("!instruction") => {
+                    // Parse instruction
+                    let instruction = line.trim_start_matches("!instruction").trim();
+                    if instruction.starts_with("model:") {
+                        // Change model
+                        let new_model = instruction.trim_start_matches("model:").trim();
+                        model_name = get_name(&ollama, new_model).await?;
+                    } else if instruction.starts_with("options:") {
+                        // Change options
+                        let new_options = instruction.trim_start_matches("options:").trim();
+                        options = get_options(Some(new_options)).await?;
+                    }
+                }
                 _ => prompt.push_str(&line),
             }
         }

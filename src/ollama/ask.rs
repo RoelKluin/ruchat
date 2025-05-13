@@ -29,7 +29,8 @@ pub struct AskArgs {
     #[clap(short = 'i', long)]
     pub(crate) text_files: Option<String>,
 
-    /// Path to a JSON file to amend default generation options.
+    /// Path to a JSON file to amend default generation options, or a string
+    /// representing the options in JSON format.
     #[clap(short, long)]
     pub(crate) options: Option<String>,
 
@@ -124,7 +125,7 @@ pub(crate) async fn ask(ollama: Ollama, args: &AskArgs) -> Result<(), RuChatErro
     }
     let model_name = get_name(&ollama, &args.model).await?;
     let request =
-        GenerationRequest::new(model_name, prompt).options(get_options(&args.options).await?);
+        GenerationRequest::new(model_name, prompt).options(get_options(args.options.as_deref()).await?);
     let mut stream = ollama.generate_stream(request).await?;
     while let Some(res) = stream.next().await {
         let responses = res?;

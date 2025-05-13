@@ -8,15 +8,17 @@ use serde_json::Value;
 ///
 /// # Parameters
 ///
-/// - `options_path`: The path to the JSON file containing model options.
+/// - `options`: The path to the JSON file containing model options, or a string
+///  representing the options in JSON format.
 ///
 /// # Returns
 ///
 /// A `Result` containing the parsed `Value` or a `RuChatError`.
-async fn read_options_file(options_path: &str) -> Result<Value, RuChatError> {
-    let options = std::fs::read_to_string(options_path)?;
-    let options = serde_json::from_str(&options)?;
-    Ok(options)
+async fn read_options_file(options: &str) -> Result<Value, serde_json::Error> {
+    match std::fs::read_to_string(options) {
+        Ok(options) => serde_json::from_str(&options),
+        Err(_) => serde_json::from_str(options),
+    }
 }
 
 /// Get model options for prompt handling from a JSON file.
@@ -27,13 +29,13 @@ async fn read_options_file(options_path: &str) -> Result<Value, RuChatError> {
 ///
 /// # Parameters
 ///
-/// - `config`: An optional path to the JSON configuration file.
+/// - `options`: An optional path to the JSON configuration file.
 ///
 /// # Returns
 ///
 /// A `Result` containing the `ModelOptions` or a `RuChatError`.
-pub(crate) async fn get_options(config: &Option<String>) -> Result<ModelOptions, RuChatError> {
-    if let Some(options_path) = config {
+pub(crate) async fn get_options(options: Option<&str>) -> Result<ModelOptions, RuChatError> {
+    if let Some(options_path) = options {
         let mut defaults = serde_json::to_value(ModelOptions::default())?;
 
         if let Value::Object(ref mut defaults) = defaults {

@@ -22,9 +22,10 @@ pub struct QueryArgs {
     #[clap(short, long, default_value = "qwen2.5-coder:14b")]
     pub(crate) model: String,
 
-    /// Optional configuration file for model options.
+    /// Optional configuration file for model options, or a string
+    /// representing the options in JSON format.
     #[clap(short, long)]
-    pub(crate) config: Option<String>,
+    pub(crate) options: Option<String>,
 
     /// The query string to search for in the database.
     #[clap(short, long)]
@@ -115,7 +116,7 @@ pub(crate) async fn query(ollama: Ollama, args: &QueryArgs) -> Result<(), RuChat
     let mut cio = Io::new();
     let model_name = get_name(&ollama, &args.model).await?;
     let request =
-        GenerationRequest::new(model_name, prompt).options(get_options(&args.config).await?);
+        GenerationRequest::new(model_name, prompt).options(get_options(args.options.as_deref()).await?);
     let mut stream = ollama.generate_stream(request).await?;
     while let Some(res) = stream.next().await {
         let responses = res?;
