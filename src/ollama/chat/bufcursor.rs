@@ -1,5 +1,8 @@
 use crate::error::RuChatError;
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers,
+    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    MouseEvent, MouseEventKind
+};
 use crossterm::terminal;
 
 /// A struct for managing a buffer cursor in a text-based interface.
@@ -18,11 +21,11 @@ impl BufCursor {
     ///
     /// A new instance of `BufCursor` with an empty buffer and cursor
     /// positioned at the start.
-    pub(crate) fn new() -> Self {
-        Self {
+    pub(crate) fn new() -> Result<Self, RuChatError> {
+        Ok(Self {
             buffer: vec![String::new()],
             cursor: (0, 0),
-        }
+        })
     }
 
     /// Reads the current buffer as a single string.
@@ -77,12 +80,14 @@ impl BufCursor {
     pub(crate) fn handle_key_event(&mut self, evt: Event) -> Result<u8, RuChatError> {
         match evt {
             Event::Key(KeyEvent {
+                code: KeyCode::Enter,
+                modifiers: KeyModifiers::ALT,
+                ..
+            }) => return Ok(b'\n'),
+            Event::Key(KeyEvent {
                 code: KeyCode::Backspace,
                 ..
-            }) => {
-                // FIXME: the terminal backspace key is not working
-                self.backspace()?;
-            }
+            }) => self.backspace()?,
             Event::Key(KeyEvent {
                 code: key,
                 modifiers: KeyModifiers::NONE,
@@ -90,7 +95,7 @@ impl BufCursor {
             }) => match key {
                 KeyCode::Backspace => self.backspace()?,
                 KeyCode::Delete => self.delete()?,
-                KeyCode::Enter => return Ok(b'\n'),
+                KeyCode::Enter => self.enter(), // + SHIFT is disfunctional, use ALT.
                 KeyCode::Left => self.move_left()?,
                 KeyCode::Right => self.move_right()?,
                 KeyCode::Up => self.move_up()?,
@@ -129,6 +134,7 @@ impl BufCursor {
                 KeyCode::Char('c') => return Ok(b'q'),
                 _ => {}
             },
+
             Event::Mouse(MouseEvent {
                 kind: MouseEventKind::Down(_),
                 column,

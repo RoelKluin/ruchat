@@ -17,7 +17,6 @@ use std::cmp::min;
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 use tokio::task;
-use tokio::io::stdout;
 use tokio::time::{Duration, timeout, sleep};
 use tokio_stream::StreamExt;
 
@@ -78,7 +77,7 @@ fn redraw_screen(
     let it = chat_history.get_current_question_ids().iter().rev();
     let cp = bufcursor.get_cursor(); // Cursor position editing the question
     // the last line is a status line. The second to last line is the last line of the question
-    text_view.push("Enter your question (Esc to quit):".to_string());
+    text_view.push("Ask your question (Alt+Enter to send, Esc to quit):".to_string());
 
     for &question_id in it {
         let answer_id = chat_history.get_current_answer_id(question_id);
@@ -142,8 +141,8 @@ async fn chat_raw_mode(ollama: Ollama, args: &ChatArgs) -> Result<(), RuChatErro
 
     //let running = Arc::new(Mutex::new(true))
     let mut stdout = io::stdout();
-    let mut bufcursor = BufCursor::new();
     let model_name = get_name(&ollama, &args.model).await?;
+    let mut bufcursor = BufCursor::new()?;
     stdout.execute(EnterAlternateScreen)?;
     stdout.execute(EnableMouseCapture)?;
 
