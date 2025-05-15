@@ -93,15 +93,42 @@ fn redraw_screen(
             break;
         }
     }
-    print!("{}", text_view.join("\n\r"));
+    // Render the buffer with selection. NB: cursor = (column, row)
+    if let Some(mut start) = bufcursor.get_selection_start() {
+        let mut end = bufcursor.get_cursor();
+        if start.1 > end.1 || (start.1 == end.1 && start.0 > end.0) {
+            std::mem::swap(&mut start, &mut end);
+        }
+
+        for (i, line) in text_view.iter().enumerate() {
+            // highlight selected text
+            if i >= start.1 as usize && i <= end.1 as usize {
+                if i == start.1 as usize && i == end.1 as usize {
+                    print!("{}\x1b[7m{}\x1b[0m{}\n\r", &line[..start.0 as usize], &line[start.0 as usize..end.0 as usize], &line[end.0 as usize..]);
+                } else if i == start.1 as usize {
+                    print!("{}\x1b[7m{}\x1b[0m\n\r", &line[..start.0 as usize], &line[start.0 as usize..]);
+                } else if i == end.1 as usize {
+                    print!("\x1b[7m{}\x1b[0m{}\n\r", &line[..end.0 as usize], &line[end.0 as usize..]);
+                } else {
+                    print!("\x1b[7m{}\x1b[0m\n\r", line);
+                }
+            } else {
+                print!("{}\n\r", line);
+            }
+        }
+    } else {
+        print!("{}", text_view.join("\n\r"));
+    }
+    //print!("{}", text_view.join("\n\r"));
     stdout.flush()?;
     text_view = text_view.split_off(text_view.len().saturating_sub(terminal::size()?.1 as usize));
 
     // Move the cursor to the correct position
     stdout.execute(MoveTo(
         cp.0.try_into()?,
-        min(terminal::size()?.1 - 2, text_view.len() as u16 - 2),
+        cp.1.try_into()?
     ))?;
+    //min(terminal::size()?.1 - 2, text_view.len() as u16 - 2),
 
     Ok(())
 }
