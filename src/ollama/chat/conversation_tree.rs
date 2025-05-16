@@ -398,3 +398,172 @@ impl ConversationTree {
             .map_or(0, |question| question.current_answer_id)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_add_question() {
+        let mut tree = ConversationTree::new();
+        let question_text = vec!["What is your name?".to_string()];
+        let question_id = tree.question(question_text.clone()).unwrap();
+        assert_eq!(tree.questions.len(), 1);
+        assert_eq!(tree.questions[&question_id].text, question_text);
+    }
+
+    #[test]
+    fn test_edit_question() {
+        let mut tree = ConversationTree::new();
+        let question_text = vec!["What is your name?".to_string()];
+        let question_id = tree.question(question_text.clone()).unwrap();
+        let new_question_text = vec!["What is your full name?".to_string()];
+        let new_question_id = tree.edit_question(question_id, new_question_text.clone()).unwrap();
+        assert_eq!(tree.questions.len(), 2);
+        assert_eq!(tree.questions[&new_question_id].text, new_question_text);
+    }
+
+    #[test]
+    fn test_add_answer() {
+        let mut tree = ConversationTree::new();
+        let question_text = vec!["What is your name?".to_string()];
+        let question_id = tree.question(question_text.clone()).unwrap();
+        let answer_text = vec!["John Doe".to_string()];
+        tree.add_answer(question_id, answer_text.clone()).unwrap();
+        assert_eq!(tree.answers.len(), 1);
+        assert_eq!(tree.answers[&0].text, answer_text);
+    }
+    #[test]
+    fn test_get_question_nr_of_total() {
+        let mut tree = ConversationTree::new();
+        let question_text = vec!["What is your name?".to_string()];
+        let question_id = tree.question(question_text.clone()).unwrap();
+        let answer_text = vec!["John Doe".to_string()];
+        tree.add_answer(question_id, answer_text.clone()).unwrap();
+        assert_eq!(tree.get_question_nr_of_total(question_id), "[1/1]");
+    }
+
+    #[test]
+    fn test_get_answer_nr_of_total() {
+        let mut tree = ConversationTree::new();
+        let question_text = vec!["What is your name?".to_string()];
+        let question_id = tree.question(question_text.clone()).unwrap();
+        let answer_text = vec!["John Doe".to_string()];
+        tree.add_answer(question_id, answer_text.clone()).unwrap();
+        assert_eq!(tree.get_answer_nr_of_total(0), "[1/1]");
+    }
+
+    #[test]
+    fn test_find_parent() {
+        let mut tree = ConversationTree::new();
+        let question_text = vec!["What is your name?".to_string()];
+        let question_id = tree.question(question_text.clone()).unwrap();
+        let answer_text = vec!["John Doe".to_string()];
+        tree.add_answer(question_id, answer_text.clone()).unwrap();
+        assert_eq!(tree.find_parent(question_id), None);
+    }
+
+    #[test]
+    fn test_get_qa() {
+        let mut tree = ConversationTree::new();
+        let question_text = vec!["What is your name?".to_string()];
+        let question_id = tree.question(question_text.clone()).unwrap();
+        let answer_text = vec!["John Doe".to_string()];
+        tree.add_answer(question_id, answer_text.clone()).unwrap();
+        let qa = tree.get_qa(question_id, 0).unwrap();
+        assert_eq!(qa.0, question_text);
+        assert_eq!(qa.1, answer_text);
+    }
+
+    #[test]
+    fn test_get_current_question_id() {
+        let mut tree = ConversationTree::new();
+        let question_text = vec!["What is your name?".to_string()];
+        let question_id = tree.question(question_text.clone()).unwrap();
+        assert_eq!(tree.get_current_question_id().unwrap(), question_id);
+    }
+
+    #[test]
+    fn test_get_current_answer_id() {
+        let mut tree = ConversationTree::new();
+        let question_text = vec!["What is your name?".to_string()];
+        let question_id = tree.question(question_text.clone()).unwrap();
+        let answer_text = vec!["John Doe".to_string()];
+        tree.add_answer(question_id, answer_text.clone()).unwrap();
+        assert_eq!(tree.get_current_answer_id(question_id), 0);
+    }
+
+    #[test]
+    fn test_add_answer_to_nonexistent_question() {
+        let mut tree = ConversationTree::new();
+        let question_text = vec!["What is your name?".to_string()];
+        let question_id = tree.question(question_text.clone()).unwrap();
+        let answer_text = vec!["John Doe".to_string()];
+        assert!(tree.add_answer(question_id + 1, answer_text).is_err());
+    }
+
+    #[test]
+    fn test_edit_question_not_found() {
+        let mut tree = ConversationTree::new();
+        let question_text = vec!["What is your name?".to_string()];
+        let question_id = tree.question(question_text.clone()).unwrap();
+        let new_question_text = vec!["What is your full name?".to_string()];
+        assert!(tree.edit_question(question_id + 1, new_question_text).is_err());
+    }
+
+    #[test]
+    fn test_add_answer_not_found() {
+        let mut tree = ConversationTree::new();
+        let question_text = vec!["What is your name?".to_string()];
+        let question_id = tree.question(question_text.clone()).unwrap();
+        let answer_text = vec!["John Doe".to_string()];
+        assert!(tree.add_answer(question_id + 1, answer_text).is_err());
+    }
+
+    #[test]
+    fn test_get_qa_not_found() {
+        let mut tree = ConversationTree::new();
+        let question_text = vec!["What is your name?".to_string()];
+        let question_id = tree.question(question_text.clone()).unwrap();
+        let answer_text = vec!["John Doe".to_string()];
+        tree.add_answer(question_id, answer_text.clone()).unwrap();
+        assert!(tree.get_qa(question_id + 1, 0).is_none());
+    }
+
+    #[test]
+    fn test_get_current_question_id_not_found() {
+        let mut tree = ConversationTree::new();
+        let question_text = vec!["What is your name?".to_string()];
+        let question_id = tree.question(question_text.clone()).unwrap();
+        assert!(tree.get_current_question_id().is_ok());
+        tree.current_question_ids.push(question_id + 1);
+        assert!(tree.get_current_question_id().is_err());
+    }
+
+    #[test]
+    fn test_get_current_answer_id_not_found() {
+        let mut tree = ConversationTree::new();
+        let question_text = vec!["What is your name?".to_string()];
+        let question_id = tree.question(question_text.clone()).unwrap();
+        let answer_text = vec!["John Doe".to_string()];
+        tree.add_answer(question_id, answer_text.clone()).unwrap();
+        assert_eq!(tree.get_current_answer_id(question_id), 0);
+        assert_eq!(tree.get_current_answer_id(question_id + 1), 0);
+    }
+
+    #[test]
+    fn test_find_parent_not_found() {
+        let mut tree = ConversationTree::new();
+        let question_text = vec!["What is your name?".to_string()];
+        let question_id = tree.question(question_text.clone()).unwrap();
+        assert_eq!(tree.find_parent(question_id + 1), None);
+    }
+
+    #[test]
+    fn test_get_question_nr_of_total_not_found() {
+        let mut tree = ConversationTree::new();
+        let question_text = vec!["What is your name?".to_string()];
+        let question_id = tree.question(question_text.clone()).unwrap();
+        assert_eq!(tree.get_question_nr_of_total(question_id + 1), "[0/0]");
+    }
+}

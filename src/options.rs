@@ -58,7 +58,6 @@ pub(crate) async fn get_options(options: Option<&str>) -> Result<ModelOptions, R
 mod tests {
     use super::*;
     use std::fs;
-    use std::path::Path;
 
     #[tokio::test]
     async fn test_read_options_file() {

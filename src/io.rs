@@ -79,7 +79,7 @@ impl Io {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::io::{self, AsyncWriteExt};
+    use tokio::io::AsyncWriteExt;
 
     #[tokio::test]
     async fn test_write_line() {
