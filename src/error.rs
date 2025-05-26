@@ -84,6 +84,8 @@ pub enum RuChatError {
     ChromaHttpClientError(#[from] chroma::client::ChromaHttpClientError),
 }
 
+pub type Result<T> = std::result::Result<T, RuChatError>;
+
 #[cfg(test)]
 mod tests {
     use super::*;

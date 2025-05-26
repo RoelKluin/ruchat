@@ -1,6 +1,7 @@
 use crossterm::terminal::ClearType;
 use crossterm::event::Event;
 
+#[derive(Debug)]
 pub(crate) enum EventResult {
     CursorChange,
     /// quit the application

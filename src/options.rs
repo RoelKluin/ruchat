@@ -1,4 +1,4 @@
-use crate::error::RuChatError;
+use crate::error::{Result,RuChatError};
 use ollama_rs::models::ModelOptions;
 use serde_json::Value;
 
@@ -14,11 +14,12 @@ use serde_json::Value;
 /// # Returns
 ///
 /// A `Result` containing the parsed `Value` or a `RuChatError`.
-async fn read_options_file(options: &str) -> Result<Value, serde_json::Error> {
+async fn read_options_file(options: &str) -> Result<Value> {
     match std::fs::read_to_string(options) {
         Ok(options) => serde_json::from_str(&options),
         Err(_) => serde_json::from_str(options),
     }
+    .map_err(RuChatError::SerdeError)
 }
 
 /// Get model options for prompt handling from a JSON file.
@@ -34,7 +35,7 @@ async fn read_options_file(options: &str) -> Result<Value, serde_json::Error> {
 /// # Returns
 ///
 /// A `Result` containing the `ModelOptions` or a `RuChatError`.
-pub(crate) async fn get_options(options: Option<&str>) -> Result<ModelOptions, RuChatError> {
+pub(crate) async fn get_options(options: Option<&str>) -> Result<ModelOptions> {
     if let Some(options_path) = options {
         let mut defaults = serde_json::to_value(ModelOptions::default())?;
 

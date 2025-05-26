@@ -1,4 +1,4 @@
-use crate::error::RuChatError;
+use crate::error::{Result, RuChatError};
 use std::collections::HashMap;
 
 /// Represents an answer in the conversation tree.
@@ -68,7 +68,7 @@ impl ConversationTree {
     /// # Returns
     ///
     /// A `Result` containing the question ID or a `RuChatError`.
-    pub(crate) fn question(&mut self, question_text: Vec<String>) -> Result<usize, RuChatError> {
+    pub(crate) fn question(&mut self, question_text: Vec<String>) -> Result<usize> {
         let question_id = self.next_question_id;
         self.next_question_id += 1;
         let answer_id = self.next_answer_id;
@@ -124,7 +124,7 @@ impl ConversationTree {
         &mut self,
         question_id: usize,
         new_question_text: Vec<String>,
-    ) -> Result<usize, RuChatError> {
+    ) -> Result<usize> {
         let question = self
             .questions
             .get_mut(&question_id)
@@ -203,7 +203,7 @@ impl ConversationTree {
         &mut self,
         question_id: usize,
         text: Vec<String>,
-    ) -> Result<(), RuChatError> {
+    ) -> Result<()> {
         let question = self
             .questions
             .get_mut(&question_id)
@@ -376,7 +376,7 @@ impl ConversationTree {
     /// # Returns
     ///
     /// A `Result` containing the current question ID or a `RuChatError`.
-    pub(crate) fn get_current_question_id(&self) -> Result<usize, RuChatError> {
+    pub(crate) fn get_current_question_id(&self) -> Result<usize> {
         self.current_question_ids
             .get(self.at_question - 1)
             .ok_or(RuChatError::QuestionNotFound)

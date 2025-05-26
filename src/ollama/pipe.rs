@@ -1,4 +1,4 @@
-use crate::error::RuChatError;
+use crate::error::{Result,RuChatError};
 use crate::io::Io;
 use crate::ollama::model::get_name;
 use crate::options::get_options;
@@ -44,7 +44,7 @@ pub struct PipeArgs {
 /// # Returns
 ///
 /// A `Result` indicating success or failure.
-pub(crate) async fn pipe(ollama: Ollama, args: &PipeArgs) -> Result<(), RuChatError> {
+pub(crate) async fn pipe(ollama: Ollama, args: &PipeArgs) -> Result<()> {
     let mut cio = Io::new();
     let mut done = false;
     let mut options = get_options(args.options.as_deref()).await?;

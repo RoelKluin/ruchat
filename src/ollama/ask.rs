@@ -1,4 +1,4 @@
-use crate::error::RuChatError;
+use crate::error::{Result,RuChatError};
 use crate::io::Io;
 use crate::ollama::model::get_name;
 use crate::options::get_options;
@@ -50,7 +50,7 @@ pub struct AskArgs {
 /// # Returns
 ///
 /// A `Result` containing the generated prompt or a `RuChatError`.
-fn generate_prompt(args: &AskArgs) -> Result<String, RuChatError> {
+fn generate_prompt(args: &AskArgs) -> Result<String> {
     let mut prompt = String::new();
     if let Some(text_files) = &args.text_files {
         text_files.split(',').try_for_each(|file| {
@@ -103,7 +103,7 @@ fn generate_prompt(args: &AskArgs) -> Result<String, RuChatError> {
 /// # Returns
 ///
 /// A `Result` indicating success or failure.
-pub(crate) async fn ask(ollama: Ollama, args: &AskArgs) -> Result<(), RuChatError> {
+pub(crate) async fn ask(ollama: Ollama, args: &AskArgs) -> Result<()> {
     let mut cio = Io::new();
     let mut prompt =
         if args.prompt.is_some() || args.positional_prompt.is_some() || args.text_files.is_some() {

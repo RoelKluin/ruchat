@@ -1,10 +1,10 @@
 pub(crate) mod ls;
 pub(crate) mod pull;
 pub(crate) mod rm;
-use crate::error::RuChatError;
+use crate::error::{Result,RuChatError};
 use ollama_rs::Ollama;
 
-pub async fn get_name(ollama: &Ollama, name: &str) -> Result<String, RuChatError> {
+pub async fn get_name(ollama: &Ollama, name: &str) -> Result<String> {
     if name.is_empty()
         || !name
             .chars()

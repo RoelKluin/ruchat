@@ -1,5 +1,5 @@
 pub(crate) mod strukt;
-use crate::error::RuChatError;
+use crate::error::Result;
 use crate::io::Io;
 use crate::ollama::model::get_name;
 use clap::Parser;
@@ -45,7 +45,7 @@ pub struct FuncArgs {
 /// # Returns
 ///
 /// A `Result` indicating success or failure.
-pub(crate) async fn func(ollama: Ollama, args: &FuncArgs) -> Result<(), RuChatError> {
+pub(crate) async fn func(ollama: Ollama, args: &FuncArgs) -> Result<()> {
     let history = vec![];
     let model_name = get_name(&ollama, &args.model).await?;
     let mut coordinator = Coordinator::new(ollama, model_name.to_string(), history)

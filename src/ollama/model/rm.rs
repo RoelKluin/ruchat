@@ -1,5 +1,5 @@
 use crate::args::Args;
-use crate::error::RuChatError;
+use crate::error::{Result,RuChatError};
 use crate::ollama::init;
 use crate::ollama::model::get_name;
 use clap::Parser;
@@ -31,7 +31,7 @@ pub struct RmArgs {
 /// # Returns
 ///
 /// A `Result` indicating success or failure.
-pub(crate) async fn remove(args: &Args, rm_args: &RmArgs) -> Result<(), RuChatError> {
+pub(crate) async fn remove(args: &Args, rm_args: &RmArgs) -> Result<()> {
     let ollama = init(args)?;
     match rm_args
         .model
