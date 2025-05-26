@@ -392,7 +392,7 @@ impl BufCursor {
         if let Some(ss) = self.selection_start {
             if ss.1 < self.cursor.1 || (ss.1 == self.cursor.1 && ss.0 < self.cursor.0) {
                 Some((ss, self.cursor))
-            } else if ss.1 > self.cursor.1 || (ss.1 == self.cursor.1 && ss.0 > self.cursor.0) {
+            } else if ss.1 > self.cursor.1 || ss.0 > self.cursor.0 {
                 Some((self.cursor, ss))
             } else {
                 None
@@ -470,11 +470,14 @@ impl BufCursor {
                 Ok(EventResult::UpdateView(ClearType::UntilNewLine))
             } else {
                 s.drain(start.0..);
-                self.buffer.drain((start.1 + 1)..end.1);
                 self.buffer
                     .get_mut(end.1)
                     .ok_or(RuChatError::Cursor1OutOfBounds)?
                     .drain(..end.0);
+                if start.1 + 1 <= end.1 {
+                    self.buffer.drain((start.1 + 1)..end.1);
+                }
+                self.selection_start = None;
                 Ok(EventResult::UpdateView(ClearType::FromCursorDown))
             }
         } else {
