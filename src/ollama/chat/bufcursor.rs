@@ -469,6 +469,7 @@ impl BufCursor {
                 s.drain(start.0..end.0);
                 Ok(EventResult::UpdateView(ClearType::UntilNewLine))
             } else {
+                self.selection_start = None;
                 s.drain(start.0..);
                 self.buffer
                     .get_mut(end.1)
@@ -476,8 +477,9 @@ impl BufCursor {
                     .drain(..end.0);
                 if start.1 + 1 <= end.1 {
                     self.buffer.drain((start.1 + 1)..end.1);
+                    let line = self.buffer.remove(self.cursor.1 + 1);
+                    return self.append_line(&line);
                 }
-                self.selection_start = None;
                 Ok(EventResult::UpdateView(ClearType::FromCursorDown))
             }
         } else {
