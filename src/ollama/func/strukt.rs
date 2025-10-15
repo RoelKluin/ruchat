@@ -4,12 +4,12 @@ use crate::ollama::model::get_name;
 use clap::Parser;
 use ollama_rs::models::ModelOptions;
 use ollama_rs::{
-    Ollama,
     coordinator::Coordinator,
     generation::{
         chat::ChatMessage,
         parameters::{FormatType, JsonSchema, JsonStructure},
     },
+    Ollama,
 };
 use serde::Deserialize;
 use std::path::PathBuf;
@@ -89,7 +89,7 @@ pub(crate) async fn func_struct(ollama: Ollama, args: &FuncStructArgs) -> Result
     let history = vec![];
     let model_name = get_name(&ollama, &args.model).await?;
 
-    let format = FormatType::StructuredJson(JsonStructure::new::<Weather>());
+    let format = FormatType::StructuredJson(Box::new(JsonStructure::new::<Weather>()));
 
     let mut coordinator = Coordinator::new(ollama, model_name.to_string(), history)
         .add_tool(get_weather)

@@ -181,9 +181,7 @@ fn redraw_from_cursor_down(
 ) -> Result<(), RuChatError> {
     let cp = bufcursor.get_cursor();
     let mut text_view: Vec<String> = bufcursor.view_buffer();
-    text_view.push(format!(
-        "Ask your question (Alt+Enter to send, Esc to quit):"
-    ));
+    text_view.push("Ask your question (Alt+Enter to send, Esc to quit):".to_string());
     text_view = text_view.split_off(cp.1);
     stdout.execute(Clear(ClearType::FromCursorDown))?;
     stdout.execute(MoveTo(0, cp.1 as u16))?;
@@ -259,7 +257,7 @@ fn redraw_from_cursor_up(
 // Function to display a simple spinner
 async fn show_spinner(x: usize, y: usize) {
     let mut stdout = io::stdout();
-    let spinner_chars = vec!['⠋', '⠙', '⠹', '⠼', '⠶', '⠦', '⠤'];
+    let spinner_chars = ['⠋', '⠙', '⠹', '⠼', '⠶', '⠦', '⠤'];
     let mut index = 0;
     // get current cursor position
 

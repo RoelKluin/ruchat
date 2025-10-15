@@ -9,7 +9,7 @@ use serde_json::Value;
 /// # Parameters
 ///
 /// - `options`: The path to the JSON file containing model options, or a string
-///  representing the options in JSON format.
+///   representing the options in JSON format.
 ///
 /// # Returns
 ///
