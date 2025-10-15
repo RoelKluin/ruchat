@@ -10,6 +10,12 @@ pub enum RuChatError {
     #[error("Model Error: {0}")]
     ModelError(String),
 
+    #[error("Invalid model name: {0}")]
+    InvalidModelName(String),
+
+    #[error("Model not found: {0}")]
+    ModelNotFound(String),
+
     /// Error due to invalid metadata.
     #[error("Invalid metadata: {0}")]
     InvalidMetadata(String),

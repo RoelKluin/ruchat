@@ -3,7 +3,9 @@ pub(crate) mod query;
 pub(crate) mod similarity;
 
 use anyhow::Result;
-use chromadb::client::{ChromaAuthMethod, ChromaClient, ChromaClientOptions, ChromaTokenHeader};
+use chromadb::client::{ChromaAuthMethod, ChromaClientOptions, ChromaTokenHeader};
+use chromadb::collection::ChromaCollection;
+use chromadb::ChromaClient;
 
 /// Access a running Chroma server to store and retrieve data for embeddings.
 ///
@@ -45,4 +47,16 @@ pub async fn create_client(token: Option<&str>, server: &str, db: &str) -> Resul
         // Defaults to http://localhost:8000
         ChromaClient::new(Default::default()).await
     }
+}
+
+/// Create a collection in the chroma database
+pub async fn get_or_create_chroma_collection(
+    client: &ChromaClient,
+    collection: &str,
+) -> Result<String> {
+    // Get or create a collection with the given name and no metadata.
+    let collection: ChromaCollection = client.get_or_create_collection(collection, None).await?;
+
+    // Get the UUID of the collection
+    Ok(collection.id().to_string())
 }

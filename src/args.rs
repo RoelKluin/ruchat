@@ -1,16 +1,16 @@
-use crate::RuChatError;
-use crate::chroma::ls::{ChromaLsArgs, chroma_ls};
-use crate::chroma::query::{QueryArgs, query};
-use crate::chroma::similarity::{SimilarityArgs, similarity_search};
-use crate::embed::{EmbedArgs, embed};
-use crate::ollama::ask::{AskArgs, ask};
-use crate::ollama::chat::{ChatArgs, chat};
-use crate::ollama::func::strukt::{FuncStructArgs, func_struct};
-use crate::ollama::func::{FuncArgs, func};
+use crate::chroma::ls::{chroma_ls, ChromaLsArgs};
+use crate::chroma::query::{query, QueryArgs};
+use crate::chroma::similarity::{similarity_search, SimilarityArgs};
+use crate::embed::{embed, EmbedArgs};
+use crate::ollama::ask::{ask, AskArgs};
+use crate::ollama::chat::{chat, ChatArgs};
+use crate::ollama::func::strukt::{func_struct, FuncStructArgs};
+use crate::ollama::func::{func, FuncArgs};
 use crate::ollama::model::ls::list;
-use crate::ollama::model::pull::{PullArgs, pull};
-use crate::ollama::model::rm::{RmArgs, remove};
-use crate::ollama::pipe::{PipeArgs, pipe};
+use crate::ollama::model::pull::{pull, PullArgs};
+use crate::ollama::model::rm::{remove, RmArgs};
+use crate::ollama::pipe::{pipe, PipeArgs};
+use crate::RuChatError;
 use clap::{Parser, Subcommand};
 use ollama_rs::Ollama;
 

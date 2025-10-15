@@ -96,13 +96,13 @@ pub(crate) async fn embed(ollama: Ollama, args: &EmbedArgs) -> Result<(), RuChat
     let entries_metadata = get_metadata(&args.entries_metadata)?;
 
     let request = GenerateEmbeddingsRequest::new(model_name, vec![args.prompt.as_str()].into());
+    let res = ollama.generate_embeddings(request).await?;
     let client = create_client(
         args.chroma_token.as_deref(),
         &args.chroma_server,
         &args.chroma_database,
     )
     .await?;
-    let res = ollama.generate_embeddings(request).await?;
 
     let collection_metadata = get_metadata(&args.collection_metadata)?;
 

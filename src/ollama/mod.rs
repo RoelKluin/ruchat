@@ -28,3 +28,32 @@ pub(crate) fn init(args: &Args) -> Result<Ollama, RuChatError> {
         .and_then(|(host, port)| port.parse::<u16>().map(|p| Ollama::new(host, p)).ok())
         .ok_or_else(|| RuChatError::ArgServerError(args.server.to_string()))
 }
+
+pub async fn get_model_name(ollama: &Ollama, name: &str) -> Result<String, RuChatError> {
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == ':' || c == '-' || c == '.' || c == '/')
+    {
+        return Err(RuChatError::InvalidModelName(name.to_string()));
+    }
+    let model_list = ollama
+        .list_local_models()
+        .await
+        .map_err(|_| RuChatError::ModelNotFound(name.to_string()))?;
+    let model = model_list.iter().find(|m| {
+        if name.contains(":") {
+            m.name == name
+        } else {
+            m.name.starts_with(name)
+        }
+    });
+
+    match model {
+        Some(model) => Ok(model.name.clone()),
+        None => {
+            ollama.pull_model(name.to_string(), false).await?;
+            Box::pin(get_model_name(ollama, name)).await
+        }
+    }
+}

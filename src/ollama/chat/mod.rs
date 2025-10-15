@@ -1,28 +1,27 @@
 mod bufcursor;
 mod conversation_tree;
+mod event_result;
 mod history;
 mod pos;
-mod event_result;
 use crate::error::RuChatError;
+use crate::ollama::chat::event_result::EventResult;
 use crate::ollama::model::get_name;
 use bufcursor::BufCursor;
 use clap::Parser;
 use conversation_tree::ConversationTree;
 use crossterm::{
-    ExecutableCommand,
-    cursor::{MoveTo, Show, Hide},
+    cursor::{Hide, MoveTo, Show},
     event::{self, DisableMouseCapture, EnableMouseCapture},
     terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
+    ExecutableCommand,
 };
+use ollama_rs::generation::chat::{request::ChatMessageRequest, ChatMessage};
 use ollama_rs::Ollama;
-use ollama_rs::generation::chat::{ChatMessage, request::ChatMessageRequest};
-use std::cmp::min;
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 use tokio::task;
-use tokio::time::{Duration, timeout, sleep};
+use tokio::time::{sleep, timeout, Duration};
 use tokio_stream::StreamExt;
-use crate::ollama::chat::event_result::EventResult;
 
 /// Command-line arguments for interactive chat sessions with a model.
 ///
@@ -75,22 +74,21 @@ fn redraw_screen(
     chat_history: &ConversationTree,
     bufcursor: &mut BufCursor,
 ) -> Result<(), RuChatError> {
-
     // text_view is the text that is currently being displayed
     // Add the current question to the text view
     let mut text_view: Vec<String> = bufcursor.view_buffer();
 
     let it = chat_history.get_current_question_ids().iter().rev();
     let cp = bufcursor.get_cursor(); // Cursor position editing the question
-    // the last line is a status line. The second to last line is the last line of the question
-    text_view.push(format!("Ask your question (Alt+Enter to send, Esc to quit):"));
+                                     // the last line is a status line. The second to last line is the last line of the question
+    text_view.push("Ask your question (Alt+Enter to send, Esc to quit):".to_string());
 
     // Clear the screen
     stdout.execute(Clear(ClearType::All))?;
     stdout.execute(MoveTo(0, 0))?;
 
     for &question_id in it {
-    let answer_id = chat_history.get_current_answer_id(question_id);
+        let answer_id = chat_history.get_current_answer_id(question_id);
         if let Some((mut question, mut response)) = chat_history.get_qa(question_id, answer_id) {
             response.push(chat_history.get_answer_nr_of_total(answer_id) + "[Redo][Del]");
             response.append(&mut text_view);
@@ -118,7 +116,12 @@ fn redraw_screen(
             // highlight selected text
             if i >= start.1 && i <= end.1 {
                 if i == start.1 && i == end.1 {
-                    println!("{}\x1b[7m{}\x1b[0m{}", &line[..start.0], &line[start.0..end.0], &line[end.0..]);
+                    println!(
+                        "{}\x1b[7m{}\x1b[0m{}",
+                        &line[..start.0],
+                        &line[start.0..end.0],
+                        &line[end.0..]
+                    );
                 } else if i == start.1 {
                     println!("{}\x1b[7m{}\x1b[0m", &line[..start.0], &line[start.0..]);
                 } else if i == end.1 {
@@ -135,20 +138,14 @@ fn redraw_screen(
     }
 
     // Move the cursor to the correct position
-    stdout.execute(MoveTo(
-        cp.0.try_into()?,
-        (offset + cp.1).try_into()?,
-    ))?;
+    stdout.execute(MoveTo(cp.0.try_into()?, (offset + cp.1).try_into()?))?;
     stdout.flush()?;
     //min(terminal::size()?.1 - 2, text_view.len() as u16 - 2),
 
     Ok(())
 }
 
-fn redraw_line(
-    stdout: &mut io::Stdout,
-    bufcursor: &mut BufCursor,
-) -> Result<(), RuChatError> {
+fn redraw_line(stdout: &mut io::Stdout, bufcursor: &mut BufCursor) -> Result<(), RuChatError> {
     let cp = bufcursor.get_cursor();
     let line = bufcursor.get_line(cp.1)?;
     stdout.execute(Clear(ClearType::CurrentLine))?;
@@ -159,7 +156,12 @@ fn redraw_line(
             std::mem::swap(&mut start, &mut end);
         }
         if cp.1 == start.1 {
-            println!("{}\x1b[7m{}\x1b[0m{}", &line[..start.0], &line[start.0..end.0], &line[end.0..]);
+            println!(
+                "{}\x1b[7m{}\x1b[0m{}",
+                &line[..start.0],
+                &line[start.0..end.0],
+                &line[end.0..]
+            );
         } else if cp.1 == end.1 {
             println!("\x1b[7m{}\x1b[0m{}", &line[..end.0], &line[end.0..]);
         } else {
@@ -179,7 +181,9 @@ fn redraw_from_cursor_down(
 ) -> Result<(), RuChatError> {
     let cp = bufcursor.get_cursor();
     let mut text_view: Vec<String> = bufcursor.view_buffer();
-    text_view.push(format!("Ask your question (Alt+Enter to send, Esc to quit):"));
+    text_view.push(format!(
+        "Ask your question (Alt+Enter to send, Esc to quit):"
+    ));
     text_view = text_view.split_off(cp.1);
     stdout.execute(Clear(ClearType::FromCursorDown))?;
     stdout.execute(MoveTo(0, cp.1 as u16))?;
@@ -191,7 +195,11 @@ fn redraw_from_cursor_down(
                 std::mem::swap(&mut start, &mut end);
             }
             if i == start.1 {
-                println!("{}\x1b[7m{}\x1b[0m", &line[..start.0], &line[start.0..end.0]);
+                println!(
+                    "{}\x1b[7m{}\x1b[0m",
+                    &line[..start.0],
+                    &line[start.0..end.0]
+                );
             } else if i == end.1 {
                 println!("\x1b[7m{}\x1b[0m{}", &line[..end.0], &line[end.0..]);
             } else if i >= start.1 && i <= end.1 {
@@ -226,7 +234,11 @@ fn redraw_from_cursor_up(
                 std::mem::swap(&mut start, &mut end);
             }
             if i == start.1 {
-                println!("{}\x1b[7m{}\x1b[0m", &line[..start.0], &line[start.0..end.0]);
+                println!(
+                    "{}\x1b[7m{}\x1b[0m",
+                    &line[..start.0],
+                    &line[start.0..end.0]
+                );
             } else if i == end.1 {
                 println!("\x1b[7m{}\x1b[0m{}", &line[..end.0], &line[end.0..]);
             } else if i >= start.1 && i <= end.1 {
@@ -253,7 +265,9 @@ async fn show_spinner(x: usize, y: usize) {
 
     loop {
         stdout.execute(Hide).expect("Hide cursor");
-        stdout.execute(MoveTo(x as u16, y as u16)).expect("Move cursor");
+        stdout
+            .execute(MoveTo(x as u16, y as u16))
+            .expect("Move cursor");
         print!("{}", spinner_chars[index]);
         stdout.flush().unwrap();
         index = (index + 1) % spinner_chars.len();

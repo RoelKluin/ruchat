@@ -526,18 +526,23 @@ impl BufCursor {
 mod tests {
     use super::*;
     use crossterm::event::{KeyEventKind, KeyEventState, MouseButton, MouseEventKind};
+    fn write(cursor: &mut BufCursor, text: &str) {
+        for c in text.chars() {
+            cursor.push(c).unwrap();
+        }
+    }
 
     #[test]
     fn test_bufcursor_new() {
-        let cursor = BufCursor::new(false).unwrap();
+        let cursor = BufCursor::new().unwrap();
         assert_eq!(cursor.buffer, vec![String::new()]);
         assert_eq!(cursor.cursor, (0, 0));
     }
 
     #[test]
     fn test_bufcursor_read() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!");
         assert_eq!(cursor.read(), "Hello, world!");
         cursor.cursor = (5, 0);
         cursor.handle_event(Event::Key(KeyEvent {
@@ -572,23 +577,23 @@ mod tests {
 
     #[test]
     fn test_bufcursor_view_buffer() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!");
         assert_eq!(cursor.view_buffer(), vec!["Hello, world!\r"]);
     }
 
     #[test]
     fn test_bufcursor_set_cursor() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!");
         cursor.set_cursor(5, 0);
         assert_eq!(cursor.get_cursor(), (5, 0));
     }
 
     #[test]
     fn test_bufcursor_handle_event() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!");
         let event = Event::Key(KeyEvent {
             code: KeyCode::Char('a'),
             modifiers: KeyModifiers::NONE,
@@ -601,8 +606,8 @@ mod tests {
 
     #[test]
     fn test_bufcursor_backspace() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!");
         cursor.cursor = (5, 0);
         cursor.backspace().unwrap();
         assert_eq!(cursor.read(), "Hell, world!");
@@ -610,8 +615,8 @@ mod tests {
 
     #[test]
     fn test_bufcursor_delete() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!");
         cursor.cursor = (5, 0);
         cursor.delete().unwrap();
         assert_eq!(cursor.read(), "Hello world!");
@@ -619,62 +624,62 @@ mod tests {
 
     #[test]
     fn test_bufcursor_move_left() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!");
         cursor.cursor = (5, 0);
-        cursor.move_left().unwrap();
+        cursor.move_left(KeyModifiers::NONE).unwrap();
         assert_eq!(cursor.get_cursor(), (4, 0));
     }
 
     #[test]
     fn test_bufcursor_move_right() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!");
         cursor.cursor = (5, 0);
-        cursor.move_right().unwrap();
+        cursor.move_right(KeyModifiers::NONE).unwrap();
         assert_eq!(cursor.get_cursor(), (6, 0));
     }
 
     #[test]
     fn test_bufcursor_move_up() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!\nThis is a test.");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!\nThis is a test.");
         cursor.cursor = (5, 1);
-        cursor.move_up().unwrap();
+        cursor.move_up(KeyModifiers::NONE).unwrap();
         assert_eq!(cursor.get_cursor(), (5, 0));
     }
 
     #[test]
     fn test_bufcursor_move_down() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!\nThis is a test.");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!\nThis is a test.");
         cursor.cursor = (5, 0);
-        cursor.move_down().unwrap();
+        cursor.move_down(KeyModifiers::NONE).unwrap();
         assert_eq!(cursor.get_cursor(), (5, 1));
     }
 
     #[test]
     fn test_bufcursor_move_word_left() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!");
         cursor.cursor = (5, 0);
-        cursor.move_word_left().unwrap();
+        cursor.move_word_left(KeyModifiers::NONE).unwrap();
         assert_eq!(cursor.get_cursor(), (4, 0));
     }
 
     #[test]
     fn test_bufcursor_move_word_right() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!");
         cursor.cursor = (5, 0);
-        cursor.move_word_right().unwrap();
+        cursor.move_word_right(KeyModifiers::NONE).unwrap();
         assert_eq!(cursor.get_cursor(), (6, 0));
     }
 
     #[test]
     fn test_bufcursor_delete_word() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!");
         cursor.cursor = (5, 0);
         cursor.delete_word().unwrap();
         assert_eq!(cursor.read(), "Hello world!");
@@ -682,8 +687,8 @@ mod tests {
 
     #[test]
     fn test_bufcursor_push() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!");
         cursor.cursor = (5, 0);
         cursor.push('a').unwrap();
         assert_eq!(cursor.read(), "Helloa, world!");
@@ -691,16 +696,16 @@ mod tests {
 
     #[test]
     fn test_bufcursor_append_line() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!");
         cursor.append_line("This is a test.").unwrap();
         assert_eq!(cursor.read(), "Hello, world!This is a test.");
     }
 
     #[test]
     fn test_bufcursor_drain() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!");
         let drained = cursor.drain();
         assert_eq!(drained, vec!["Hello, world!"]);
         assert_eq!(cursor.read(), "");
@@ -708,46 +713,46 @@ mod tests {
 
     #[test]
     fn test_bufcursor_is_whitespace() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!");
         assert_eq!(cursor.is_whitespace(5).unwrap(), false);
         assert_eq!(cursor.is_whitespace(6).unwrap(), true);
     }
 
     #[test]
     fn test_bufcursor_line_len() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!");
         assert_eq!(cursor.line_len().unwrap(), 13);
     }
 
     #[test]
     fn test_bufcursor_len() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!");
         assert_eq!(cursor.len(), 13);
     }
 
     #[test]
     fn test_bufcursor_get_cursor() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!");
         cursor.set_cursor(5, 0);
         assert_eq!(cursor.get_cursor(), (5, 0));
     }
 
     #[test]
     fn test_bufcursor_debug() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!");
         cursor.debug("Debugging").unwrap();
         assert_eq!(cursor.read(), "Hello, world!Debugging");
     }
 
     #[test]
     fn test_bufcursor_handle_event_backspace() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!");
         cursor.cursor = (5, 0);
         cursor.handle_event(Event::Key(KeyEvent {
             code: KeyCode::Backspace,
@@ -761,8 +766,8 @@ mod tests {
 
     #[test]
     fn test_bufcursor_handle_event_delete() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!");
         cursor.cursor = (5, 0);
         cursor.handle_event(Event::Key(KeyEvent {
             code: KeyCode::Delete,
@@ -776,8 +781,8 @@ mod tests {
 
     #[test]
     fn test_bufcursor_handle_event_enter() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!");
         cursor.handle_event(Event::Key(KeyEvent {
             code: KeyCode::Enter,
             modifiers: KeyModifiers::NONE,
@@ -790,8 +795,8 @@ mod tests {
 
     #[test]
     fn test_bufcursor_handle_event_move_left() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!");
         cursor.cursor = (5, 0);
         cursor.handle_event(Event::Key(KeyEvent {
             code: KeyCode::Left,
@@ -805,8 +810,8 @@ mod tests {
 
     #[test]
     fn test_bufcursor_handle_event_move_right() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!");
         cursor.cursor = (5, 0);
         cursor.handle_event(Event::Key(KeyEvent {
             code: KeyCode::Right,
@@ -820,8 +825,8 @@ mod tests {
 
     #[test]
     fn test_bufcursor_handle_event_move_up() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!\nThis is a test.");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!\nThis is a test.");
         cursor.cursor = (5, 1);
         cursor.handle_event(Event::Key(KeyEvent {
             code: KeyCode::Up,
@@ -835,8 +840,8 @@ mod tests {
 
     #[test]
     fn test_bufcursor_handle_event_move_down() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!\nThis is a test.");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!\nThis is a test.");
         cursor.cursor = (5, 0);
         cursor.handle_event(Event::Key(KeyEvent {
             code: KeyCode::Down,
@@ -850,8 +855,8 @@ mod tests {
 
     #[test]
     fn test_bufcursor_handle_event_move_word_left() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!");
         cursor.cursor = (5, 0);
         cursor.handle_event(Event::Key(KeyEvent {
             code: KeyCode::Char('b'),
@@ -865,8 +870,8 @@ mod tests {
 
     #[test]
     fn test_bufcursor_handle_event_move_word_right() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!");
         cursor.cursor = (5, 0);
         cursor.handle_event(Event::Key(KeyEvent {
             code: KeyCode::Char('f'),
@@ -880,8 +885,8 @@ mod tests {
 
     #[test]
     fn test_bufcursor_handle_event_delete_word() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!");
         cursor.cursor = (5, 0);
         cursor.handle_event(Event::Key(KeyEvent {
             code: KeyCode::Char('d'),
@@ -895,8 +900,8 @@ mod tests {
 
     #[test]
     fn test_bufcursor_handle_event_select_all() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!");
         cursor.handle_event(Event::Key(KeyEvent {
             code: KeyCode::Char('a'),
             modifiers: KeyModifiers::CONTROL,
@@ -909,8 +914,8 @@ mod tests {
 
     #[test]
     fn test_bufcursor_handle_event_copy() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!");
         cursor.handle_event(Event::Key(KeyEvent {
             code: KeyCode::Char('c'),
             modifiers: KeyModifiers::CONTROL,
@@ -923,8 +928,8 @@ mod tests {
 
     #[test]
     fn test_bufcursor_handle_event_cut() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!");
         cursor.cursor = (5, 0);
         cursor.handle_event(Event::Key(KeyEvent {
             code: KeyCode::Char('x'),
@@ -938,8 +943,8 @@ mod tests {
 
     #[test]
     fn test_bufcursor_handle_event_paste() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!");
         cursor.handle_event(Event::Key(KeyEvent {
             code: KeyCode::Char('v'),
             modifiers: KeyModifiers::CONTROL,
@@ -952,8 +957,8 @@ mod tests {
 
     #[test]
     fn test_bufcursor_handle_event_delete_selection() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!");
         cursor.cursor = (5, 0);
         for _ in 0..=7 {
             cursor.handle_event(Event::Key(KeyEvent {
@@ -977,8 +982,8 @@ mod tests {
 
     #[test]
     fn test_bufcursor_handle_event_set_cursor() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!");
         cursor.handle_event(Event::Mouse(MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: 5,
@@ -991,8 +996,8 @@ mod tests {
 
     #[test]
     fn test_bufcursor_handle_event_scroll_up() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!");
         cursor.handle_event(Event::Mouse(MouseEvent {
             kind: MouseEventKind::ScrollUp,
             column: 0,
@@ -1005,8 +1010,8 @@ mod tests {
 
     #[test]
     fn test_bufcursor_handle_event_scroll_down() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!");
         cursor.handle_event(Event::Mouse(MouseEvent {
             kind: MouseEventKind::ScrollDown,
             column: 0,
@@ -1019,8 +1024,8 @@ mod tests {
 
     #[test]
     fn test_bufcursor_handle_event_debug() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!");
         cursor.handle_event(Event::Key(KeyEvent {
             code: KeyCode::Char('d'),
             modifiers: KeyModifiers::NONE,
@@ -1033,8 +1038,8 @@ mod tests {
 
     #[test]
     fn test_bufcursor_handle_event_other() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!");
         cursor.handle_event(Event::Key(KeyEvent {
             code: KeyCode::Char('x'),
             modifiers: KeyModifiers::NONE,
@@ -1047,8 +1052,8 @@ mod tests {
 
     #[test]
     fn test_bufcursor_handle_event_invalid() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!");
         cursor.handle_event(Event::Key(KeyEvent {
             code: KeyCode::Char('z'),
             modifiers: KeyModifiers::NONE,
@@ -1061,8 +1066,8 @@ mod tests {
 
     #[test]
     fn test_bufcursor_handle_event_invalid_key() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!");
         cursor.handle_event(Event::Key(KeyEvent {
             code: KeyCode::Char('z'),
             modifiers: KeyModifiers::NONE,
@@ -1075,8 +1080,8 @@ mod tests {
 
     #[test]
     fn test_bufcursor_handle_event_invalid_mouse() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!");
         cursor.handle_event(Event::Mouse(MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: 5,
@@ -1089,8 +1094,8 @@ mod tests {
 
     #[test]
     fn test_bufcursor_handle_event_invalid_scroll() {
-        let mut cursor = BufCursor::new(false).unwrap();
-        cursor.write("Hello, world!");
+        let mut cursor = BufCursor::new().unwrap();
+        write(&mut cursor, "Hello, world!");
         cursor.handle_event(Event::Mouse(MouseEvent {
             kind: MouseEventKind::ScrollUp,
             column: 0,
