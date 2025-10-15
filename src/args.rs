@@ -45,7 +45,7 @@ impl Args {
             Commands::Ask(ask_args) => ask(self.init()?, ask_args).await?,
             Commands::Pipe(pipe_args) => pipe(self.init()?, pipe_args).await?,
             Commands::Chat(chat_args) => chat(self.init()?, chat_args).await?,
-            Commands::Ls => list(self).await?,
+            Commands::Ls => list(self.init()?).await?,
             Commands::Rm(rm_args) => remove(self, rm_args).await?,
             Commands::Pull(pull_args) => pull(self, pull_args).await?,
             Commands::Func(func_args) => func(self.init()?, func_args).await?,
