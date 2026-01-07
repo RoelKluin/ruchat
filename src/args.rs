@@ -22,15 +22,15 @@ use ollama_rs::Ollama;
 #[derive(Parser, Debug, PartialEq)]
 pub struct Args {
     /// The subcommand to execute.
-    #[clap(subcommand)]
+    #[command(subcommand)]
     pub command: Option<Commands>,
 
     /// Address and port of the ollama server.
-    #[clap(short, long, default_value = "http://localhost:11434")]
+    #[arg(short, long, default_value = "http://localhost:11434")]
     pub(crate) server: String,
 
     /// Toggle verbose mode.
-    #[clap(short, long, default_value = "false")]
+    #[arg(short, long, default_value = "false")]
     pub(crate) verbose: bool,
 }
 

@@ -14,24 +14,24 @@ use tokio_stream::StreamExt;
 #[derive(Parser, Debug, Clone, Default, PartialEq)]
 pub struct AskArgs {
     /// Model to (down)load and use.
-    #[clap(short, long, default_value = "qwen2.5-coder:14b")]
+    #[arg(short, long, default_value = "qwen2.5-coder:14b")]
     pub(crate) model: String,
 
     /// Prompt to use, if not provided, stdin will be used.
-    #[clap(short, long)]
+    #[arg(short, long)]
     pub(crate) prompt: Option<String>,
 
     /// Request a certain output format, the default leaves the text as is.
-    #[clap(short, long, default_value_t = String::from("text"))]
+    #[arg(short, long, default_value_t = String::from("text"))]
     pub(crate) output_format: String,
 
     /// Text files to use as input, separated by commas.
-    #[clap(short = 'i', long)]
+    #[arg(short = 'i', long)]
     pub(crate) text_files: Option<String>,
 
     /// Path to a JSON file to amend default generation options, or a string
     /// representing the options in JSON format.
-    #[clap(short, long)]
+    #[arg(short, long)]
     pub(crate) options: Option<String>,
 
     /// Specify the prompt using a positional argument.

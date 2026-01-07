@@ -17,35 +17,35 @@ use serde_json::{Map, Value};
 #[derive(Parser, Debug, Clone, PartialEq)]
 pub struct EmbedArgs {
     /// The model to use for generating embeddings.
-    #[clap(short, long, default_value = "nomic-embed-text:latest")]
+    #[arg(short, long, default_value = "nomic-embed-text:latest")]
     pub(crate) model: String,
 
     /// The prompt to embed.
-    #[clap(short, long)]
+    #[arg(short, long)]
     pub(crate) prompt: String,
 
     /// Chroma database server address and port.
-    #[clap(short = 'C', long, default_value = "http://localhost:8000")]
+    #[arg(short = 'C', long, default_value = "http://localhost:8000")]
     pub(crate) chroma_server: String,
 
     /// Chroma database name.
-    #[clap(short = 'd', long, default_value = "default")]
+    #[arg(short = 'd', long, default_value = "default")]
     pub(crate) chroma_database: String,
 
     /// Chroma token for authentication.
-    #[clap(short = 't', long)]
+    #[arg(short = 't', long)]
     pub(crate) chroma_token: Option<String>,
 
     /// Chroma database collection name.
-    #[clap(short, long, default_value = "default")]
+    #[arg(short, long, default_value = "default")]
     pub(crate) collection: String,
 
     /// Chroma collection metadata, comma separated key:value pairs.
-    #[clap(short, long, default_value = "version:0.01")]
+    #[arg(short, long, default_value = "version:0.01")]
     pub(crate) collection_metadata: Option<String>,
 
     /// Chroma entries metadata, comma separated key:value pairs.
-    #[clap(short, long, default_value = "version:0.01")]
+    #[arg(short, long, default_value = "version:0.01")]
     pub(crate) entries_metadata: Option<String>,
 }
 

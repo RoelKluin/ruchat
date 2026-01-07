@@ -21,7 +21,7 @@ use std::path::PathBuf;
 #[derive(Parser, Debug, Clone, PartialEq)]
 pub struct FuncStructArgs {
     /// The model to use for the structured function query.
-    #[clap(short, long, default_value = "qwen2.5-coder:14b")]
+    #[arg(short, long, default_value = "qwen2.5-coder:14b")]
     pub(crate) model: String,
 }
 

@@ -27,7 +27,7 @@ use ollama_rs::{
 #[derive(Parser, Debug, Clone, PartialEq)]
 pub struct FuncArgs {
     /// The model to use for the function query.
-    #[clap(short, long, default_value = "qwen2.5-coder:14b")]
+    #[arg(short, long, default_value = "qwen2.5-coder:14b")]
     pub(crate) model: String,
 }
 

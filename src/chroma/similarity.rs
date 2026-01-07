@@ -13,35 +13,35 @@ use serde_json::json;
 #[derive(Parser, Debug, Clone, PartialEq)]
 pub struct SimilarityArgs {
     /// Query string to search for similar embeddings.
-    #[clap(short, long)]
+    #[arg(short, long)]
     pub(crate) query: String,
 
     /// Number of embeddings to return.
-    #[clap(short, long, default_value = "1")]
+    #[arg(short, long, default_value = "1")]
     pub(crate) count: usize,
 
     /// Number of similar embeddings to return.
-    #[clap(short, long, default_value = "5")]
+    #[arg(short, long, default_value = "5")]
     pub(crate) similarity_count: usize,
 
     /// Chroma database collection name.
-    #[clap(short, long, default_value = "default")]
+    #[arg(short, long, default_value = "default")]
     pub(crate) collection: String,
 
     /// Chroma database metadata, comma separated key:value pairs.
-    #[clap(short, long)]
+    #[arg(short, long)]
     pub(crate) metadata: Option<String>,
 
     /// Chroma database server address and port.
-    #[clap(short = 'C', long, default_value = "http://localhost:8000")]
+    #[arg(short = 'C', long, default_value = "http://localhost:8000")]
     pub(crate) chroma_server: String,
 
     /// Chroma database name.
-    #[clap(short = 'd', long, default_value = "default")]
+    #[arg(short = 'd', long, default_value = "default")]
     pub(crate) chroma_database: String,
 
     /// Chroma token for authentication.
-    #[clap(short = 't', long)]
+    #[arg(short = 't', long)]
     pub(crate) chroma_token: Option<String>,
 }
 

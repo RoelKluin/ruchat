@@ -12,19 +12,19 @@ use clap::Parser;
 #[derive(Parser, Debug, Clone, PartialEq)]
 pub struct ChromaLsArgs {
     /// Chroma database collection name.
-    #[clap(short, long, default_value = "default")]
+    #[arg(short, long, default_value = "default")]
     pub(crate) collection: String,
 
     /// Chroma database server address and port.
-    #[clap(short = 'C', long, default_value = "http://localhost:8000")]
+    #[arg(short = 'C', long, default_value = "http://localhost:8000")]
     pub(crate) chroma_server: String,
 
     /// Chroma database name.
-    #[clap(short = 'd', long, default_value = "default")]
+    #[arg(short = 'd', long, default_value = "default")]
     pub(crate) chroma_database: String,
 
     /// Chroma token for authentication.
-    #[clap(short = 't', long)]
+    #[arg(short = 't', long)]
     pub(crate) chroma_token: Option<String>,
 }
 

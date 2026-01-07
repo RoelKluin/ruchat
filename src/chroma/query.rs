@@ -19,44 +19,44 @@ use tokio_stream::StreamExt;
 #[derive(Parser, Debug, Clone, PartialEq)]
 pub struct QueryArgs {
     /// The model to use for the query.
-    #[clap(short, long, default_value = "qwen2.5-coder:14b")]
+    #[arg(short, long, default_value = "qwen2.5-coder:14b")]
     pub(crate) model: String,
 
     /// Optional configuration file for model options, or a string
     /// representing the options in JSON format.
-    #[clap(short, long)]
+    #[arg(short, long)]
     pub(crate) options: Option<String>,
 
     /// The query string to search for in the database.
-    #[clap(short, long)]
+    #[arg(short, long)]
     pub(crate) query: String,
 
     /// The prompt to use for generating a response.
-    #[clap(short, long)]
+    #[arg(short, long)]
     pub(crate) prompt: String,
 
     /// The number of results to return.
-    #[clap(short, long, default_value = "1")]
+    #[arg(short, long, default_value = "1")]
     pub(crate) count: usize,
 
     /// Chroma database collection name.
-    #[clap(short, long, default_value = "default")]
+    #[arg(short, long, default_value = "default")]
     pub(crate) collection: String,
 
     /// Chroma database metadata, comma separated key:value pairs.
-    #[clap(short, long)]
+    #[arg(short, long)]
     pub(crate) metadata: Option<String>,
 
     /// Chroma database server address and port.
-    #[clap(short = 'C', long, default_value = "http://localhost:8000")]
+    #[arg(short = 'C', long, default_value = "http://localhost:8000")]
     pub(crate) chroma_server: String,
 
     /// Chroma database name.
-    #[clap(short = 'd', long, default_value = "default")]
+    #[arg(short = 'd', long, default_value = "default")]
     pub(crate) chroma_database: String,
 
     /// Chroma token for authentication.
-    #[clap(short = 't', long)]
+    #[arg(short = 't', long)]
     pub(crate) chroma_token: Option<String>,
 }
 

@@ -6,6 +6,8 @@ use clap::Parser;
 use ollama_rs::{generation::completion::request::GenerationRequest, Ollama};
 use tokio_stream::StreamExt;
 
+const DEFAULT_MODEL: &str = "qwen2.5vl:latest";
+
 /// Command-line arguments for piping a question to a model.
 ///
 /// This struct defines the arguments required to pipe a question
@@ -13,12 +15,12 @@ use tokio_stream::StreamExt;
 #[derive(Parser, Debug, Clone, Default, PartialEq)]
 pub struct PipeArgs {
     /// Initial model to (down)load and use.
-    #[clap(short, long, default_value = "qwen2.5-coder:14b")]
+    #[arg(short, long, default_value = "qwen2.5vl:latest")]
     pub(crate) model: Option<String>,
 
     /// Path to a JSON file to amend default generation options, or a string
     /// representing the options in JSON format.
-    #[clap(short, long)]
+    #[arg(short, long)]
     pub(crate) options: Option<String>,
 
     /// Specify the model using a positional argument.
@@ -44,7 +46,7 @@ pub(crate) async fn pipe(ollama: Ollama, args: &PipeArgs) -> Result<(), RuChatEr
     let mut options = get_options(args.options.as_deref()).await?;
     let mut model_name = match args.model.as_deref().or(args.positional_model.as_deref()) {
         Some(model) if !model.is_empty() => get_name(&ollama, model).await?,
-        _ => String::new(), // will error out later if no model provided
+        _ => DEFAULT_MODEL.to_string(), // will error out later if no model provided
     };
 
     while !done {

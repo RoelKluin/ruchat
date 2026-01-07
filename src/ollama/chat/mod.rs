@@ -30,11 +30,11 @@ use tokio_stream::StreamExt;
 #[derive(Parser, Debug, Clone, PartialEq)]
 pub struct ChatArgs {
     /// The model to use for the chat session.
-    #[clap(short, long, default_value = "qwen2.5-coder:14b")]
+    #[arg(short, long, default_value = "qwen2.5-coder:14b")]
     pub(crate) model: String,
 
     /// Toggle debugging mode.
-    #[clap(short, long, default_value = "false")]
+    #[arg(short, long, default_value = "false")]
     pub(crate) debug: bool,
 }
 

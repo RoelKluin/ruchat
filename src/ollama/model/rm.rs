@@ -11,7 +11,7 @@ use clap::Parser;
 #[derive(Parser, Debug, Clone, PartialEq)]
 pub struct RmArgs {
     /// Specify the model to remove using the --model or -m flag.
-    #[clap(short, long)]
+    #[arg(short, long)]
     model: Option<String>,
 
     /// Alternative positional argument to specify the model to remove.
