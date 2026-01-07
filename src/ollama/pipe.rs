@@ -3,7 +3,7 @@ use crate::io::Io;
 use crate::ollama::model::get_name;
 use crate::options::get_options;
 use clap::Parser;
-use ollama_rs::{Ollama, generation::completion::request::GenerationRequest};
+use ollama_rs::{generation::completion::request::GenerationRequest, Ollama};
 use tokio_stream::StreamExt;
 
 /// Command-line arguments for piping a question to a model.
@@ -44,47 +44,51 @@ pub(crate) async fn pipe(ollama: Ollama, args: &PipeArgs) -> Result<(), RuChatEr
     let mut options = get_options(args.options.as_deref()).await?;
     let mut model_name = match args.model.as_deref().or(args.positional_model.as_deref()) {
         Some(model) if !model.is_empty() => get_name(&ollama, model).await?,
-        _ => {
-            return Err(RuChatError::ModelError(
-                "Model name is required".to_string(),
-            ));
-        }
+        _ => String::new(), // will error out later if no model provided
     };
 
     while !done {
+        cio.write_line("***\n").await?;
         let mut prompt = String::new();
-        while let Ok(line) = cio.read_line(false).await {
+        while let Ok(line) = cio.read_line().await {
             match line.as_str() {
-                "" => {
-                    done = true;
-                    break;
-                }
                 "---" | "***" | "___" => break,
-                _ if line.starts_with("!instruction") => {
-                    // Parse instruction
-                    let instruction = line.trim_start_matches("!instruction").trim();
-                    if instruction.starts_with("model:") {
-                        // Change model
-                        let new_model = instruction.trim_start_matches("model:").trim();
-                        model_name = get_name(&ollama, new_model).await?;
-                    } else if instruction.starts_with("options:") {
-                        // Change options
-                        let new_options = instruction.trim_start_matches("options:").trim();
-                        options = get_options(Some(new_options)).await?;
+                _ => {
+                    if line == "!done" {
+                        done = true;
+                        break;
+                    }
+                    if let Some(new_model) = line.strip_prefix("!model: ") {
+                        cio.write_line(&format!("[Switching model to {}]\n", new_model.trim()))
+                            .await?;
+                        model_name = get_name(&ollama, new_model.trim()).await?;
+                    } else if let Some(new_options) = line.strip_prefix("!options: ") {
+                        options = get_options(Some(new_options.trim())).await?;
+                        cio.write_line("[Updated generation options]\n").await?;
+                    } else if !line.starts_with("!!") {
+                        // or comment
+                        prompt.push_str(&line);
                     }
                 }
-                _ => prompt.push_str(&line),
             }
         }
-
-        prompt.push_str("\nRespond in CommonMark format.\n");
-        let request = GenerationRequest::new(model_name.clone(), prompt).options(options.clone());
-        let mut stream = ollama.generate_stream(request).await?;
-        while let Some(res) = stream.next().await {
-            let responses = res?;
-            for resp in responses {
-                cio.write_line(&resp.response).await?;
+        if model_name.is_empty() {
+            return Err(RuChatError::NoModelSpecified);
+        }
+        if prompt.is_empty() {
+            done = true;
+        } else {
+            cio.write_line(&format!("> {prompt}\n---\n")).await?;
+            let request =
+                GenerationRequest::new(model_name.clone(), prompt).options(options.clone());
+            let mut stream = ollama.generate_stream(request).await?;
+            while let Some(res) = stream.next().await {
+                let responses = res?;
+                for resp in responses {
+                    cio.write_line(&resp.response).await?;
+                }
             }
+            cio.write_line("\n").await?;
         }
     }
     Ok(())

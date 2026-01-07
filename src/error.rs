@@ -16,6 +16,9 @@ pub enum RuChatError {
     #[error("Model not found: {0}")]
     ModelNotFound(String),
 
+    #[error("No model specified")]
+    NoModelSpecified,
+
     /// Error due to invalid metadata.
     #[error("Invalid metadata: {0}")]
     InvalidMetadata(String),

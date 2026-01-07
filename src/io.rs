@@ -26,20 +26,10 @@ impl Io {
 
     /// Reads a line from standard input.
     ///
-    /// If `with_prompt` is true, a prompt is displayed before reading input.
-    ///
-    /// # Parameters
-    ///
-    /// - `with_prompt`: A boolean indicating whether to display a prompt.
-    ///
     /// # Returns
     ///
     /// A `Result` containing the input line as a `String` or a `RuChatError`.
-    pub(crate) async fn read_line(&mut self, with_prompt: bool) -> Result<String, RuChatError> {
-        if with_prompt {
-            self.stdout.write_all(b"\n> ").await?;
-            self.stdout.flush().await?;
-        }
+    pub(crate) async fn read_line(&mut self) -> Result<String, RuChatError> {
         let mut input = String::new();
         self.stdin.read_line(&mut input)?;
         Ok(input.trim_end().to_string())

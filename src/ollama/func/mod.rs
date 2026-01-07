@@ -5,7 +5,6 @@ use crate::ollama::model::get_name;
 use clap::Parser;
 use ollama_rs::models::ModelOptions;
 use ollama_rs::{
-    Ollama,
     coordinator::Coordinator,
     generation::{
         chat::ChatMessage,
@@ -18,6 +17,7 @@ use ollama_rs::{
             // SerperSearchToo // seems to have issue and SERPER_API_KEY=... is required
         },
     },
+    Ollama,
 };
 
 /// Command-line arguments for querying a model using a function.
@@ -60,7 +60,8 @@ pub(crate) async fn func(ollama: Ollama, args: &FuncArgs) -> Result<(), RuChatEr
     let mut cio = Io::new();
     cio.write_line("Enter prompt or 'q' to quit:").await?;
     loop {
-        let input = cio.read_line(true).await?;
+        cio.write("\n> ").await?;
+        let input = cio.read_line().await?;
         if input.eq_ignore_ascii_case("q") {
             break;
         }

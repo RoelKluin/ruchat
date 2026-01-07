@@ -3,7 +3,7 @@ use crate::io::Io;
 use crate::ollama::model::get_name;
 use crate::options::get_options;
 use clap::Parser;
-use ollama_rs::{Ollama, generation::completion::request::GenerationRequest};
+use ollama_rs::{generation::completion::request::GenerationRequest, Ollama};
 use std::iter::Iterator;
 use std::{fs, io::Read};
 use tokio_stream::StreamExt;
@@ -110,7 +110,7 @@ pub(crate) async fn ask(ollama: Ollama, args: &AskArgs) -> Result<(), RuChatErro
             generate_prompt(args)?
         } else {
             let mut input = String::new();
-            while let Ok(line) = cio.read_line(false).await {
+            while let Ok(line) = cio.read_line().await {
                 if line.is_empty() {
                     break;
                 }
@@ -124,8 +124,8 @@ pub(crate) async fn ask(ollama: Ollama, args: &AskArgs) -> Result<(), RuChatErro
         prompt.push_str(" output format.\n");
     }
     let model_name = get_name(&ollama, &args.model).await?;
-    let request =
-        GenerationRequest::new(model_name, prompt).options(get_options(args.options.as_deref()).await?);
+    let request = GenerationRequest::new(model_name, prompt)
+        .options(get_options(args.options.as_deref()).await?);
     let mut stream = ollama.generate_stream(request).await?;
     while let Some(res) = stream.next().await {
         let responses = res?;

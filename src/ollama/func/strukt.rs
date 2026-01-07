@@ -101,7 +101,8 @@ pub(crate) async fn func_struct(ollama: Ollama, args: &FuncStructArgs) -> Result
     cio.write_line("Ask about the weather somewhere or 'q' to quit:")
         .await?;
     loop {
-        let input = cio.read_line(true).await?;
+        cio.write_line("\n> ").await?;
+        let input = cio.read_line().await?;
         if input.eq_ignore_ascii_case("q") {
             break;
         }
