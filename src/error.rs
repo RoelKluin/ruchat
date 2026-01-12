@@ -78,6 +78,10 @@ pub enum RuChatError {
     /// Error when the cursor position is invalid.
     #[error("Invalid cursor position: {0}, {1}")]
     InvalidCursorPosition(usize, usize),
+
+    /// Error from the Chroma HTTP client.
+    #[error("Chroma HTTP client error: {0}")]
+    ChromaHttpClientError(#[from] chroma::client::ChromaHttpClientError),
 }
 
 #[cfg(test)]

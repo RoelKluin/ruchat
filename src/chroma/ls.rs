@@ -1,7 +1,6 @@
-use crate::chroma::create_client;
+use crate::chroma::{create_client, ChromaClientConfigArgs};
 use crate::error::RuChatError;
 use anyhow::Result;
-use chromadb::collection::ChromaCollection;
 use clap::Parser;
 
 /// Command-line arguments for listing Chroma database collections.
@@ -15,17 +14,8 @@ pub struct ChromaLsArgs {
     #[arg(short, long, default_value = "default")]
     pub(crate) collection: String,
 
-    /// Chroma database server address and port.
-    #[arg(short = 'C', long, default_value = "http://localhost:8000")]
-    pub(crate) chroma_server: String,
-
-    /// Chroma database name.
-    #[arg(short = 'd', long, default_value = "default")]
-    pub(crate) chroma_database: String,
-
-    /// Chroma token for authentication.
-    #[arg(short = 't', long)]
-    pub(crate) chroma_token: Option<String>,
+    #[command(flatten)]
+    pub client_config: ChromaClientConfigArgs,
 }
 
 /// Lists collections in a Chroma database.
@@ -42,16 +32,11 @@ pub struct ChromaLsArgs {
 /// A `Result` indicating success or failure.
 pub(crate) async fn chroma_ls(args: &ChromaLsArgs) -> Result<(), RuChatError> {
     // Instantiate a ChromaClient to connect to the Chroma database
-    let client = create_client(
-        args.chroma_token.as_deref(),
-        &args.chroma_server,
-        &args.chroma_database,
-    )
-    .await?;
+    let client = create_client(&args.client_config)?;
 
     // Instantiate a ChromaCollection to perform operations on a collection
-    let collection: ChromaCollection = client
-        .get_or_create_collection(&args.collection, None)
+    let collection = client
+        .get_or_create_collection(&args.collection, None, None)
         .await?;
     eprintln!("Collection Name: {}", collection.name());
     eprintln!("Collection ID: {}", collection.id());

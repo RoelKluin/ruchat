@@ -1,13 +1,15 @@
-use crate::chroma::create_client;
+use crate::chroma::{create_client, ChromaClientConfigArgs};
 use crate::error::RuChatError;
 use crate::ollama::model::get_name;
-use chromadb::collection::{ChromaCollection, CollectionEntries};
-use chromadb::embeddings::EmbeddingFunction;
+use chroma::embed::EmbeddingFunction;
+use chroma::types::{Metadata, MetadataValue, UpdateMetadata, UpdateMetadataValue};
+use chroma::ChromaCollection;
 use clap::Parser;
 use log::warn;
-use ollama_rs::Ollama;
 use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
-use serde_json::{Map, Value};
+use ollama_rs::Ollama;
+use serde_json::Value;
+use std::collections::HashMap;
 
 /// Command-line arguments for embedding data into a Chroma database.
 ///
@@ -24,18 +26,6 @@ pub struct EmbedArgs {
     #[arg(short, long)]
     pub(crate) prompt: String,
 
-    /// Chroma database server address and port.
-    #[arg(short = 'C', long, default_value = "http://localhost:8000")]
-    pub(crate) chroma_server: String,
-
-    /// Chroma database name.
-    #[arg(short = 'd', long, default_value = "default")]
-    pub(crate) chroma_database: String,
-
-    /// Chroma token for authentication.
-    #[arg(short = 't', long)]
-    pub(crate) chroma_token: Option<String>,
-
     /// Chroma database collection name.
     #[arg(short, long, default_value = "default")]
     pub(crate) collection: String,
@@ -44,9 +34,16 @@ pub struct EmbedArgs {
     #[arg(short, long, default_value = "version:0.01")]
     pub(crate) collection_metadata: Option<String>,
 
-    /// Chroma entries metadata, comma separated key:value pairs.
+    /// Chroma update metadata, comma separated key:value pairs.
     #[arg(short, long, default_value = "version:0.01")]
-    pub(crate) entries_metadata: Option<String>,
+    pub(crate) update_metadata: Option<String>,
+
+    /// URIs associated with the embedding entries.
+    #[arg(short, long)]
+    pub(crate) uris: Option<Vec<Option<String>>>,
+
+    #[command(flatten)]
+    pub client_config: ChromaClientConfigArgs,
 }
 
 /// Parses metadata from a string of comma-separated key:value pairs.
@@ -58,20 +55,52 @@ pub struct EmbedArgs {
 /// # Returns
 ///
 /// A `Result` containing an optional map of metadata or a `RuChatError`.
-fn get_metadata(arg_metadata: &Option<String>) -> Result<Option<Map<String, Value>>, RuChatError> {
+fn get_metadata(arg_metadata: &Option<String>) -> Result<Option<Metadata>, RuChatError> {
     if arg_metadata.is_none() {
         return Ok(None);
     }
-    let mut metadata = Map::new();
+    let mut metadata = Metadata::new();
     if let Some(md) = arg_metadata {
         for s in md.split(',') {
             match s.split_once(':') {
-                Some((k, v)) => _ = metadata.insert(k.to_string(), v.into()),
+                Some((k, v)) => {
+                    _ = metadata.insert(k.to_string(), MetadataValue::Str(v.to_string()))
+                }
                 None => return Err(RuChatError::InvalidMetadata(s.to_string())),
             }
         }
     }
     Ok(Some(metadata))
+}
+
+/// Parses metadata from a string of comma-separated key:value pairs.
+///
+/// # Parameters
+///
+/// - `arg_metadata`: An optional string containing metadata.
+///
+/// # Returns
+///
+/// A `Result` containing an optional map of metadata or a `RuChatError`.
+
+fn get_update_metadata(
+    arg_metadata: &Option<String>,
+) -> Result<Option<Vec<Option<UpdateMetadata>>>, RuChatError> {
+    if arg_metadata.is_none() {
+        return Ok(None);
+    }
+    let mut metadata = UpdateMetadata::new();
+    if let Some(md) = arg_metadata {
+        for s in md.split(',') {
+            match s.split_once(':') {
+                Some((k, v)) => {
+                    _ = metadata.insert(k.to_string(), UpdateMetadataValue::Str(v.to_string()))
+                }
+                None => return Err(RuChatError::InvalidMetadata(s.to_string())),
+            }
+        }
+    }
+    Ok(Some(vec![Some(metadata)]))
 }
 
 /// Embeds data into a Chroma database.
@@ -93,23 +122,19 @@ pub(crate) async fn embed(ollama: Ollama, args: &EmbedArgs) -> Result<(), RuChat
     if !model_name.contains("embed") {
         warn!("Model {} might not be an embeddings model", model_name);
     }
-    let entries_metadata = get_metadata(&args.entries_metadata)?;
+    let update_metadata = get_update_metadata(&args.update_metadata)?;
 
     let request = GenerateEmbeddingsRequest::new(model_name, vec![args.prompt.as_str()].into());
     let res = ollama.generate_embeddings(request).await?;
-    let client = create_client(
-        args.chroma_token.as_deref(),
-        &args.chroma_server,
-        &args.chroma_database,
-    )
-    .await?;
+    let client = create_client(&args.client_config)?;
 
     let collection_metadata = get_metadata(&args.collection_metadata)?;
+    let collection_schema = None;
 
     eprintln!("Collection name: {}", args.collection);
     // XXX error here.
-    let collection: ChromaCollection = client
-        .get_or_create_collection(&args.collection, collection_metadata)
+    let collection = client
+        .get_or_create_collection(&args.collection, collection_schema, collection_metadata)
         .await?;
 
     let id = collection.id().to_string();
@@ -118,19 +143,14 @@ pub(crate) async fn embed(ollama: Ollama, args: &EmbedArgs) -> Result<(), RuChat
     eprintln!("Collection Metadata: {:?}", collection.metadata());
     eprintln!("Collection Count: {}", collection.count().await?);
 
-    let collection_entries = CollectionEntries {
-        ids: vec![id.as_str()],
-        embeddings: Some(res.embeddings),
-        metadatas: entries_metadata.map(|md| vec![md]),
-        documents: Some(vec![&args.prompt]),
-    };
-    // The function to use to compute the embeddings. If None, embeddings must be provided.
-    let embedding_function: Option<Box<dyn EmbeddingFunction>> = None;
+    let ids = vec![id];
+    let embeddings = res.embeddings;
+    let documents = Some(vec![Some(args.prompt.clone())]);
+    let uris = args.uris.as_ref().cloned().or_else(|| Some(vec![None]));
 
-    let result: Value = collection
-        .upsert(collection_entries, embedding_function)
+    collection
+        .upsert(ids, embeddings, documents, uris, update_metadata)
         .await?;
-    eprintln!("{:?}", result);
     Ok(())
 }
 
@@ -144,8 +164,8 @@ mod tests {
         let result = get_metadata(&metadata_str);
         assert!(result.is_ok());
         let metadata = result.unwrap().unwrap();
-        assert_eq!(metadata["key1"], "value1");
-        assert_eq!(metadata["key2"], "value2");
+        assert_eq!(metadata["key1"], "value1".into());
+        assert_eq!(metadata["key2"], "value2".into());
     }
 
     #[test]

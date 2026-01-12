@@ -1,9 +1,11 @@
-use crate::chroma::create_client;
+use crate::chroma::{create_client, ChromaClientConfigArgs};
 use crate::error::RuChatError;
 use anyhow::Result;
-use chromadb::collection::{ChromaCollection, GetOptions, GetResult, QueryOptions, QueryResult};
+use chroma::types::{
+    BooleanOperator, CompositeExpression, DocumentExpression, DocumentOperator, IncludeList,
+    MetadataComparison, MetadataExpression, MetadataValue, PrimitiveOperator, Where,
+};
 use clap::Parser;
-use serde_json::json;
 
 /// Chroma database similarity search command line arguments.
 ///
@@ -18,11 +20,11 @@ pub struct SimilarityArgs {
 
     /// Number of embeddings to return.
     #[arg(short, long, default_value = "1")]
-    pub(crate) count: usize,
+    pub(crate) count: u32,
 
     /// Number of similar embeddings to return.
     #[arg(short, long, default_value = "5")]
-    pub(crate) similarity_count: usize,
+    pub(crate) similarity_count: u32,
 
     /// Chroma database collection name.
     #[arg(short, long, default_value = "default")]
@@ -32,17 +34,8 @@ pub struct SimilarityArgs {
     #[arg(short, long)]
     pub(crate) metadata: Option<String>,
 
-    /// Chroma database server address and port.
-    #[arg(short = 'C', long, default_value = "http://localhost:8000")]
-    pub(crate) chroma_server: String,
-
-    /// Chroma database name.
-    #[arg(short = 'd', long, default_value = "default")]
-    pub(crate) chroma_database: String,
-
-    /// Chroma token for authentication.
-    #[arg(short = 't', long)]
-    pub(crate) chroma_token: Option<String>,
+    #[command(flatten)]
+    pub client_config: ChromaClientConfigArgs,
 }
 
 /// Subcommand to find similar embeddings in a Chroma database.
@@ -59,53 +52,66 @@ pub struct SimilarityArgs {
 /// A `Result` indicating success or failure.
 pub(crate) async fn similarity_search(args: &SimilarityArgs) -> Result<(), RuChatError> {
     // Instantiate a ChromaClient to connect to the Chroma database
-    let client = create_client(
-        args.chroma_token.as_deref(),
-        &args.chroma_server,
-        &args.chroma_database,
-    )
-    .await?;
+    let client = create_client(&args.client_config)?;
 
     // Instantiate a ChromaCollection to perform operations on a collection
-    let collection: ChromaCollection = client
-        .get_or_create_collection(&args.collection, None)
+    let collection = client
+        .get_or_create_collection(&args.collection, None, None)
         .await?;
 
-    let metadata = args.metadata.as_deref().map(|md| md.into());
-
-    // Create a filter object to filter by document content.
-    let where_document = json!({
-        "$contains": args.query.as_str()
+    let ids: Option<Vec<String>> = None;
+    let mut children = vec![];
+    children.push(Where::Document(DocumentExpression {
+        operator: DocumentOperator::Contains,
+        pattern: args.query.clone(),
+    }));
+    args.metadata.as_ref().map(|md| {
+        md.split(',').for_each(|s| {
+            if let Some((k, v)) = s.split_once(':') {
+                children.push(Where::Metadata(MetadataExpression {
+                    key: k.to_string(),
+                    comparison: MetadataComparison::Primitive(
+                        PrimitiveOperator::Equal,
+                        MetadataValue::Str(v.to_string()),
+                    ),
+                }))
+            }
+        });
     });
-
-    // Get embeddings from a collection with filters and limit set to 1.
-    // An empty IDs vec will return all embeddings.
-    let get_query = GetOptions {
-        ids: vec![],
-        where_metadata: metadata,
-        limit: Some(args.count),
-        offset: None,
-        where_document: Some(where_document),
-        include: Some(vec!["documents".into(), "embeddings".into()]),
+    let children = vec![Where::Composite(CompositeExpression {
+        operator: BooleanOperator::And,
+        children,
+    })];
+    let composite_expression = CompositeExpression {
+        operator: BooleanOperator::And,
+        children,
     };
-    let get_result: GetResult = collection.get(get_query).await?;
+    let where_metadata = Some(Where::Composite(composite_expression));
 
-    // FIXME: This is a placeholder for the actual embeddings
-    // Instantiate QueryOptions to perform a similarity search on the collection
-    // Alternatively, an embedding_function can also be provided with query_texts to perform the search
-    let query = QueryOptions {
-        query_texts: None,
-        query_embeddings: get_result
-            .embeddings
-            .map(|embeddings| embeddings.into_iter().flatten().collect()),
-        where_metadata: None,
-        where_document: None,
-        n_results: Some(args.similarity_count),
-        include: None,
-    };
+    let limit = Some(args.count);
+    let offset = None;
+    let include = Some(IncludeList::default_get());
+    let get_result = collection
+        .get(
+            ids.clone(),
+            where_metadata.clone(),
+            limit,
+            offset,
+            include.clone(),
+        )
+        .await?;
 
-    let query_result: QueryResult = collection.query(query, None).await?;
-    println!("Query result: {:?}", query_result);
+    if let Some(query_embeddings) = get_result.embeddings {
+        let n_results = Some(args.similarity_count);
+        let query_result = collection
+            .query(query_embeddings, n_results, where_metadata, ids, include)
+            .await?;
+
+        // FIXME: This is a placeholder for the actual embeddings
+        // Instantiate QueryOptions to perform a similarity search on the collection
+        // Alternatively, an embedding_function can also be provided with query_texts to perform the search
+        println!("Query result: {:?}", query_result);
+    }
 
     Ok(())
 }

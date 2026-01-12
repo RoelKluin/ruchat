@@ -1,3 +1,4 @@
+use crate::chroma::delete::{chroma_delete, ChromaDeleteArgs};
 use crate::chroma::ls::{chroma_ls, ChromaLsArgs};
 use crate::chroma::query::{query, QueryArgs};
 use crate::chroma::similarity::{similarity_search, SimilarityArgs};
@@ -54,6 +55,7 @@ impl Args {
             Commands::Query(query_args) => query(self.init()?, query_args).await?,
             Commands::Similarity(similarity_args) => similarity_search(similarity_args).await?,
             Commands::ChromaLs(chroma_ls_args) => chroma_ls(chroma_ls_args).await?,
+            Commands::ChromaDelete(chroma_delete_args) => chroma_delete(chroma_delete_args).await?,
         }
         Ok(())
     }
@@ -99,6 +101,8 @@ pub enum Commands {
     Similarity(SimilarityArgs),
     /// List Chroma database collections.
     ChromaLs(ChromaLsArgs),
+    /// Delete Chroma database collections or entries.
+    ChromaDelete(ChromaDeleteArgs),
 }
 
 #[cfg(test)]

@@ -1,14 +1,16 @@
-use crate::chroma::create_client;
+use crate::chroma::{create_client, ChromaClientConfigArgs};
 use crate::error::RuChatError;
 use crate::io::Io;
 use crate::ollama::model::get_name;
 use crate::options::get_options;
 use anyhow::Result;
-use chromadb::collection::{ChromaCollection, GetOptions, GetResult};
+use chroma::types::{
+    BooleanOperator, CompositeExpression, DocumentExpression, DocumentOperator, IncludeList,
+    MetadataComparison, MetadataExpression, MetadataValue, PrimitiveOperator, Where,
+};
 use clap::Parser;
-use ollama_rs::Ollama;
 use ollama_rs::generation::completion::request::GenerationRequest;
-use serde_json::json;
+use ollama_rs::Ollama;
 use tokio_stream::StreamExt;
 
 /// Command-line arguments for querying a Chroma database.
@@ -37,7 +39,7 @@ pub struct QueryArgs {
 
     /// The number of results to return.
     #[arg(short, long, default_value = "1")]
-    pub(crate) count: usize,
+    pub(crate) count: u32,
 
     /// Chroma database collection name.
     #[arg(short, long, default_value = "default")]
@@ -47,17 +49,8 @@ pub struct QueryArgs {
     #[arg(short, long)]
     pub(crate) metadata: Option<String>,
 
-    /// Chroma database server address and port.
-    #[arg(short = 'C', long, default_value = "http://localhost:8000")]
-    pub(crate) chroma_server: String,
-
-    /// Chroma database name.
-    #[arg(short = 'd', long, default_value = "default")]
-    pub(crate) chroma_database: String,
-
-    /// Chroma token for authentication.
-    #[arg(short = 't', long)]
-    pub(crate) chroma_token: Option<String>,
+    #[command(flatten)]
+    pub client_config: ChromaClientConfigArgs,
 }
 
 /// Performs a query on a Chroma database and generates a response.
@@ -75,34 +68,48 @@ pub struct QueryArgs {
 ///
 /// A `Result` indicating success or failure.
 pub(crate) async fn query(ollama: Ollama, args: &QueryArgs) -> Result<(), RuChatError> {
-    let client = create_client(
-        args.chroma_token.as_deref(),
-        &args.chroma_server,
-        &args.chroma_database,
-    )
-    .await?;
-    let collection: ChromaCollection = client
-        .get_or_create_collection(&args.collection, None)
+    let client = create_client(&args.client_config)?;
+    let collection = client
+        .get_or_create_collection(&args.collection, None, None)
         .await?;
-
-    let metadata = args.metadata.as_deref().map(|md| md.into());
-
-    // Create a filter object to filter by document content.
-    let where_document = json!({
-        "$contains": args.query.as_str()
-    });
 
     // Get embeddings from a collection with filters and limit set to 1.
     // An empty IDs vec will return all embeddings.
-    let get_query = GetOptions {
-        ids: vec![],
-        where_metadata: metadata,
-        limit: Some(args.count),
-        offset: None,
-        where_document: Some(where_document),
-        include: Some(vec!["documents".into(), "embeddings".into()]),
+    let ids: Option<Vec<String>> = None;
+    let mut children = vec![];
+    children.push(Where::Document(DocumentExpression {
+        operator: DocumentOperator::Contains,
+        pattern: args.query.clone(),
+    }));
+    args.metadata.as_ref().map(|md| {
+        md.split(',').for_each(|s| {
+            if let Some((k, v)) = s.split_once(':') {
+                children.push(Where::Metadata(MetadataExpression {
+                    key: k.to_string(),
+                    comparison: MetadataComparison::Primitive(
+                        PrimitiveOperator::Equal,
+                        MetadataValue::Str(v.to_string()),
+                    ),
+                }))
+            }
+        });
+    });
+    let children = vec![Where::Composite(CompositeExpression {
+        operator: BooleanOperator::And,
+        children,
+    })];
+    let composite_expression = CompositeExpression {
+        operator: BooleanOperator::And,
+        children,
     };
-    let get_result: GetResult = collection.get(get_query).await?;
+    let where_metadata = Where::Composite(composite_expression);
+
+    let limit = Some(args.count);
+    let offset = None;
+    let include = Some(IncludeList::default_get());
+    let get_result = collection
+        .get(ids, Some(where_metadata), limit, offset, include)
+        .await?;
     let res: Vec<_> = get_result
         .embeddings
         .map(|embeddings| embeddings.into_iter().flatten().collect())
@@ -115,8 +122,8 @@ pub(crate) async fn query(ollama: Ollama, args: &QueryArgs) -> Result<(), RuChat
 
     let mut cio = Io::new();
     let model_name = get_name(&ollama, &args.model).await?;
-    let request =
-        GenerationRequest::new(model_name, prompt).options(get_options(args.options.as_deref()).await?);
+    let request = GenerationRequest::new(model_name, prompt)
+        .options(get_options(args.options.as_deref()).await?);
     let mut stream = ollama.generate_stream(request).await?;
     while let Some(res) = stream.next().await {
         let responses = res?;

@@ -78,7 +78,7 @@ pub(crate) async fn pipe(ollama: Ollama, args: &PipeArgs) -> Result<(), RuChatEr
             return Err(RuChatError::NoModelSpecified);
         }
         if prompt.is_empty() {
-            done = true;
+            //done = true;
         } else {
             cio.write_line(&format!("> {prompt}\n---\n")).await?;
             let request =

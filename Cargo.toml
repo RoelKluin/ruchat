@@ -10,11 +10,12 @@ version = "0.1.2"
 [dependencies]
 anyhow = "1.0.100"
 async-trait = "0.1.89"
-chromadb = "2.3.0"
+chroma = "0.10.0"
 clap = { version = "4.5.54", features = ["derive"] }
 crossterm = "0.29.0"
 env_logger = "0.11.8"
 fs2 = "0.4.3"
+http = "1.4.0"
 log = "0.4.29"
 ollama-rs = { version = "0.3.3", features = ["stream", "headers", "tool-implementations", "macros", "modelfile"] }
 reqwest = "0.13.1"
