@@ -109,7 +109,7 @@ impl BufCursor {
                             KeyCode::Char('\n') => self.enter(),
                             KeyCode::Char(c) if modifiers == KeyModifiers::NONE => self.push(c),
                             KeyCode::Char(c) => self.push(c.to_ascii_uppercase()),
-                            KeyCode::Enter => self.enter(), // + SHIFT is disfunctional, use ALT.
+                            KeyCode::Enter => self.enter(), // + SHIFT is uncaught => using ALT
                             KeyCode::Down => self.move_down(modifiers),
                             KeyCode::Left => self.move_left(modifiers),
                             KeyCode::Right => self.move_right(modifiers),
@@ -179,9 +179,18 @@ impl BufCursor {
                 self.selection_start = Some(self.cursor)
             }
             return EventResult::UpdateView(ct);
-        } else if self.selection_start.is_some() {
-            execute!(io::stdout(), EnableBlinking).unwrap();
+        } else if let Some(pos) = self.selection_start {
+            execute!(io::stdout(),EnableBlinking).unwrap();
             self.selection_start = None;
+            if pos.1 < self.cursor.1 {
+                return EventResult::UpdateView(ClearType::FromCursorUp);
+            } else if pos.1 > self.cursor.1 {
+                return EventResult::UpdateView(ClearType::FromCursorDown);
+            } else if pos.0 < self.cursor.0 {
+                return EventResult::UpdateView(ClearType::CurrentLine);
+            } else if pos.0 > self.cursor.0 {
+                return EventResult::UpdateView(ClearType::UntilNewLine);
+            }
         }
         EventResult::CursorChange
     }

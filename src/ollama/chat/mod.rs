@@ -110,14 +110,20 @@ fn redraw_screen(
             let i = i + offset;
             // highlight selected text
             if i >= start.1 && i <= end.1 {
-                if end.0 > line.len() || start.0 > line.len() {
-                    return Err(RuChatError::InvalidCursorPosition(start.0, start.1));
-                }
                 if i == start.1 && i == end.1 {
+                    if end.0 > line.len() || start.0 > line.len() {
+                        return Err(RuChatError::InvalidCursorPosition(start.0, start.1));
+                    }
                     println!("{}\x1b[7m{}\x1b[0m{}", &line[..start.0], &line[start.0..end.0], &line[end.0..]);
                 } else if i == start.1 {
+                    if  start.0 > line.len() {
+                        return Err(RuChatError::InvalidCursorPosition(start.0, start.1));
+                    }
                     println!("{}\x1b[7m{}\x1b[0m", &line[..start.0], &line[start.0..]);
                 } else if i == end.1 {
+                    if end.0 > line.len() {
+                        return Err(RuChatError::InvalidCursorPosition(start.0, start.1));
+                    }
                     println!("\x1b[7m{}\x1b[0m{}", &line[..end.0], &line[end.0..]);
                 } else {
                     println!("\x1b[7m{line}\x1b[0m");
