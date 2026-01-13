@@ -76,8 +76,8 @@ pub enum RuChatError {
     AnswerAlreadyExists,
 
     /// Error when the cursor position is invalid.
-    #[error("Invalid cursor position: {0}, {1}")]
-    InvalidCursorPosition(usize, usize),
+    #[error("Invalid cursor position {0}: {1}, {2}")]
+    InvalidCursorPosition(String, usize, usize),
 
     /// Error from the Chroma HTTP client.
     #[error("Chroma HTTP client error: {0}")]
