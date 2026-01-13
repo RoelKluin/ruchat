@@ -4,7 +4,7 @@ pub(crate) mod func;
 pub(crate) mod model;
 pub(crate) mod pipe;
 use crate::args::Args;
-use crate::error::{Result,RuChatError};
+use crate::error::RuChatError;
 use ollama_rs::Ollama;
 
 /// Initializes a connection to an Ollama server.
@@ -19,7 +19,7 @@ use ollama_rs::Ollama;
 /// # Returns
 ///
 /// A `Result` containing the `Ollama` client or a `RuChatError`.
-pub(crate) fn init(args: &Args) -> Result<Ollama> {
+pub(crate) fn init(args: &Args) -> Result<Ollama, RuChatError> {
     if args.verbose {
         println!("Connecting to Ollama server at {}", args.server);
     }

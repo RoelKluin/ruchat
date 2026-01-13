@@ -213,7 +213,7 @@ impl BufCursor {
         }
     }
 
-    fn select_all(&mut self) -> Result<EventResult> {
+    fn select_all(&mut self) -> Result<EventResult, RuChatError> {
         let end_pos = (self.line_len().unwrap(), self.buffer.len().saturating_sub(1));
         if self.selection_start != Some((0, 0)) || self.cursor != end_pos {
             self.selection_start = Some((0, 0));
@@ -223,7 +223,7 @@ impl BufCursor {
             Ok(EventResult::Unchanged)
         }
     }
-    fn copy(&mut self) -> Result<EventResult> {
+    fn copy(&mut self) -> Result<EventResult, RuChatError> {
         if let Some((start, end)) = self.normalized_selection() {
             let s = self.buffer.get_mut(start.1).ok_or(RuChatError::Cursor1OutOfBounds)?;
             self.copy_buffer.clear();
@@ -440,7 +440,7 @@ impl BufCursor {
         }
     }
 
-    fn move_to_end_of_line(&mut self, m: KeyModifiers) -> Result<EventResult> {
+    fn move_to_end_of_line(&mut self, m: KeyModifiers) -> Result<EventResult, RuChatError> {
         let len = self.line_len()?;
         if self.cursor.0 < len {
             let res = self.ammend_selection(m, ClearType::CurrentLine);
@@ -461,7 +461,7 @@ impl BufCursor {
         }
     }
 
-    fn delete_selection(&mut self) -> Result<EventResult> {
+    fn delete_selection(&mut self) -> Result<EventResult, RuChatError> {
         if let Some((start, end)) = self.normalized_selection() {
             self.cursor = start;
             let s = self.buffer.get_mut(start.1).ok_or(RuChatError::Cursor1OutOfBounds)?;
@@ -487,7 +487,7 @@ impl BufCursor {
         }
     }
 
-    fn delete(&mut self) -> Result<EventResult> {
+    fn delete(&mut self) -> Result<EventResult, RuChatError> {
         match self.delete_selection()? {
             EventResult::Unchanged => {
                 if self.cursor.0 < self.line_len()? {
@@ -507,7 +507,7 @@ impl BufCursor {
         }
     }
 
-    fn enter(&mut self) -> Result<EventResult> {
+    fn enter(&mut self) -> Result<EventResult, RuChatError> {
         self.buffer.insert(self.cursor.1 + 1, String::new());
         self.cursor.1 += 1;
         self.cursor.0 = 0;
@@ -545,7 +545,7 @@ impl BufCursor {
         }
     }
 
-    fn move_down(&mut self, m: KeyModifiers) -> Result<EventResult> {
+    fn move_down(&mut self, m: KeyModifiers) -> Result<EventResult, RuChatError> {
         if self.cursor.1 < self.buffer.len().saturating_sub(1) {
             let res = self.ammend_selection(m, ClearType::FromCursorUp);
             self.cursor.1 += 1;
