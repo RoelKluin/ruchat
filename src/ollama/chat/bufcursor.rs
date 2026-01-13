@@ -431,11 +431,11 @@ impl BufCursor {
         }
     }
 
-    fn move_to_end_of_line(&mut self, m: KeyModifiers) -> Result<EventResult, RuChatError> {
-        let mut res = EventResult::Unchanged;
-        if self.cursor.1 < self.buffer.len() - 1 {
+    fn move_to_end_of_line(&mut self, m: KeyModifiers) -> Result<EventResult> {
+        let len = self.line_len()?;
+        if self.cursor.0 < len {
             let res = self.ammend_selection(m, ClearType::CurrentLine);
-            self.cursor.0 = self.line_len()?;
+            self.cursor.0 = len;
             Ok(res)
         } else {
             Ok(EventResult::Unchanged)
@@ -443,8 +443,7 @@ impl BufCursor {
     }
 
     fn move_to_start_of_line(&mut self, m: KeyModifiers) -> Result<EventResult, RuChatError> {
-        let mut res = EventResult::Unchanged;
-        if self.cursor.1 > 0 {
+        if self.cursor.0 > 0 {
             let res = self.ammend_selection(m, ClearType::CurrentLine);
             self.cursor.0 = 0;
             Ok(res)
