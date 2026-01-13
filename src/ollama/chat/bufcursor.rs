@@ -205,7 +205,7 @@ impl BufCursor {
                 .ok_or(RuChatError::Cursor1OutOfBounds)?
                 .drain(self.cursor.0..i);
             Ok(EventResult::ct(ClearType::UntilNewLine))
-        } else if self.cursor.1 < self.buffer.len() - 1 {
+        } else if self.cursor.1 < self.buffer.len().saturating_sub(1) {
             let line = self.buffer.remove(self.cursor.1 + 1);
             self.append_line(&line)
         } else {
@@ -213,8 +213,8 @@ impl BufCursor {
         }
     }
 
-    fn select_all(&mut self) -> Result<EventResult, RuChatError> {
-        let end_pos = (self.line_len().unwrap(), self.buffer.len() - 1);
+    fn select_all(&mut self) -> Result<EventResult> {
+        let end_pos = (self.line_len().unwrap(), self.buffer.len().saturating_sub(1));
         if self.selection_start != Some((0, 0)) || self.cursor != end_pos {
             self.selection_start = Some((0, 0));
             self.cursor = end_pos;
@@ -543,8 +543,8 @@ impl BufCursor {
         }
     }
 
-    fn move_down(&mut self, m: KeyModifiers) -> Result<EventResult, RuChatError> {
-        if self.cursor.1 < self.buffer.len() {
+    fn move_down(&mut self, m: KeyModifiers) -> Result<EventResult> {
+        if self.cursor.1 < self.buffer.len().saturating_sub(1) {
             let res = self.ammend_selection(m, ClearType::FromCursorUp);
             self.cursor.1 += 1;
             self.cursor.0 = self.cursor.0.min(self.line_len()?);
