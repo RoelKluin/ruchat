@@ -1,27 +1,27 @@
 mod bufcursor;
 mod conversation_tree;
-mod event_result;
 mod history;
 mod pos;
-use crate::error::RuChatError;
-use crate::ollama::chat::event_result::EventResult;
+mod event_result;
+use crate::error::{Result, RuChatError};
 use crate::ollama::model::get_name;
 use bufcursor::BufCursor;
-use clap::Parser;
+use clap::{Parser,ArgAction};
 use conversation_tree::ConversationTree;
 use crossterm::{
-    cursor::{Hide, MoveTo, Show},
+    ExecutableCommand,
+    cursor::{MoveTo, Show, Hide},
     event::{self, DisableMouseCapture, EnableMouseCapture},
     terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
-    ExecutableCommand,
 };
-use ollama_rs::generation::chat::{request::ChatMessageRequest, ChatMessage};
 use ollama_rs::Ollama;
+use ollama_rs::generation::chat::{ChatMessage, request::ChatMessageRequest};
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 use tokio::task;
-use tokio::time::{sleep, timeout, Duration};
+use tokio::time::{Duration, timeout, sleep};
 use tokio_stream::StreamExt;
+use crate::ollama::chat::event_result::EventResult;
 
 /// Command-line arguments for interactive chat sessions with a model.
 ///
@@ -34,8 +34,8 @@ pub struct ChatArgs {
     pub(crate) model: String,
 
     /// Toggle debugging mode.
-    #[arg(short, long, default_value = "false")]
-    pub(crate) debug: bool,
+    #[arg(short, long, action=ArgAction::Count)]
+    pub(crate) debug: u8,
 }
 
 /// Creates a chat message request for the model.
@@ -80,7 +80,7 @@ fn redraw_screen(
 
     let it = chat_history.get_current_question_ids().iter().rev();
     let cp = bufcursor.get_cursor(); // Cursor position editing the question
-                                     // the last line is a status line. The second to last line is the last line of the question
+    // the last line is a status line. The second to last line is the last line of the question
     text_view.push("Ask your question (Alt+Enter to send, Esc to quit):".to_string());
 
     // Clear the screen
@@ -105,23 +105,16 @@ fn redraw_screen(
     text_view = text_view.split_off(offset);
 
     // Render the buffer with selection. NB: cursor = (column, row)
-    if let Some(mut start) = bufcursor.get_selection_start() {
-        let mut end = cp;
-        if start.1 > end.1 || (start.1 == end.1 && start.0 > end.0) {
-            std::mem::swap(&mut start, &mut end);
-        }
-
+    if let Some((start, end)) = bufcursor.normalized_selection() {
         for (i, line) in text_view.iter().enumerate() {
             let i = i + offset;
             // highlight selected text
             if i >= start.1 && i <= end.1 {
+                if end.0 > line.len() || start.0 > line.len() {
+                    return Err(RuChatError::InvalidCursorPosition(start.0, start.1));
+                }
                 if i == start.1 && i == end.1 {
-                    println!(
-                        "{}\x1b[7m{}\x1b[0m{}",
-                        &line[..start.0],
-                        &line[start.0..end.0],
-                        &line[end.0..]
-                    );
+                    println!("{}\x1b[7m{}\x1b[0m{}", &line[..start.0], &line[start.0..end.0], &line[end.0..]);
                 } else if i == start.1 {
                     println!("{}\x1b[7m{}\x1b[0m", &line[..start.0], &line[start.0..]);
                 } else if i == end.1 {
@@ -138,7 +131,10 @@ fn redraw_screen(
     }
 
     // Move the cursor to the correct position
-    stdout.execute(MoveTo(cp.0.try_into()?, (offset + cp.1).try_into()?))?;
+    stdout.execute(MoveTo(
+        cp.0.try_into()?,
+        (offset + cp.1).try_into()?,
+    ))?;
     stdout.flush()?;
     //min(terminal::size()?.1 - 2, text_view.len() as u16 - 2),
 
@@ -150,18 +146,9 @@ fn redraw_line(stdout: &mut io::Stdout, bufcursor: &mut BufCursor) -> Result<(),
     let line = bufcursor.get_line(cp.1)?;
     stdout.execute(Clear(ClearType::CurrentLine))?;
     stdout.execute(MoveTo(0, cp.1 as u16))?;
-    if let Some(mut start) = bufcursor.get_selection_start() {
-        let mut end = cp;
-        if start.1 > end.1 || (start.1 == end.1 && start.0 > end.0) {
-            std::mem::swap(&mut start, &mut end);
-        }
+    if let Some((start, end)) = bufcursor.normalized_selection() {
         if cp.1 == start.1 {
-            println!(
-                "{}\x1b[7m{}\x1b[0m{}",
-                &line[..start.0],
-                &line[start.0..end.0],
-                &line[end.0..]
-            );
+            println!("{}\x1b[7m{}\x1b[0m{}", &line[..start.0], &line[start.0..end.0], &line[end.0..]);
         } else if cp.1 == end.1 {
             println!("\x1b[7m{}\x1b[0m{}", &line[..end.0], &line[end.0..]);
         } else {
@@ -183,21 +170,15 @@ fn redraw_from_cursor_down(
     let mut text_view: Vec<String> = bufcursor.view_buffer();
     text_view.push("Ask your question (Alt+Enter to send, Esc to quit):".to_string());
     text_view = text_view.split_off(cp.1);
+    let offset = text_view.len().saturating_sub(terminal::size()?.1 as usize);
+
     stdout.execute(Clear(ClearType::FromCursorDown))?;
     stdout.execute(MoveTo(0, cp.1 as u16))?;
     for (i, line) in text_view.iter().enumerate() {
-        let i = i + cp.1;
-        if let Some(mut start) = bufcursor.get_selection_start() {
-            let mut end = cp;
-            if start.1 > end.1 || (start.1 == end.1 && start.0 > end.0) {
-                std::mem::swap(&mut start, &mut end);
-            }
+        let i = i + offset;
+        if let Some((start, end)) = bufcursor.normalized_selection() {
             if i == start.1 {
-                println!(
-                    "{}\x1b[7m{}\x1b[0m",
-                    &line[..start.0],
-                    &line[start.0..end.0]
-                );
+                println!("{}\x1b[7m{}\x1b[0m", &line[..start.0], &line[start.0..end.0]);
             } else if i == end.1 {
                 println!("\x1b[7m{}\x1b[0m{}", &line[..end.0], &line[end.0..]);
             } else if i >= start.1 && i <= end.1 {
@@ -222,21 +203,18 @@ fn redraw_from_cursor_up(
     let cp = bufcursor.get_cursor();
     let mut text_view: Vec<String> = bufcursor.view_buffer();
     text_view.truncate(cp.1);
+    let offset = text_view.len().saturating_sub(terminal::size()?.1 as usize);
     stdout.execute(Clear(ClearType::FromCursorUp))?;
     stdout.execute(MoveTo(0, cp.1 as u16))?;
     for (i, line) in text_view.iter().enumerate() {
-        let i = i + cp.1;
+        let i = i + offset;
         if let Some(mut start) = bufcursor.get_selection_start() {
             let mut end = cp;
             if start.1 > end.1 || (start.1 == end.1 && start.0 > end.0) {
                 std::mem::swap(&mut start, &mut end);
             }
             if i == start.1 {
-                println!(
-                    "{}\x1b[7m{}\x1b[0m",
-                    &line[..start.0],
-                    &line[start.0..end.0]
-                );
+                println!("{}\x1b[7m{}\x1b[0m", &line[..start.0], &line[start.0..end.0]);
             } else if i == end.1 {
                 println!("\x1b[7m{}\x1b[0m{}", &line[..end.0], &line[end.0..]);
             } else if i >= start.1 && i <= end.1 {
@@ -263,13 +241,34 @@ async fn show_spinner(x: usize, y: usize) {
 
     loop {
         stdout.execute(Hide).expect("Hide cursor");
-        stdout
-            .execute(MoveTo(x as u16, y as u16))
-            .expect("Move cursor");
+        stdout.execute(MoveTo(x as u16, y as u16)).expect("Move cursor");
         print!("{}", spinner_chars[index]);
         stdout.flush().unwrap();
         index = (index + 1) % spinner_chars.len();
         sleep(Duration::from_millis(100)).await;
+    }
+}
+
+fn display_err<E>(do_debug: bool, stdout: &mut io::Stdout, msg: &str, x: usize, y: usize, e: E)
+where
+    E: std::fmt::Debug,
+{
+    if do_debug {
+        match terminal::size().map(|i| i.1.saturating_sub(1)) {
+            Err(e2) => println!("Error while trying to get terminal size: {:?}", e2),
+            Ok(i) => match stdout.execute(MoveTo(0, i)) {
+                Err(e2) => println!("Error while trying to move cursor: {:?}", e2),
+                Ok(_) => match stdout.execute(Clear(ClearType::CurrentLine)) {
+                    Err(e2) => println!("Error while trying to clear line: {:?}", e2),
+                    Ok(_) => {
+                        println!("{msg}: {:?}", e);
+                        if let Err(e2) = stdout.execute(MoveTo(x as u16, y as u16)) {
+                            println!("Error: MoveTo({x}, {y}): {:?}", e2);
+                        }
+                    }
+                },
+            }
+        }
     }
 }
 
@@ -293,62 +292,63 @@ async fn chat_raw_mode(ollama: Ollama, args: &ChatArgs) -> Result<(), RuChatErro
     let mut stdout = io::stdout();
     let model_name = get_name(&ollama, &args.model).await?;
     let mut bufcursor = BufCursor::new()?;
+    let debug_level = args.debug;
+    if debug_level & 0x2 != 0 {
+        for c in "Lorem ipsum dolor sit amet,consectetur adipiscing elit,\nsed do eiusmod tempor incididunt ut labore et dolore magna aliqua.\nUt enim ad minim veniam,\nquis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.\nDuis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.\nExcepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum".chars() {
+            if let Err(e) = bufcursor.handle_event(event::Event::Key(event::KeyEvent {
+                code: event::KeyCode::Char(c),
+                modifiers: event::KeyModifiers::NONE,
+                kind: event::KeyEventKind::Press,
+                state: event::KeyEventState::NONE,
+            })) {
+                display_err(debug_level > 0, &mut stdout, "Error handling event", 0, 0, e);
+            }
+        }
+    }
     stdout.execute(EnterAlternateScreen)?;
     stdout.execute(EnableMouseCapture)?;
 
     let history = Arc::new(Mutex::new(vec![]));
     let mut clear_option = Some(ClearType::All);
     loop {
-        // TODO: not clear the whole screen for every keystroke?
         // Clear the screen
-        let (x, y) = bufcursor.get_cursor();
-        match clear_option {
+        let res = match clear_option {
             Some(ClearType::All | ClearType::Purge) => {
-                redraw_screen(&mut stdout, &chat_history.lock().unwrap(), &mut bufcursor)?;
+                redraw_screen(&mut stdout, &chat_history.lock().unwrap(), &mut bufcursor)
             }
             Some(ClearType::CurrentLine | ClearType::UntilNewLine) => {
-                redraw_line(&mut stdout, &mut bufcursor)?;
+                redraw_screen(&mut stdout, &chat_history.lock().unwrap(), &mut bufcursor)
+                //redraw_line(&mut stdout, &mut bufcursor)?;
             }
             Some(ClearType::FromCursorDown) => {
-                redraw_from_cursor_down(&mut stdout, &mut bufcursor)?;
+                redraw_screen(&mut stdout, &chat_history.lock().unwrap(), &mut bufcursor)
+                //redraw_from_cursor_down(&mut stdout, &mut bufcursor)?;
             }
             Some(ClearType::FromCursorUp) => {
-                redraw_from_cursor_up(&mut stdout, &mut bufcursor)?;
+                redraw_screen(&mut stdout, &chat_history.lock().unwrap(), &mut bufcursor)
+                //redraw_from_cursor_up(&mut stdout, &mut bufcursor)?;
             }
-            None => {}
-        }
-        let res = match bufcursor.handle_event(event::read()?) {
-            Ok(res) => res,
-            Err(e) => {
-                if args.debug {
-                    if stdout.execute(MoveTo(0, terminal::size()?.1 - 1)).is_err() {
-                        break;
-                    }
-                    if stdout.execute(Clear(ClearType::CurrentLine)).is_err() {
-                        break;
-                    }
-                    println!("Error: {:?}", e);
-                    if stdout.execute(MoveTo(x as u16, y as u16)).is_err() {
-                        break;
-                    }
-                    clear_option = None;
-                }
-                continue;
-            }
+            None => Ok(()),
         };
-
-        // Wait for an event
-        match res {
-            EventResult::CursorChange => {
-                if stdout.execute(MoveTo(x as u16, y as u16)).is_err() {
-                    break;
+        clear_option = None;
+        let (x, y) = bufcursor.get_cursor();
+        match res.and_then(|_| event::read().map_err(|e| e.into())).and_then(|e| bufcursor.handle_event(e)) {
+            Ok(EventResult::CursorChange) => {
+                let (x, y) = bufcursor.get_cursor();
+                if let Err(e) = stdout.execute(MoveTo(x as u16, y as u16)) {
+                    display_err(debug_level > 0, &mut stdout, "Error: MoveTo", x, y, e);
                 }
-                clear_option = None;
             }
-            EventResult::Quit => break,
-            EventResult::Submit => {
+            Ok(EventResult::Quit) => break,
+            Ok(EventResult::Submit) => {
                 let request = get_chat_message_request(model_name.to_string(), bufcursor.read());
-                let question_id = chat_history.lock().unwrap().question(bufcursor.drain())?;
+                let question_id = match chat_history.lock().unwrap().question(bufcursor.drain()) {
+                    Ok(id) => id,
+                    Err(e) => {
+                        display_err(debug_level > 0, &mut stdout, "Error (qid)", x, y, e);
+                        continue;
+                    }
+                };
 
                 let chat_hist_clone = chat_history.clone();
                 let hist = history.clone();
@@ -401,23 +401,30 @@ async fn chat_raw_mode(ollama: Ollama, args: &ChatArgs) -> Result<(), RuChatErro
                     }
                     // Stop the spinner
                     spinner_handle.abort();
-                    stdout.execute(Show).unwrap();
-                    stdout.execute(Clear(ClearType::CurrentLine)).unwrap();
+                    if let Err(e) = stdout.execute(Show) {
+                        display_err(debug_level > 0, &mut stdout, "Error: Show cursor: ", x, y, e);
+                    }
+                    if let Err(e) = stdout.execute(Clear(ClearType::CurrentLine)) {
+                        display_err(debug_level > 0, &mut stdout, "Error: Clear line: ", x, y, e);
+                    }
                 });
 
                 task.await?;
                 clear_option = Some(ClearType::All);
             }
-            EventResult::UnhandledEvent(e) => {
-                if args.debug {
-                    stdout.execute(MoveTo(0, terminal::size()?.1 - 1))?;
-                    stdout.execute(Clear(ClearType::CurrentLine))?;
-                    println!("Unhandled event: {:?}", e);
-                    stdout.execute(MoveTo(x as u16, y as u16))?;
+            Ok(EventResult::UnhandledEvent(evt)) => {
+                match evt {
+                    event::Event::Key(event::KeyEvent { .. }) => {
+                        display_err(debug_level & 0x4 != 0, &mut stdout, "Unhandled event", x, y, evt);
+                    }
+                    _ => {
+                        display_err(debug_level & 0x8 != 0, &mut stdout, "Unhandled event", x, y, evt);
+                    }
                 }
             }
-            EventResult::Unchanged => clear_option = None,
-            EventResult::UpdateView(ct) => clear_option = Some(ct),
+            Ok(EventResult::Unchanged) => {},
+            Ok(EventResult::UpdateView(ct)) => clear_option = Some(ct),
+            Err(e) => display_err(debug_level > 0, &mut stdout, "Error", x, y, e),
         }
     }
 

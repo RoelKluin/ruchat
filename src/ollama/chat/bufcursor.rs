@@ -106,6 +106,7 @@ impl BufCursor {
                     KeyCode::Home => self.move_to_start_of_line(modifiers),
                     _ => {
                         match key {
+                            KeyCode::Char('\n') => self.enter(),
                             KeyCode::Char(c) if modifiers == KeyModifiers::NONE => self.push(c),
                             KeyCode::Char(c) => self.push(c.to_ascii_uppercase()),
                             KeyCode::Enter => self.enter(), // + SHIFT is disfunctional, use ALT.
@@ -187,13 +188,9 @@ impl BufCursor {
 
     fn delete_word(&mut self) -> Result<EventResult, RuChatError> {
         if self.cursor.0 < self.line_len()? {
-            let mut i = self.cursor.0;
-            while i < self.line_len()? && self.is_whitespace(i)? {
-                i += 1;
-            }
-            while i < self.line_len()? && !self.is_whitespace(i)? {
-                i += 1;
-            }
+            let got = self.buffer.get(self.cursor.1).ok_or(RuChatError::Cursor1OutOfBounds)?;
+            let it = got.chars().skip(self.cursor.0);
+            let i = self.cursor.0 + self.space_word_jump(it);
             self.buffer
                 .get_mut(self.cursor.1)
                 .ok_or(RuChatError::Cursor1OutOfBounds)?
@@ -217,17 +214,31 @@ impl BufCursor {
             Ok(EventResult::Unchanged)
         }
     }
-    fn copy(&mut self) -> Result<EventResult, RuChatError> {
-        if let Some(start) = self.selection_start {
-            let start = start.0.min(self.cursor.0);
-            let end = self.cursor.0.max(self.selection_start.unwrap().0);
-            self.copy_buffer = self
-                .buffer
-                .get(self.cursor.1)
-                .ok_or(RuChatError::Cursor1OutOfBounds)
-                .map(|line| line[start..end].to_string())
-                .map(|s| vec![s])
-                .unwrap_or_default();
+    fn copy(&mut self) -> Result<EventResult> {
+        if let Some((start, end)) = self.normalized_selection() {
+            let s = self.buffer.get_mut(start.1).ok_or(RuChatError::Cursor1OutOfBounds)?;
+            self.copy_buffer.clear();
+            if start.1 == end.1 {
+                if end.0 > s.len() {
+                    return Err(RuChatError::Cursor0OutOfBounds);
+                }
+                self.copy_buffer.push(s[start.0..end.0].to_string());
+            } else {
+                if start.0 > s.len() {
+                    return Err(RuChatError::Cursor0OutOfBounds);
+                }
+                self.copy_buffer.push(s[start.0..].to_string());
+                if end.1 >= self.buffer.len() {
+                    return Err(RuChatError::Cursor1OutOfBounds);
+                }
+                for i in (start.1 + 1)..end.1 {
+                    self.copy_buffer.push(self.buffer[i].to_string());
+                }
+                if end.0 > self.buffer[end.1].len() {
+                    return Err(RuChatError::Cursor0OutOfBounds);
+                }
+                self.copy_buffer.push(self.buffer[end.1][..end.0].to_string());
+            }
         }
         Ok(EventResult::Unchanged)
     }
@@ -246,7 +257,7 @@ impl BufCursor {
         Ok(EventResult::ct(ClearType::UntilNewLine))
     }
 
-    /// Undo the last modification. This method returns if the undo modified text contents or not in the chat.
+    /// Undo the last modification. Returns if undo modified chat text content.
     pub fn undo(&mut self) -> Result<EventResult, RuChatError> {
         if let Some((cursor, ct)) = self.history.undo(&mut self.buffer) {
             self.selection_start = None;
@@ -257,7 +268,7 @@ impl BufCursor {
         }
     }
 
-    /// Redo the last undo change. This method returns if the redo modified text contents or not in the chat.
+    /// Redo the last undo change. Returns if redo modified chat text content.
     pub fn redo(&mut self) -> Result<EventResult, RuChatError> {
         if let Some((cursor, ct)) = self.history.redo(&mut self.buffer) {
             self.selection_start = None;
@@ -298,7 +309,7 @@ impl BufCursor {
         row: usize,
     ) -> Result<EventResult, RuChatError> {
         if row < self.buffer.len() {
-            if column < self.buffer[row].len() + 1 {
+            if column <= self.buffer[row].len() {
                 self.cursor = (column, row);
                 Ok(EventResult::CursorChange)
             } else {
@@ -320,6 +331,9 @@ impl BufCursor {
 
     fn push(&mut self, c: char) -> Result<EventResult, RuChatError> {
         let (col, row) = self.cursor;
+        if row >= self.buffer.len() {
+            return Err(RuChatError::Cursor1OutOfBounds);
+        }
         let line = &mut self.buffer[row];
         let i = line
             .char_indices()
@@ -364,28 +378,39 @@ impl BufCursor {
             Ok(EventResult::Unchanged)
         }
     }
-    fn is_whitespace(&self, i: usize) -> Result<bool, RuChatError> {
-        Ok(self
-            .buffer
-            .get(self.cursor.1)
-            .ok_or(RuChatError::Cursor1OutOfBounds)?
-            .chars()
-            .nth(i)
-            .ok_or(RuChatError::Cursor0OutOfBounds)?
-            .is_whitespace())
+
+    pub(crate) fn normalized_selection(&self) -> Option<((usize, usize), (usize, usize))> {
+        if let Some(ss) = self.selection_start {
+            if ss.1 < self.cursor.1 || (ss.1 == self.cursor.1 && ss.0 < self.cursor.0) {
+                Some((ss, self.cursor))
+            } else if ss.1 > self.cursor.1 || (ss.1 == self.cursor.1 && ss.0 > self.cursor.0) {
+                Some((self.cursor, ss))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
+    fn space_word_jump(&self, it: impl Iterator<Item = char>) -> usize {
+        let mut test = false;
+        it.take_while(|c| {
+            if c.is_ascii_alphanumeric() == test {
+                true
+            } else {
+                test = !test;
+                test
+            }
+        }).count()
     }
 
     fn move_word_left(&mut self, m: KeyModifiers) -> Result<EventResult, RuChatError> {
         if self.cursor.0 > 0 {
             let res = self.ammend_selection(m, ClearType::CurrentLine);
-            let mut i = self.cursor.0;
-            while i > 0 && self.is_whitespace(i - 1)? {
-                i -= 1;
-            }
-            while i > 0 && !self.is_whitespace(i - 1)? {
-                i -= 1;
-            }
-            self.cursor.0 = i;
+            let s = self.buffer.get(self.cursor.1).ok_or(RuChatError::Cursor1OutOfBounds)?;
+            let it = s.chars().rev().skip(s.len() - self.cursor.0);
+            self.cursor.0 -= self.space_word_jump(it);
             Ok(res)
         } else {
             Ok(EventResult::Unchanged)
@@ -395,14 +420,11 @@ impl BufCursor {
     fn move_word_right(&mut self, m: KeyModifiers) -> Result<EventResult, RuChatError> {
         if self.cursor.0 < self.line_len()? {
             let res = self.ammend_selection(m, ClearType::CurrentLine);
-            let mut i = self.cursor.0;
-            while i < self.line_len()? && self.is_whitespace(i)? {
-                i += 1;
+            if self.cursor.1 >= self.buffer.len() {
+                return Err(RuChatError::Cursor1OutOfBounds);
             }
-            while i < self.line_len()? && !self.is_whitespace(i)? {
-                i += 1;
-            }
-            self.cursor.0 = i;
+            let it = self.buffer[self.cursor.1].chars().skip(self.cursor.0);
+            self.cursor.0 += self.space_word_jump(it);
             Ok(res)
         } else {
             Ok(EventResult::Unchanged)
@@ -419,6 +441,7 @@ impl BufCursor {
             Ok(EventResult::Unchanged)
         }
     }
+
     fn move_to_start_of_line(&mut self, m: KeyModifiers) -> Result<EventResult, RuChatError> {
         let mut res = EventResult::Unchanged;
         if self.cursor.1 > 0 {
@@ -430,37 +453,48 @@ impl BufCursor {
         }
     }
 
-    fn delete(&mut self) -> Result<EventResult, RuChatError> {
-        if let Some(start) = self.selection_start {
-            let res = if self.cursor.0 == start.0 {
-                EventResult::UpdateView(ClearType::UntilNewLine)
+    fn delete_selection(&mut self) -> Result<EventResult> {
+        if let Some((start, end)) = self.normalized_selection() {
+            self.cursor = start;
+            let s = self.buffer.get_mut(start.1).ok_or(RuChatError::Cursor1OutOfBounds)?;
+            if start.1 == end.1 {
+                s.drain(start.0..end.0);
+                Ok(EventResult::UpdateView(ClearType::UntilNewLine))
             } else {
-                EventResult::UpdateView(ClearType::FromCursorDown)
-            };
-            let start = start.0.min(self.cursor.0);
-            let end = self.cursor.0.max(self.selection_start.unwrap().0);
-            self.buffer
-                .get_mut(self.cursor.1)
-                .ok_or(RuChatError::Cursor1OutOfBounds)?
-                .drain(start..end);
-            self.cursor.0 = start;
-            self.selection_start = None;
-            Ok(res)
-        } else if self.cursor.0 < self.line_len()? {
-            self.buffer
-                .get_mut(self.cursor.1)
-                .ok_or(RuChatError::Cursor1OutOfBounds)?
-                .remove(self.cursor.0);
-            Ok(EventResult::ct(ClearType::UntilNewLine))
-        } else if self.cursor.1 < self.buffer.len() - 1 {
-            let line = self.buffer.remove(self.cursor.1 + 1);
-            self.append_line(&line)
+                s.drain(start.0..);
+                self.buffer.drain((start.1 + 1)..end.1);
+                self.buffer
+                    .get_mut(end.1)
+                    .ok_or(RuChatError::Cursor1OutOfBounds)?
+                    .drain(..end.0);
+                Ok(EventResult::UpdateView(ClearType::FromCursorDown))
+            }
         } else {
             Ok(EventResult::Unchanged)
         }
     }
 
-    fn enter(&mut self) -> Result<EventResult, RuChatError> {
+    fn delete(&mut self) -> Result<EventResult> {
+        match self.delete_selection()? {
+            EventResult::Unchanged => {
+                if self.cursor.0 < self.line_len()? {
+                    self.buffer
+                        .get_mut(self.cursor.1)
+                        .ok_or(RuChatError::Cursor1OutOfBounds)?
+                        .remove(self.cursor.0);
+                    Ok(EventResult::ct(ClearType::UntilNewLine))
+                } else if self.cursor.1 < self.buffer.len() {
+                    let line = self.buffer.remove(self.cursor.1 + 1);
+                    self.append_line(&line)
+                } else {
+                    Ok(EventResult::Unchanged)
+                }
+            }
+            res => Ok(res),
+        }
+    }
+
+    fn enter(&mut self) -> Result<EventResult> {
         self.buffer.insert(self.cursor.1 + 1, String::new());
         self.cursor.1 += 1;
         self.cursor.0 = 0;
@@ -499,7 +533,7 @@ impl BufCursor {
     }
 
     fn move_down(&mut self, m: KeyModifiers) -> Result<EventResult, RuChatError> {
-        if self.cursor.1 < self.buffer.len() - 1 {
+        if self.cursor.1 < self.buffer.len() {
             let res = self.ammend_selection(m, ClearType::FromCursorUp);
             self.cursor.1 += 1;
             self.cursor.0 = self.cursor.0.min(self.line_len()?);
@@ -516,7 +550,11 @@ mod tests {
     use crossterm::event::{KeyEventKind, KeyEventState, MouseButton, MouseEventKind};
     fn write(cursor: &mut BufCursor, text: &str) {
         for c in text.chars() {
-            cursor.push(c).unwrap();
+            if c == '\n' {
+                cursor.enter().unwrap();
+            } else {
+                cursor.push(c).unwrap();
+            }
         }
     }
 
@@ -533,22 +571,18 @@ mod tests {
         write(&mut cursor, "Hello, world!");
         assert_eq!(cursor.read(), "Hello, world!");
         cursor.cursor = (5, 0);
-        cursor
-            .handle_event(Event::Key(KeyEvent {
-                code: KeyCode::Right,
-                modifiers: KeyModifiers::SHIFT,
-                kind: KeyEventKind::Press,
-                state: KeyEventState::NONE,
-            }))
-            .unwrap();
-        cursor
-            .handle_event(Event::Key(KeyEvent {
-                code: KeyCode::Char('x'),
-                modifiers: KeyModifiers::CONTROL,
-                kind: KeyEventKind::Press,
-                state: KeyEventState::NONE,
-            }))
-            .unwrap();
+        cursor.handle_event(Event::Key(KeyEvent {
+            code: KeyCode::Right,
+            modifiers: KeyModifiers::SHIFT,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        })).unwrap();
+        cursor.handle_event(Event::Key(KeyEvent {
+            code: KeyCode::Char('x'),
+            modifiers: KeyModifiers::CONTROL,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        })).unwrap();
         cursor.push(' ').unwrap();
         for c in "mister".chars() {
             cursor
@@ -582,7 +616,9 @@ mod tests {
     fn test_bufcursor_set_cursor() {
         let mut cursor = BufCursor::new().unwrap();
         write(&mut cursor, "Hello, world!");
-        cursor.set_cursor(5, 0);
+        assert!(cursor.set_cursor(5, 1).is_err());
+        assert!(cursor.set_cursor(50, 0).is_err());
+        assert!(cursor.set_cursor(5, 0).is_ok());
         assert_eq!(cursor.get_cursor(), (5, 0));
     }
 
@@ -590,14 +626,86 @@ mod tests {
     fn test_bufcursor_handle_event() {
         let mut cursor = BufCursor::new().unwrap();
         write(&mut cursor, "Hello, world!");
-        let event = Event::Key(KeyEvent {
-            code: KeyCode::Char('a'),
+        cursor.handle_event(Event::Key(KeyEvent {
+            code: KeyCode::Left,
             modifiers: KeyModifiers::NONE,
             kind: KeyEventKind::Press,
             state: KeyEventState::NONE,
-        });
-        cursor.handle_event(event).unwrap();
-        assert_eq!(cursor.read(), "Hello, world!a");
+        })).unwrap();
+        assert_eq!(cursor.get_cursor(), (12, 0));
+        cursor.handle_event(Event::Key(KeyEvent {
+            code: KeyCode::End,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        })).unwrap();
+        assert_eq!(cursor.get_cursor(), (13, 0));
+        cursor.handle_event(Event::Key(KeyEvent {
+            code: KeyCode::Enter,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        })).unwrap();
+        assert!(cursor.get_cursor() == (0, 1));
+        for c in "testing 123".chars() {
+            cursor.push(c).unwrap();
+        }
+        assert_eq!(cursor.get_cursor(), (11, 1));
+        cursor.handle_event(Event::Key(KeyEvent {
+            code: KeyCode::Enter,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        })).unwrap();
+        assert_eq!(cursor.get_cursor(), (0, 2));
+        for c in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ~1234567890!@#$%^&*()_+[]{}|;':\",.<>?/`".chars() {
+            cursor.handle_event(Event::Key(KeyEvent {
+                code: KeyCode::Char(c),
+                modifiers: KeyModifiers::NONE,
+                kind: KeyEventKind::Press,
+                state: KeyEventState::NONE,
+            })).unwrap();
+        }
+        assert_eq!(cursor.get_cursor(), (91, 2));
+        cursor.handle_event(Event::Key(KeyEvent {
+            code: KeyCode::Up,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        })).unwrap();
+        assert_eq!(cursor.get_cursor(), (11, 1));
+        cursor.handle_event(Event::Key(KeyEvent {
+            code: KeyCode::Home,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        })).unwrap();
+        assert_eq!(cursor.get_cursor(), (0, 1));
+        for c in "nppnfbwdddf".chars() {
+            cursor.handle_event(Event::Key(KeyEvent {
+                code: KeyCode::Char(c),
+                modifiers: KeyModifiers::CONTROL,
+                kind: KeyEventKind::Press,
+                state: KeyEventState::NONE,
+            })).unwrap();
+        }
+        assert_eq!(cursor.buffer.join("\n"), "Hello, world!\n3\nabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ~1234567890!@#$%^&*()_+[]{}|;':\",.<>?/`");
+        assert_eq!(cursor.get_cursor(), (1, 1));
+        cursor.handle_event(Event::Key(KeyEvent {
+            code: KeyCode::Backspace,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        })).unwrap();
+        assert_eq!(cursor.get_cursor(), (0, 1));
+        cursor.handle_event(Event::Key(KeyEvent {
+            code: KeyCode::Char('d'),
+            modifiers: KeyModifiers::CONTROL,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        })).unwrap();
+        assert_eq!(cursor.get_cursor(), (0, 1));
+        assert_eq!(cursor.read(), "Hello, world!\nabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ~1234567890!@#$%^&*()_+[]{}|;':\",.<>?/`");
     }
 
     #[test]
@@ -708,14 +816,6 @@ mod tests {
     }
 
     #[test]
-    fn test_bufcursor_is_whitespace() {
-        let mut cursor = BufCursor::new().unwrap();
-        write(&mut cursor, "Hello, world!");
-        assert_eq!(cursor.is_whitespace(5).unwrap(), false);
-        assert_eq!(cursor.is_whitespace(6).unwrap(), true);
-    }
-
-    #[test]
     fn test_bufcursor_line_len() {
         let mut cursor = BufCursor::new().unwrap();
         write(&mut cursor, "Hello, world!");
@@ -726,7 +826,7 @@ mod tests {
     fn test_bufcursor_get_cursor() {
         let mut cursor = BufCursor::new().unwrap();
         write(&mut cursor, "Hello, world!");
-        cursor.set_cursor(5, 0);
+        assert!(cursor.set_cursor(5, 0).is_ok());
         assert_eq!(cursor.get_cursor(), (5, 0));
     }
 
@@ -830,15 +930,15 @@ mod tests {
         let mut cursor = BufCursor::new().unwrap();
         write(&mut cursor, "Hello, world!\nThis is a test.");
         cursor.cursor = (5, 0);
-        cursor
-            .handle_event(Event::Key(KeyEvent {
-                code: KeyCode::Down,
-                modifiers: KeyModifiers::NONE,
-                kind: KeyEventKind::Press,
-                state: KeyEventState::NONE,
-            }))
-            .unwrap();
-        assert_eq!(cursor.get_cursor(), (5, 1));
+        match cursor.handle_event(Event::Key(KeyEvent {
+            code: KeyCode::Down,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        })) {
+            Ok(EventResult::CursorChange) => assert_eq!(cursor.get_cursor(), (5, 1)),
+            e => panic!("Expected CursorChange event, got {:?}", e),
+        }
     }
 
     #[test]
@@ -846,15 +946,15 @@ mod tests {
         let mut cursor = BufCursor::new().unwrap();
         write(&mut cursor, "Hello, world!");
         cursor.cursor = (5, 0);
-        cursor
-            .handle_event(Event::Key(KeyEvent {
-                code: KeyCode::Char('b'),
-                modifiers: KeyModifiers::CONTROL,
-                kind: KeyEventKind::Press,
-                state: KeyEventState::NONE,
-            }))
-            .unwrap();
-        assert_eq!(cursor.get_cursor(), (4, 0));
+        match cursor.handle_event(Event::Key(KeyEvent {
+            code: KeyCode::Char('b'),
+            modifiers: KeyModifiers::CONTROL,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        })) {
+            Ok(EventResult::CursorChange) => assert_eq!(cursor.get_cursor(), (0, 0)),
+            e => panic!("Expected CursorChange event, got {:?}", e),
+        }
     }
 
     #[test]
@@ -862,15 +962,14 @@ mod tests {
         let mut cursor = BufCursor::new().unwrap();
         write(&mut cursor, "Hello, world!");
         cursor.cursor = (5, 0);
-        cursor
-            .handle_event(Event::Key(KeyEvent {
-                code: KeyCode::Char('f'),
-                modifiers: KeyModifiers::CONTROL,
-                kind: KeyEventKind::Press,
-                state: KeyEventState::NONE,
-            }))
-            .unwrap();
-        assert_eq!(cursor.get_cursor(), (6, 0));
+        cursor.handle_event(Event::Key(KeyEvent {
+            code: KeyCode::Char('f'),
+            modifiers: KeyModifiers::CONTROL,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }))
+        .unwrap();
+        assert_eq!(cursor.get_cursor(), (12, 0));
     }
 
     #[test]
@@ -878,14 +977,13 @@ mod tests {
         let mut cursor = BufCursor::new().unwrap();
         write(&mut cursor, "Hello, world!");
         cursor.cursor = (5, 0);
-        cursor
-            .handle_event(Event::Key(KeyEvent {
-                code: KeyCode::Char('d'),
-                modifiers: KeyModifiers::CONTROL,
-                kind: KeyEventKind::Press,
-                state: KeyEventState::NONE,
-            }))
-            .unwrap();
+        cursor.handle_event(Event::Key(KeyEvent {
+            code: KeyCode::Char('d'),
+            modifiers: KeyModifiers::CONTROL,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }))
+        .unwrap();
         assert_eq!(cursor.read(), "Hello world!");
     }
 
@@ -893,14 +991,13 @@ mod tests {
     fn test_bufcursor_handle_event_select_all() {
         let mut cursor = BufCursor::new().unwrap();
         write(&mut cursor, "Hello, world!");
-        cursor
-            .handle_event(Event::Key(KeyEvent {
-                code: KeyCode::Char('a'),
-                modifiers: KeyModifiers::CONTROL,
-                kind: KeyEventKind::Press,
-                state: KeyEventState::NONE,
-            }))
-            .unwrap();
+        cursor.handle_event(Event::Key(KeyEvent {
+            code: KeyCode::Char('a'),
+            modifiers: KeyModifiers::CONTROL,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }))
+        .unwrap();
         assert_eq!(cursor.get_selection_start(), Some((0, 0)));
     }
 
@@ -908,24 +1005,35 @@ mod tests {
     fn test_bufcursor_handle_event_copy() {
         let mut cursor = BufCursor::new().unwrap();
         write(&mut cursor, "Hello, world!");
-        // Select all
-        cursor
-            .handle_event(Event::Key(KeyEvent {
-                code: KeyCode::Char('a'),
-                modifiers: KeyModifiers::CONTROL,
-                kind: KeyEventKind::Press,
-                state: KeyEventState::NONE,
-            }))
-            .unwrap();
-        cursor
-            .handle_event(Event::Key(KeyEvent {
-                code: KeyCode::Char('c'),
-                modifiers: KeyModifiers::CONTROL,
-                kind: KeyEventKind::Press,
-                state: KeyEventState::NONE,
-            }))
-            .unwrap();
-        assert_eq!(cursor.copy_buffer, vec!["Hello, world!"]);
+        match cursor.handle_event(Event::Key(KeyEvent {
+            code: KeyCode::Left,
+            modifiers: KeyModifiers::SHIFT,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        })) {
+            Ok(EventResult::UpdateView(ClearType::CurrentLine)) => {}
+            _ => panic!("Expected CursorChange event"),
+        }
+        match cursor.handle_event(Event::Key(KeyEvent {
+            code: KeyCode::Char('b'),
+            modifiers: (KeyModifiers::CONTROL | KeyModifiers::SHIFT),
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        })) {
+            Ok(EventResult::UpdateView(ClearType::CurrentLine)) => {}
+            _ => panic!("Expected CursorChange event"),
+        }
+
+        match cursor.handle_event(Event::Key(KeyEvent {
+            code: KeyCode::Char('c'),
+            modifiers: KeyModifiers::CONTROL,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        })) {
+            Ok(EventResult::Unchanged) => {}
+            _ => panic!("Expected Unchanged event"),
+        }
+        assert_eq!(cursor.copy_buffer, vec!["world!"]);
     }
 
     #[test]
@@ -933,14 +1041,13 @@ mod tests {
         let mut cursor = BufCursor::new().unwrap();
         write(&mut cursor, "Hello, world!");
         cursor.cursor = (5, 0);
-        cursor
-            .handle_event(Event::Key(KeyEvent {
-                code: KeyCode::Char('x'),
-                modifiers: KeyModifiers::CONTROL,
-                kind: KeyEventKind::Press,
-                state: KeyEventState::NONE,
-            }))
-            .unwrap();
+        cursor.handle_event(Event::Key(KeyEvent {
+            code: KeyCode::Char('x'),
+            modifiers: KeyModifiers::CONTROL,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }))
+        .unwrap();
         assert_eq!(cursor.read(), "Hello world!");
     }
 
@@ -948,14 +1055,13 @@ mod tests {
     fn test_bufcursor_handle_event_paste() {
         let mut cursor = BufCursor::new().unwrap();
         write(&mut cursor, "Hello, world!");
-        cursor
-            .handle_event(Event::Key(KeyEvent {
-                code: KeyCode::Char('v'),
-                modifiers: KeyModifiers::CONTROL,
-                kind: KeyEventKind::Press,
-                state: KeyEventState::NONE,
-            }))
-            .unwrap();
+        cursor.handle_event(Event::Key(KeyEvent {
+            code: KeyCode::Char('v'),
+            modifiers: KeyModifiers::CONTROL,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }))
+        .unwrap();
         assert_eq!(cursor.read(), "Hello, world!");
     }
 
@@ -964,16 +1070,16 @@ mod tests {
         let mut cursor = BufCursor::new().unwrap();
         write(&mut cursor, "Hello, world!");
         cursor.cursor = (5, 0);
-        for _ in 0..=7 {
-            cursor
-                .handle_event(Event::Key(KeyEvent {
-                    code: KeyCode::Right,
-                    modifiers: KeyModifiers::CONTROL,
-                    kind: KeyEventKind::Press,
-                    state: KeyEventState::NONE,
-                }))
-                .unwrap();
+        for _ in 0..7 {
+            cursor.handle_event(Event::Key(KeyEvent {
+                code: KeyCode::Right,
+                modifiers: KeyModifiers::SHIFT,
+                kind: KeyEventKind::Press,
+                state: KeyEventState::NONE,
+            }))
+            .unwrap();
         }
+        assert!(cursor.selection_start.is_some());
 
         cursor
             .handle_event(Event::Key(KeyEvent {
@@ -1005,90 +1111,47 @@ mod tests {
     fn test_bufcursor_handle_event_scroll_up() {
         let mut cursor = BufCursor::new().unwrap();
         write(&mut cursor, "Hello, world!");
-        cursor
-            .handle_event(Event::Mouse(MouseEvent {
-                kind: MouseEventKind::ScrollUp,
-                column: 0,
-                row: 0,
-                modifiers: KeyModifiers::NONE,
-            }))
-            .unwrap();
-        assert_eq!(cursor.get_cursor(), (0, 0));
-    }
-
-    #[test]
-    fn test_bufcursor_handle_event_scroll_down() {
-        let mut cursor = BufCursor::new().unwrap();
-        write(&mut cursor, "Hello, world!");
-        cursor
-            .handle_event(Event::Mouse(MouseEvent {
-                kind: MouseEventKind::ScrollDown,
-                column: 0,
-                row: 0,
-                modifiers: KeyModifiers::NONE,
-            }))
-            .unwrap();
-        assert_eq!(cursor.get_cursor(), (0, 0));
-    }
-
-    #[test]
-    fn test_bufcursor_handle_event_debug() {
-        let mut cursor = BufCursor::new().unwrap();
-        write(&mut cursor, "Hello, world!");
-        cursor
-            .handle_event(Event::Key(KeyEvent {
-                code: KeyCode::Char('d'),
-                modifiers: KeyModifiers::NONE,
-                kind: KeyEventKind::Press,
-                state: KeyEventState::NONE,
-            }))
-            .unwrap();
-        assert_eq!(cursor.read(), "Hello, world!d");
-    }
-
-    #[test]
-    fn test_bufcursor_handle_event_other() {
-        let mut cursor = BufCursor::new().unwrap();
-        write(&mut cursor, "Hello, world!");
-        cursor
-            .handle_event(Event::Key(KeyEvent {
-                code: KeyCode::Char('x'),
-                modifiers: KeyModifiers::NONE,
-                kind: KeyEventKind::Press,
-                state: KeyEventState::NONE,
-            }))
-            .unwrap();
-        assert_eq!(cursor.read(), "Hello, world!x");
-    }
-
-    #[test]
-    fn test_bufcursor_handle_event_invalid() {
-        let mut cursor = BufCursor::new().unwrap();
-        write(&mut cursor, "Hello, world!");
-        cursor
-            .handle_event(Event::Key(KeyEvent {
-                code: KeyCode::Char('z'),
-                modifiers: KeyModifiers::NONE,
-                kind: KeyEventKind::Press,
-                state: KeyEventState::NONE,
-            }))
-            .unwrap();
-        assert_eq!(cursor.read(), "Hello, world!z");
-    }
-
-    #[test]
-    fn test_bufcursor_handle_event_invalid_key() {
-        let mut cursor = BufCursor::new().unwrap();
-        write(&mut cursor, "Hello, world!");
-        cursor
-            .handle_event(Event::Key(KeyEvent {
-                code: KeyCode::Char('z'),
-                modifiers: KeyModifiers::NONE,
-                kind: KeyEventKind::Press,
-                state: KeyEventState::NONE,
-            }))
-            .unwrap();
-        assert_eq!(cursor.read(), "Hello, world!z");
+        match cursor.handle_event(Event::Mouse(MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        })) {
+            Ok(EventResult::Unchanged) => assert_eq!(cursor.get_cursor(), (13, 0)),
+            e => panic!("Expected Unchanged event result, got {:?}", e),
+        }
+        match cursor.handle_event(Event::Key(KeyEvent {
+            code: KeyCode::Enter,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        })) {
+            Ok(EventResult::UpdateView(ClearType::FromCursorDown)) => {},
+            e => panic!("Expected Unchanged event result, got {:?}", e),
+        }
+        assert_eq!(cursor.get_cursor(), (0, 1));
+        for c in "Hello, again world!".chars() {
+            cursor.push(c).unwrap();
+        }
+        assert_eq!(cursor.get_cursor(), (19, 1));
+        match cursor.handle_event(Event::Mouse(MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        })) {
+            Ok(EventResult::CursorChange) => assert_eq!(cursor.get_cursor(), (13, 0)),
+            e => panic!("Expected Unchanged event result, got {:?}", e),
+        }
+        match cursor.handle_event(Event::Mouse(MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        })) {
+            Ok(EventResult::CursorChange) => assert_eq!(cursor.get_cursor(), (13, 1)),
+            e => panic!("Expected Unchanged event result, got {:?}", e),
+        }
     }
 
     #[test]
@@ -1107,17 +1170,21 @@ mod tests {
     }
 
     #[test]
-    fn test_bufcursor_handle_event_invalid_scroll() {
+    fn test_bufcursor_handle_event_scrollup_none() {
         let mut cursor = BufCursor::new().unwrap();
         write(&mut cursor, "Hello, world!");
-        cursor
-            .handle_event(Event::Mouse(MouseEvent {
-                kind: MouseEventKind::ScrollUp,
-                column: 0,
-                row: 0,
-                modifiers: KeyModifiers::NONE,
-            }))
-            .unwrap();
-        assert_eq!(cursor.get_cursor(), (0, 0));
+        match cursor.handle_event(Event::Mouse(MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        })) {
+            Ok(EventResult::Unchanged) => {
+                assert_eq!(cursor.get_cursor(), (13, 0));
+            }
+            _ => {
+                panic!("Expected Unchanged event result");
+            }
+        }
     }
 }
