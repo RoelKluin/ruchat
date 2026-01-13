@@ -3,3 +3,4 @@ target
 responses
 Cargo.lock
 tags
+tarpaulin-report.html
