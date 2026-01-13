@@ -9,6 +9,7 @@ use tokio::io::AsyncWriteExt;
 pub(crate) struct Io {
     stdin: std::io::Stdin,
     stdout: tokio::io::Stdout,
+    stderr: tokio::io::Stderr,
 }
 
 impl Io {
@@ -21,6 +22,7 @@ impl Io {
         Self {
             stdin: stdin(),
             stdout: tokio::io::stdout(),
+            stderr: tokio::io::stderr(),
         }
     }
 
@@ -47,6 +49,21 @@ impl Io {
     pub(crate) async fn write_line(&mut self, line: &str) -> Result<(), RuChatError> {
         self.stdout.write_all(line.as_bytes()).await?;
         self.stdout.flush().await?;
+        Ok(())
+    }
+
+    /// Writes a line to standard error.
+    ///
+    /// # Parameters
+    ///
+    /// - `line`: The line to write to standard error.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` indicating success or failure.
+    pub(crate) async fn write_error_line(&mut self, line: &str) -> Result<(), RuChatError> {
+        self.stderr.write_all(line.as_bytes()).await?;
+        self.stderr.flush().await?;
         Ok(())
     }
 

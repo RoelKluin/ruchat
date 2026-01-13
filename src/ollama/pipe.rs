@@ -18,13 +18,17 @@ pub struct PipeArgs {
     #[arg(short, long, default_value = "qwen2.5vl:latest")]
     pub(crate) model: Option<String>,
 
-    /// Path to a JSON file to amend default generation options, or a string
+    /// Optional configuration file for model options, or a string
     /// representing the options in JSON format.
     #[arg(short, long)]
     pub(crate) options: Option<String>,
 
     /// Specify the model using a positional argument.
     pub(crate) positional_model: Option<String>,
+
+    /// Silent mode: suppresses output if set to true.
+    #[arg(short, long, default_value_t = false)]
+    silent: bool,
 }
 
 /// The pipe command handles prompted questions with context using a model.
@@ -46,11 +50,13 @@ pub(crate) async fn pipe(ollama: Ollama, args: &PipeArgs) -> Result<(), RuChatEr
     let mut options = get_options(args.options.as_deref()).await?;
     let mut model_name = match args.model.as_deref().or(args.positional_model.as_deref()) {
         Some(model) if !model.is_empty() => get_name(&ollama, model).await?,
-        _ => DEFAULT_MODEL.to_string(), // will error out later if no model provided
+        _ => DEFAULT_MODEL.to_string(),
     };
 
     while !done {
-        cio.write_line("***\n").await?;
+        if !args.silent {
+            cio.write_error_line("***\n").await?;
+        }
         let mut prompt = String::new();
         while let Ok(line) = cio.read_line().await {
             match line.as_str() {
@@ -61,12 +67,20 @@ pub(crate) async fn pipe(ollama: Ollama, args: &PipeArgs) -> Result<(), RuChatEr
                         break;
                     }
                     if let Some(new_model) = line.strip_prefix("!model: ") {
-                        cio.write_line(&format!("[Switching model to {}]\n", new_model.trim()))
+                        if !args.silent {
+                            cio.write_error_line(&format!(
+                                "[Switching model to {}]\n",
+                                new_model.trim()
+                            ))
                             .await?;
+                        }
                         model_name = get_name(&ollama, new_model.trim()).await?;
-                    } else if let Some(new_options) = line.strip_prefix("!options: ") {
+                    } else if let Some(new_options) = line.strip_prefix("!option: ") {
                         options = get_options(Some(new_options.trim())).await?;
-                        cio.write_line("[Updated generation options]\n").await?;
+                        if !args.silent {
+                            cio.write_error_line("[Updated generation options]\n")
+                                .await?;
+                        }
                     } else if !line.starts_with("!!") {
                         // or comment
                         prompt.push_str(&line);
@@ -80,7 +94,9 @@ pub(crate) async fn pipe(ollama: Ollama, args: &PipeArgs) -> Result<(), RuChatEr
         if prompt.is_empty() {
             //done = true;
         } else {
-            cio.write_line(&format!("> {prompt}\n---\n")).await?;
+            if !args.silent {
+                cio.write_error_line(&format!("> {prompt}\n---\n")).await?;
+            }
             let request =
                 GenerationRequest::new(model_name.clone(), prompt).options(options.clone());
             let mut stream = ollama.generate_stream(request).await?;
@@ -90,7 +106,7 @@ pub(crate) async fn pipe(ollama: Ollama, args: &PipeArgs) -> Result<(), RuChatEr
                     cio.write_line(&resp.response).await?;
                 }
             }
-            cio.write_line("\n").await?;
+            cio.write_line("\n---\n").await?;
         }
     }
     Ok(())

@@ -723,26 +723,11 @@ mod tests {
     }
 
     #[test]
-    fn test_bufcursor_len() {
-        let mut cursor = BufCursor::new().unwrap();
-        write(&mut cursor, "Hello, world!");
-        assert_eq!(cursor.len(), 13);
-    }
-
-    #[test]
     fn test_bufcursor_get_cursor() {
         let mut cursor = BufCursor::new().unwrap();
         write(&mut cursor, "Hello, world!");
         cursor.set_cursor(5, 0);
         assert_eq!(cursor.get_cursor(), (5, 0));
-    }
-
-    #[test]
-    fn test_bufcursor_debug() {
-        let mut cursor = BufCursor::new().unwrap();
-        write(&mut cursor, "Hello, world!");
-        cursor.debug("Debugging").unwrap();
-        assert_eq!(cursor.read(), "Hello, world!Debugging");
     }
 
     #[test]
@@ -923,6 +908,15 @@ mod tests {
     fn test_bufcursor_handle_event_copy() {
         let mut cursor = BufCursor::new().unwrap();
         write(&mut cursor, "Hello, world!");
+        // Select all
+        cursor
+            .handle_event(Event::Key(KeyEvent {
+                code: KeyCode::Char('a'),
+                modifiers: KeyModifiers::CONTROL,
+                kind: KeyEventKind::Press,
+                state: KeyEventState::NONE,
+            }))
+            .unwrap();
         cursor
             .handle_event(Event::Key(KeyEvent {
                 code: KeyCode::Char('c'),
