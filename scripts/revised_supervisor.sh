@@ -33,7 +33,7 @@ for agent in "${AGENTS[@]}"; do
     mkfifo "/tmp/ruchat_${agent}_in" "/tmp/ruchat_${agent}_out"
 done
 
-MODELS=("qwen3:4b" "deepseek-coder:latest" "qwen3:4b" "mistral-nemo:latest")
+MODELS=("qwen3:latest" "deepseek-coder:latest" "qwen3:latest" "mistral-nemo:latest")
 
 # Start Instances
 target/release/ruchat pipe -m "${MODELS[0]}" -o '{"temperature": 0.0}'  < "/tmp/ruchat_architect_in" > "/tmp/ruchat_architect_out" &
@@ -68,7 +68,6 @@ ARCHITECT_INIT="You are a Senior Software Architect. Your job is to turn vague g
 WORKER_INIT="You are an expert Linux Developer. Provide only clean, commented code without excessive conversational filler."
 CRITIC_INIT="You are a pedantic QA Engineer. Look for security flaws, edge cases, and syntax errors. Do not be polite; be accurate."
 
-
 # 3. Execution
 USER_GOAL="Design a simple Bash script that monitors CPU usage and alerts if it exceeds 90%."
 echo "USER GOAL: $USER_GOAL" >> "$HISTORY_FILE"
@@ -99,7 +98,6 @@ query_agent 7 8 "$C_CRIT" "CRITIC" '!done'
 rm -f "/tmp/ruchat_architect_in" "/tmp/ruchat_architect_out"
 rm -f "/tmp/ruchat_worker_in" "/tmp/ruchat_worker_out"
 rm -f "/tmp/ruchat_critic_in" "/tmp/ruchat_critic_out"
-sleep 2
 
 target/release/ruchat pipe -m "${MODELS[3]}" -o '{"temperature": 0.0}'  < "/tmp/ruchat_summarizer_in"> "/tmp/ruchat_summarizer_out" &
 exec 9>"/tmp/ruchat_summarizer_in" 10<"/tmp/ruchat_summarizer_out"
@@ -108,5 +106,8 @@ exec 9>"/tmp/ruchat_summarizer_in" 10<"/tmp/ruchat_summarizer_out"
 echo -e "\n${C_SUMM}SYSTEM: Generating final report...${NC}\n"
 FINAL_HISTORY=$(cat "$HISTORY_FILE")
 query_agent 9 10 "$C_SUMM" "SUMMARIZER" "You are a Technical Writer. Your job is to create clean, professional documentation based on a chat log. Focus on the final result. Summarize the entire interaction below into a final technical report. Include the final code and a 'Lessons Learned' section: $FINAL_HISTORY"
+
+query_agent 9 10 "$C_SUMM" "SUMMARIZER" '!done'
+rm -f "/tmp/ruchat_summarizer_in" "/tmp/ruchat_summarizer_out"
 
 echo "Process Complete."

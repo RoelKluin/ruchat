@@ -27,7 +27,7 @@ pub struct Args {
     pub command: Option<Commands>,
 
     /// Address and port of the ollama server.
-    #[arg(short, long, default_value = "http://172.18.0.1:11434")]
+    #[arg(short, long, default_value = "http://localhost:11434")]
     pub(crate) server: String,
 
     /// Toggle verbose mode.

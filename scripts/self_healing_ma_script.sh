@@ -87,10 +87,10 @@ query_agent() {
 }
 
 # send initial system prompts to each agent
-query_agent 3 4 "$C_ARCH" "ARCHITECT" "You are a Senior Software Architect. Your job is to turn vague goals into technical specifications. Be concise and use bullet points."
-query_agent 5 6 "$C_WORK" "WORKER" "You are an expert Linux Developer. Provide only clean, commented code without excessive conversational filler."
-query_agent 7 8 "$C_VALI" "VALIDATOR" "You are a shellcheck expert. Explain the errors and valid warnings. Do not be polite; be accurate."
-query_agent 9 10 "$C_CRIT" "CRITIC" "You are a pedantic QA Engineer. Look for security flaws, edge cases, and syntax errors. Do not be polite; be accurate."
+ARCHITECT_INIT="You are a Senior Software Architect. Your job is to turn vague goals into technical specifications. Be concise and use bullet points."
+WORKER_INIT="You are an expert Linux Developer. Provide only clean, commented code without excessive conversational filler."
+VALIDATOR_INIT="You are a shellcheck expert. Explain the errors and valid warnings. Do not be polite; be accurate."
+CRITIC_INIT="You are a pedantic QA Engineer. Look for security flaws, edge cases, and syntax errors. Do not be polite; be accurate."
 
 # 3. The Orchestration Loop
 USER_GOAL="Write a bash script that finds all .log files in /var/log larger than 100MB and lists them."
@@ -99,8 +99,10 @@ CURRENT_PROMPT="Goal: $USER_GOAL. Architect, create the technical requirements."
 for i in {1..3}; do
     echo -e "\n${C_VALI}--- ROUND $i ---${NC}"
     
-    ARCH_PLAN=$(query_agent 3 4 "$C_ARCH" "ARCHITECT" "$CURRENT_PROMPT")
-    WORKER_OUT=$(query_agent 5 6 "$C_WORK" "WORKER" "Requirements: $ARCH_PLAN. Output code in \` \` \` blocks.")
+    ARCH_PLAN=$(query_agent 3 4 "$C_ARCH" "ARCHITECT" "${ARCHITECT_INIT} $CURRENT_PROMPT")
+    ARCHITECT_INIT=
+    WORKER_OUT=$(query_agent 5 6 "$C_WORK" "WORKER" "${WORKER_INIT} Requirements: $ARCH_PLAN. Output code in \` \` \` blocks.")
+    WORKER_INIT=
 
     # VALIDATION STEP (Linter)
     echo -e "${C_VALI}VALIDATOR: Running Shellcheck...${NC}"
@@ -113,7 +115,8 @@ for i in {1..3}; do
     fi
 
     # CRITIC STEP (Human-like Review)
-    CRITIC_OUT=$(query_agent 7 8 "$C_CRIT" "CRITIC" "The code passed the linter. Review it for logic and safety: $WORKER_OUT")
+    CRITIC_OUT=$(query_agent 7 8 "$C_CRIT" "CRITIC" "${CRITIC_INIT} The code passed the linter. Review it for logic and safety: $WORKER_OUT")
+    CRITIC_INIT=
 
     if [[ "$CRITIC_OUT" == *"APPROVED"* ]]; then
         echo -e "\n${C_ARCH}SYSTEM: Target achieved.${NC}"
@@ -129,7 +132,6 @@ query_agent 7 8 "$C_CRIT" "CRITIC" '!done'
 rm -f "/tmp/ruchat_architect_in" "/tmp/ruchat_architect_out"
 rm -f "/tmp/ruchat_worker_in" "/tmp/ruchat_worker_out"
 rm -f "/tmp/ruchat_critic_in" "/tmp/ruchat_critic_out"
-sleep 2
 
 target/release/ruchat pipe -m "${MODELS[4]}" -o '{"temperature": 0.0}'  < "/tmp/ruchat_summarizer_in"> "/tmp/ruchat_summarizer_out" &
 exec 11>"/tmp/ruchat_summarizer_in" 12<"/tmp/ruchat_summarizer_out"
@@ -137,3 +139,6 @@ exec 11>"/tmp/ruchat_summarizer_in" 12<"/tmp/ruchat_summarizer_out"
 # 4. Final Summarization
 echo -e "\n${C_SUMM}SYSTEM: Generating final documentation...${NC}"
 query_agent 11 12 "$C_SUMM" "SUMMARIZER" "You are a Technical Writer. Your job is to create clean, professional documentation based on a chat log. Focus on the final result. Summarize this into a README.md: $(cat "$HISTORY_FILE")"
+
+query_agent 11 12 "$C_SUMM" "SUMMARIZER" '!done'
+rm -f "/tmp/ruchat_summarizer_in" "/tmp/ruchat_summarizer_out"
