@@ -33,12 +33,13 @@ for agent in "${AGENTS[@]}"; do
     mkfifo "/tmp/ruchat_${agent}_in" "/tmp/ruchat_${agent}_out"
 done
 
-MODELS=("qwen3:latest" "deepseek-coder:latest" "qwen3:latest" "mistral-nemo:latest")
+MODEL=("qwen3:latest" "deepseek-coder:latest" "qwen3:latest" "mistral-nemo:latest")
+TEMPERATURE=("0.0" "0.7" "0.0" "0.0")
 
 # Start Instances
-target/release/ruchat pipe -m "${MODELS[0]}" -o '{"temperature": 0.0}'  < "/tmp/ruchat_architect_in" > "/tmp/ruchat_architect_out" &
-target/release/ruchat pipe -m "${MODELS[1]}" -o '{"temperature": 0.7}'  < "/tmp/ruchat_worker_in"    > "/tmp/ruchat_worker_out" &
-target/release/ruchat pipe -m "${MODELS[2]}" -o '{"temperature": 0.0}'  < "/tmp/ruchat_critic_in"    > "/tmp/ruchat_critic_out" &
+target/release/ruchat pipe -m "${MODEL[0]}" -o "{\"temperature\": ${TEMPERATURE[0]}}"  < "/tmp/ruchat_architect_in" > "/tmp/ruchat_architect_out" &
+target/release/ruchat pipe -m "${MODEL[1]}" -o "{\"temperature\": ${TEMPERATURE[1]}}"  < "/tmp/ruchat_worker_in"    > "/tmp/ruchat_worker_out" &
+target/release/ruchat pipe -m "${MODEL[2]}" -o "{\"temperature\": ${TEMPERATURE[2]}}"  < "/tmp/ruchat_critic_in"    > "/tmp/ruchat_critic_out" &
 
 # Open FDs
 exec 3>"/tmp/ruchat_architect_in"  4<"/tmp/ruchat_architect_out"
@@ -99,7 +100,7 @@ rm -f "/tmp/ruchat_architect_in" "/tmp/ruchat_architect_out"
 rm -f "/tmp/ruchat_worker_in" "/tmp/ruchat_worker_out"
 rm -f "/tmp/ruchat_critic_in" "/tmp/ruchat_critic_out"
 
-target/release/ruchat pipe -m "${MODELS[3]}" -o '{"temperature": 0.0}'  < "/tmp/ruchat_summarizer_in"> "/tmp/ruchat_summarizer_out" &
+target/release/ruchat pipe -m "${MODEL[3]}" -o "{\"temperature\": ${TEMPERATURE[3]}}"  < "/tmp/ruchat_summarizer_in"> "/tmp/ruchat_summarizer_out" &
 exec 9>"/tmp/ruchat_summarizer_in" 10<"/tmp/ruchat_summarizer_out"
 
 # 4. Final Summarization
