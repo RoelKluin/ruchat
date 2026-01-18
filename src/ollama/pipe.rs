@@ -3,7 +3,7 @@ use crate::io::Io;
 use crate::ollama::model::get_name;
 use crate::options::get_options;
 use clap::Parser;
-use ollama_rs::{generation::completion::request::GenerationRequest, Ollama};
+use ollama_rs::{generation::completion::request::GenerationRequest, models::ModelOptions, Ollama};
 use tokio_stream::StreamExt;
 
 const DEFAULT_MODEL: &str = "qwen2.5vl:latest";
@@ -29,6 +29,36 @@ pub struct PipeArgs {
     /// Silent mode: suppresses output if set to true.
     #[arg(short, long, default_value_t = false)]
     silent: bool,
+}
+
+// Reusable generation logic for Agents
+pub async fn generate_oneshot(
+    ollama: &Ollama,
+    model: &str,
+    prompt: &str,
+    options: Option<ModelOptions>,
+) -> Result<String> {
+    // Resolve model name if strictly needed, or trust the Agent's config
+    // For safety, we verify the model exists or use default if empty, similar to pipe
+    let model_name = if model.is_empty() {
+        DEFAULT_MODEL.to_string()
+    } else {
+        model.to_string()
+    };
+
+    let request =
+        GenerationRequest::new(model_name, prompt.to_string()).options(options.unwrap_or_default());
+
+    // We collect the stream here because agents need the full context for post-processing
+    let mut stream = ollama.generate_stream(request).await?;
+    let mut buffer = String::new();
+
+    while let Some(responses) = stream.next().await.transpose()? {
+        for resp in responses {
+            buffer.push_str(&resp.response);
+        }
+    }
+    Ok(buffer)
 }
 
 /// The pipe command handles prompted questions with context using a model.

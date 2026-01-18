@@ -1,3 +1,4 @@
+use crate::agent::manager::{Manager, ManagerArgs};
 use crate::chroma::delete::{chroma_delete, ChromaDeleteArgs};
 use crate::chroma::ls::{chroma_ls, ChromaLsArgs};
 use crate::chroma::query::{query, QueryArgs};
@@ -56,6 +57,9 @@ impl Args {
             Commands::Similarity(similarity_args) => similarity_search(similarity_args).await?,
             Commands::ChromaLs(chroma_ls_args) => chroma_ls(chroma_ls_args).await?,
             Commands::ChromaDelete(chroma_delete_args) => chroma_delete(chroma_delete_args).await?,
+            Commands::Manager(manager_args) => {
+                Manager::execute_command(self.init()?, manager_args).await?
+            }
         }
         Ok(())
     }
@@ -103,6 +107,8 @@ pub enum Commands {
     ChromaLs(ChromaLsArgs),
     /// Delete Chroma database collections or entries.
     ChromaDelete(ChromaDeleteArgs),
+    /// Manage agents.
+    Manager(ManagerArgs),
 }
 
 #[cfg(test)]

@@ -1,5 +1,7 @@
+pub mod agent;
 pub mod args;
 pub mod chroma;
+pub(crate) mod config;
 pub mod embed;
 pub mod error;
 pub(crate) mod io;
