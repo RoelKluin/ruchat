@@ -65,7 +65,7 @@ pub(crate) async fn similarity_search(args: &SimilarityArgs) -> Result<(), RuCha
         operator: DocumentOperator::Contains,
         pattern: args.query.clone(),
     }));
-    args.metadata.as_ref().map(|md| {
+    if let Some(md) = args.metadata.as_ref() {
         md.split(',').for_each(|s| {
             if let Some((k, v)) = s.split_once(':') {
                 children.push(Where::Metadata(MetadataExpression {
@@ -77,7 +77,7 @@ pub(crate) async fn similarity_search(args: &SimilarityArgs) -> Result<(), RuCha
                 }))
             }
         });
-    });
+    }
     let children = vec![Where::Composite(CompositeExpression {
         operator: BooleanOperator::And,
         children,

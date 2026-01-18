@@ -82,7 +82,6 @@ fn get_metadata(arg_metadata: &Option<String>) -> Result<Option<Metadata>, RuCha
 /// # Returns
 ///
 /// A `Result` containing an optional map of metadata or a `RuChatError`.
-
 fn get_update_metadata(
     arg_metadata: &Option<String>,
 ) -> Result<Option<Vec<Option<UpdateMetadata>>>, RuChatError> {

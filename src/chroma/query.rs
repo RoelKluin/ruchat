@@ -81,7 +81,7 @@ pub(crate) async fn query(ollama: Ollama, args: &QueryArgs) -> Result<(), RuChat
         operator: DocumentOperator::Contains,
         pattern: args.query.clone(),
     }));
-    args.metadata.as_ref().map(|md| {
+    if let Some(md) = args.metadata.as_ref() {
         md.split(',').for_each(|s| {
             if let Some((k, v)) = s.split_once(':') {
                 children.push(Where::Metadata(MetadataExpression {
@@ -93,7 +93,7 @@ pub(crate) async fn query(ollama: Ollama, args: &QueryArgs) -> Result<(), RuChat
                 }))
             }
         });
-    });
+    }
     let children = vec![Where::Composite(CompositeExpression {
         operator: BooleanOperator::And,
         children,
