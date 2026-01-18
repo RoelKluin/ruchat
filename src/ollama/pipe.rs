@@ -1,4 +1,4 @@
-use crate::error::{Result,RuChatError};
+use crate::error::{Result, RuChatError};
 use crate::io::Io;
 use crate::ollama::model::get_name;
 use crate::options::get_options;
@@ -46,67 +46,29 @@ pub struct PipeArgs {
 /// A `Result` indicating success or failure.
 pub(crate) async fn pipe(ollama: Ollama, args: &PipeArgs) -> Result<()> {
     let mut cio = Io::new();
-    let mut done = false;
-    let mut options = get_options(args.options.as_deref()).await?;
-    let mut model_name = match args.model.as_deref().or(args.positional_model.as_deref()) {
+    let options = get_options(args.options.as_deref()).await?;
+
+    // Determine the initial model name
+    let model_name = match args.model.as_deref().or(args.positional_model.as_deref()) {
         Some(model) if !model.is_empty() => get_name(&ollama, model).await?,
         _ => DEFAULT_MODEL.to_string(),
     };
 
-    while !done {
-        if !args.silent {
-            cio.write_error_line("***\n").await?;
-        }
-        let mut prompt = String::new();
-        while let Ok(line) = cio.read_line().await {
-            match line.as_str() {
-                "---" | "***" | "___" => break,
-                _ => {
-                    if line == "!done" {
-                        done = true;
-                        break;
-                    }
-                    if let Some(new_model) = line.strip_prefix("!model: ") {
-                        if !args.silent {
-                            cio.write_error_line(&format!(
-                                "[Switching model to {}]\n",
-                                new_model.trim()
-                            ))
-                            .await?;
-                        }
-                        model_name = get_name(&ollama, new_model.trim()).await?;
-                    } else if let Some(new_options) = line.strip_prefix("!option: ") {
-                        options = get_options(Some(new_options.trim())).await?;
-                        if !args.silent {
-                            cio.write_error_line("[Updated generation options]\n")
-                                .await?;
-                        }
-                    } else if !line.starts_with("!!") {
-                        // or comment
-                        prompt.push_str(&line);
-                    }
-                }
-            }
-        }
-        if model_name.is_empty() {
-            return Err(RuChatError::NoModelSpecified);
-        }
-        if prompt.is_empty() {
-            //done = true;
+    let mut prompt = String::new();
+    while let Ok(line) = cio.read_line().await {
+        if line == "---" {
+            break;
         } else {
-            if !args.silent {
-                cio.write_error_line(&format!("> {prompt}\n---\n")).await?;
+            prompt.push_str(&line);
+        }
+    }
+    if !prompt.is_empty() {
+        let request = GenerationRequest::new(model_name, prompt).options(options.clone());
+        let mut stream = ollama.generate_stream(request).await?;
+        while let Some(responses) = stream.next().await.transpose()? {
+            for resp in responses {
+                cio.write_line(&resp.response).await?;
             }
-            let request =
-                GenerationRequest::new(model_name.clone(), prompt).options(options.clone());
-            let mut stream = ollama.generate_stream(request).await?;
-            while let Some(res) = stream.next().await {
-                let responses = res?;
-                for resp in responses {
-                    cio.write_line(&resp.response).await?;
-                }
-            }
-            cio.write_line("\n---\n").await?;
         }
     }
     Ok(())
