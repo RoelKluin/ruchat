@@ -1,34 +1,26 @@
 # Ruchat
 
-Ruchat is a command-line AI chat tool that uses `ollama` and `chroma`. It is designed for chat directly from the terminal.
+Ruchat is a command-line AI chat tool that uses `ollama` and `chroma`. It allows you to interact with AI models directly from the terminal.
 
 ## Description
 
-Ruchat is built using Rust and provides a command-line interface for interacting with AI models.
+Ruchat provides a simple and powerful way to engage in conversations or perform various operations with AI models. The project is designed to be ex tensible and flexible, offering multiple subcommands for different use cases.
 
 ## Installation
 
-To install Ruchat, you need to have Rust. You can then clone the repository and build the project:
-
-```bash
-git clone https://github.com/RoelKluin/ruchat.git
-cd ruchat
-cargo build --release
+To install Ruchat and its requirements, see [INSTALL.md].
 ```
 
 ## Usage
 
-After building the project, you can run the Ruchat tool using:
+After building the project, you can run Ruchat the terminal:
 
 ```bash
 ./target/release/ruchat
 ```
 
-You can pass various command-line arguments to customize the behavior of the chat tool. For more details, refer to the help command:
+For more information on availavle subcommands and options, you can use the help command:
 
-```bash
-./target/release/ruchat --help
-```
 
 ### Subcommands
 
@@ -47,7 +39,7 @@ You can pass various command-line arguments to customize the behavior of the cha
 
 ## Contributing
 
-Contributions are welcome! Please fork the repository and submit a pull request for any improvements or bug fixes.
+Contributions are welcome! If you want to contribute, please fork the repository and submit a pull request. Any improvements or bug fixes are great ly appreciated!
 
 ## License
 
