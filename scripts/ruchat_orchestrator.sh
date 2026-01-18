@@ -3,9 +3,7 @@
 # Dynamic AI Agent Orchestrator for Ruchat/Ollama
 
 # example:
-# bash scripts/ruchat_orchestrator.sh meta-gen --debug
-# enter:
-# Generate a commandline to improve scripts/ruchat_orchestrator.sh
+# ./scripts/ruchat_orchestrator.sh meta-gen "Generate a commandline to improve scripts/ruchat_orchestrator.sh"
 
 # Summary of Session JSON structure:
 #{
@@ -26,7 +24,7 @@
 set -euo pipefail
 
 # --- Configuration & Defaults ---
-ITERATIONS=3
+ITERATIONS=4
 TEMP_WORKER=0.7
 TEMP_STRICT=0.0
 RUCHAT_BIN="target/release/ruchat"
@@ -37,10 +35,10 @@ STRICT_FORMAT="Requirement: Output raw data or code blocks only. No polite fille
 # --- Colors ---
 C_ARCH='\033[1;32m' C_WORK='\033[1;34m' C_VALI='\033[1;33m'
 C_CRIT='\033[1;31m' C_SUMM='\033[1;35m' NC='\033[0m'
-
-usage_text() {
+C_PERF='\033[1;94m'
+usage() {
     cat <<EOF
-Usage: $0 <task> [options]
+Usage: $0 <task> [options] [goal]
 
 Core Meta-Tasks:
   meta-gen             Interpret natural language to generate orchestrator commands.
@@ -100,7 +98,7 @@ Options:
   --commit <hash>      Specific Git revision to analyze or bisect.
   --crate <name>       Target specific crate in a workspace.
   --doc-type <type>    Format of documentation (md, html, etc.).
-  --explain <text>     Brief description of the specific goal.
+  --explain <text>     The topic to explain in documentation tasks.
   -m <role:model>      Override default model for a specific agent role.
   -i <iterations>      Maximum number of loops (default 5).
   -t <temp>            LLM temperature (0.0 for logic, 0.7 for chaos).
@@ -109,13 +107,13 @@ Options:
   --resume <name>      Reload state and history from a previous session.
   --keep-chatter       Disable 'strip_chatter' (useful for debugging agent prose).
   --debug              Enable verbose logging of pipe communication.
-EOF
-}
 
-# --- Help Menu ---
-usage() {
-    usage_text
-    exit 1
+Goal:
+  A natural language description of the user's objective.
+  either specified as the last argument or via --subject.
+EOF
+  [[ -n "${1:-}" ]] && echo -e "${C_CRIT}ERROR: $1${NC}"
+  [[ -n "${2:-}" ]] && exit "$2"
 }
 
 # Define default role-to-model mapping
@@ -135,11 +133,12 @@ TARGET_CRATE=""
 DOC_TYPE="README.md"
 EXPLAIN_SUBJECT=""
 TASK_TYPE=""
-SUBJECT=""
+USER_GOAL=""
 SAVE_MODE=false
 RESUME_MODE=false
-SESSION_NAME=""
+SESSION_NAME="auto_save_$(date +%s)}"
 DEBUG=false
+ONBOARD=""
 
 # Function to parse model argument
 parse_model_arg() {
@@ -154,7 +153,9 @@ parse_model_arg() {
 }
 
 # --- Argument Parsing ---
-[ $# -lt 1 ] && usage
+[ $# -lt 1 ] && usage "No task specified." 1
+TASK_TYPE="$1"
+shift
 
 # Main Argument Loop Update
 while [[ $# -gt 0 ]]; do
@@ -172,11 +173,35 @@ while [[ $# -gt 0 ]]; do
         --save) SAVE_MODE=true; SESSION_NAME="$2"; shift 2 ;;
         --resume) RESUME_MODE=true; SESSION_NAME="$2"; shift 2 ;;
         --debug) DEBUG=true; set -x; shift ;;
-        --subject) SUBJECT="$2"; echo "User Goal: $SUBJECT"; shift 2 ;;
-        *) TASK_TYPE="$1"; shift ;;
+        --subject) USER_GOAL="${2%.}."; echo "User Goal: $USER_GOAL"; shift 2 ;;
+        *) [ -z "${USER_GOAL}" ] && USER_GOAL="${1%.}." || 
+        TASK_TYPE="$1"; shift ;;
     esac
 done
 
+# Cleanup function to close pipes and remove FIFOs
+KEEP_ALIVE="${KEEP_ALIVE:-}"
+AGENTS=("architect" "worker" "validator" "critic" "summarizer" "critic_perf" "chaos")
+cleanup() {
+    if [[ -n "$KEEP_ALIVE" ]]; then
+        return
+    fi
+    for a in "${AGENTS[@]}"; do
+        # 1. Use indirect expansion to get the FD value safely
+        local varname="FD_${a^^}_IN"
+        local fd="${!varname:-}"
+
+        # 2. Check if the FD is set and refers to an open file descriptor
+        if [[ -n "$fd" ]]; then
+            # We use >&"$fd" to specify the exact file descriptor
+            # and move the 2>/dev/null to the end of the command
+            printf "\n---\n" >&"$fd" || true
+        fi
+
+        # 3. Remove the named pipes
+        rm -f "/tmp/ruchat_${a}_in" "/tmp/ruchat_${a}_out" 2>/dev/null || true
+    done
+}
 # --- Dynamic Role Engine ---
 CHAOS_MODE=false
 DUO_MODE=false
@@ -427,7 +452,18 @@ case "$TASK_TYPE" in
         WORKER_INIT="Automation Specialist. Write a bash script that runs 'strip_chatter' against these examples and checks if the output matches the expected 'pure code'."
         CRITIC_INIT="QA Lead. Ensure the script handles edge cases and various formatting styles."
         LOOP_TYPE="VALIDATED"; VAL_CMD="bash" ;;
-    *) usage ;;
+    onboard)
+        # Gather structural metadata
+        REPO_TREE=$(tree --charset=ascii --gitignore -P '*.rs|*.sh|*.md' -I 'target|.git')
+        CRATE_DEPS=$(cargo metadata --format-version 1 | jq -r '.packages[0].dependencies[].name' | head -n 20)
+
+        GIT_LOG_SUMMARY=$(git log -n 30 --pretty=short |git shortlog)
+        # ctags: the TOML parser is broken.
+        TOP_SYMBOLS=$(ctags -x --languages=Rust,sh,-TOML,-Cargo --sort=yes $(git ls-files | grep -E '\.(sh|rs)$') | 
+        grep -Pv '(test[s_]|[ \t](field|method)[ \t])' | head -n 50)
+        ONBOARD="Structure:\n$REPO_TREE\n\nDependencies:\n$CRATE_DEPS\n\nSymbols:\n$TOP_SYMBOLS"
+        ;;
+    *) usage "Unknown task type: $TASK_TYPE" 1 ;;
 esac
 case "$TASK_TYPE" in
     git-ops|git-pr-apply|git-bisect-autofix)
@@ -509,48 +545,68 @@ estimate_costs() {
         exit 0
     fi
 }
+if [[ ! -f "tags" ]] && command -v ctags &> /dev/null; then
+    echo -e "${C_SUMM}SYSTEM: Generating symbol map (ctags)...${NC}"
+    # Generate tags for Rust, ignoring target and hidden dirs
+    ctags -R --languages=Rust,sh,-TOML,-Cargo --exclude=target --exclude=.git . 2>/dev/null &
+fi
+
+# --- Initialization Phase ---
+if [[ -z "$TARGET_FILE" && "$TASK_TYPE" != "meta-gen" ]]; then
+    echo -e "${C_SUMM}SYSTEM: No target file provided. Discovering context...${NC}"
+    DISCOVERED_FILES=$(discover_relevant_files "$SUBJECT")
+    
+    if [[ -z "$DISCOVERED_FILES" ]]; then
+        echo -e "${C_CRIT}WARNING: No relevant files found in repository.${NC}"
+    else
+        echo -e "${C_VALI}FOUND CONTEXT:${NC}\n$DISCOVERED_FILES"
+    fi
+fi
+
 # estimate tokens and cost in dry-run mode, optionally exit before execution
 if [[ "$DRY_RUN" == "true" ]]; then
     estimate_costs
 fi
 
-AGENTS=("architect" "worker" "validator" "critic" "summarizer" "critic_perf" "chaos")
-cleanup() {
-    for a in "${AGENTS[@]}"; do
-        # 1. Use indirect expansion to get the FD value safely
-        local varname="FD_${a^^}_IN"
-        local fd="${!varname:-}"
-
-        # 2. Check if the FD is set and refers to an open file descriptor
-        if [[ -n "$fd" ]]; then
-            # We use >&"$fd" to specify the exact file descriptor
-            # and move the 2>/dev/null to the end of the command
-            printf "!done\n---\n" >&"$fd" || true
-        fi
-
-        # 3. Remove the named pipes
-        rm -f "/tmp/ruchat_${a}_in" "/tmp/ruchat_${a}_out" 2>/dev/null || true
-    done
-}
 trap cleanup EXIT
 
 cleanup # Ensure no stale pipes exist
+
+if [[ -n "${ONBOARD:-}" ]]; then
+        # Test that target file does not yet exist
+        [[ -z "${TARGET_FILE:-}" ]] && usage "Onboard task requires --file <path> to specify an output." 1
+        if [[ -f "${TARGET_FILE:-}" ]]; then
+            usage "Onboard task requires a non-existent target file to avoid overwriting." 1
+        fi
+
+        # Initialize Summarizer Agent FDs
+        mkfifo /tmp/ruchat_summarizer_in /tmp/ruchat_summarizer_out
+        exec {FD_SUMM_IN}>/tmp/ruchat_summarizer_in {FD_SUMM_OUT}</tmp/ruchat_summarizer_out
+        $RUCHAT_BIN pipe -m "${MODELS[summarizer]}" -o "{\"temperature\": $TEMP_STRICT }" < /tmp/ruchat_summarizer_in > /tmp/ruchat_summarizer_out &
+        # 3. Query the Summarizer
+        ONBOARD_RES=$(query_agent "$FD_SUMM_IN" "$FD_SUMM_OUT" "$C_SUMM" "ONBOARDER" "${USER_GOAL}${ONBOARD}")
+        printf "\n---\n" >&"$FD_SUMM_IN" || true
+             
+        echo -e "$ONBOARD_RES" > "${TARGET_FILE}"
+        echo -e "${C_VALI}SUCCESS: Created result file ${TARGET_FILE}${NC}"
+        cleanup
+        exit 0
+fi
 for agent in "${AGENTS[@]}"; do
     mkfifo "/tmp/ruchat_${agent}_in" "/tmp/ruchat_${agent}_out"
 done
 
-
 # Start Ruchat Pipes
 $RUCHAT_BIN pipe -m "${MODELS[architect]}" -o "{\"temperature\": $TEMP_STRICT}" < /tmp/ruchat_architect_in > /tmp/ruchat_architect_out &
 $RUCHAT_BIN pipe -m "${MODELS[worker]}" -o "{\"temperature\": $TEMP_WORKER}" < /tmp/ruchat_worker_in > /tmp/ruchat_worker_out &
-[ "$LOOP_TYPE" = "VALIDATED" ] && \
+[[ "$LOOP_TYPE" = "VALIDATED" ]] && \
   $RUCHAT_BIN pipe -m "${MODELS[validator]}" -o "{\"temperature\": $TEMP_STRICT}" < /tmp/ruchat_validator_in > /tmp/ruchat_validator_out &
 $RUCHAT_BIN pipe -m "${MODELS[critic]}" -o "{\"temperature\": $TEMP_STRICT}" < /tmp/ruchat_critic_in > /tmp/ruchat_critic_out &
-[ "$STRIP_CHATTER" = true ] && \
+[[ "$STRIP_CHATTER" = true ]] && \
   $RUCHAT_BIN pipe -m "${MODELS[summarizer]}" -o '{"temperature": 0.0}' < /tmp/ruchat_summarizer_in > /tmp/ruchat_summarizer_out &
-[ "$DUO_MODE" = true ] && \
+[[ "$DUO_MODE" = true ]] && \
   $RUCHAT_BIN pipe -m "${MODELS[critic_perf]}" -o '{"temperature": 0.0}' < /tmp/ruchat_critic_perf_in > /tmp/ruchat_critic_perf_out &
-[ "$CHAOS_MODE" = true ] && \
+[[ "$CHAOS_MODE" = true ]] && \
   $RUCHAT_BIN pipe -m "${MODELS[chaos]:-mistral}" -o '{"temperature": 1.0}' < /tmp/ruchat_chaos_in > /tmp/ruchat_chaos_out &
 
 # Infrastructure: Add the second Critic pipe
@@ -579,7 +635,118 @@ if [ "$CHAOS_MODE" = true ]; then
     exec {FD_CHAOS_IN}>/tmp/ruchat_chaos_in {FD_CHAOS_OUT}</tmp/ruchat_chaos_out
 fi
 
+# --- Git Helper Functions ---
+query_git_context() {
+    local commit="$1"
+    git show --abbrev-commit --stat -p -U1 "$commit"
+}
+list_commit_hashes_for_file() {
+    local file="$1"
+    git log --pretty="%H" -- "$file"
+}
+list_files_in_commit() {
+    local commit="$1"
+    git diff-tree --no-commit-id --name-only "$commit" -r
+}
+list_associated_files() {
+    local target_file="$1"
+    local count="${2:-15}"
+    local associated_files=""
+
+    # 1. Files changed in the same commits as the target file
+    while read -r commit; do
+        associated_files+=" "$(list_files_in_commit "$commit")
+    done < <(list_commit_hashes_for_file "$target_file")
+
+    # 2. Deduplicate and return
+    echo "$associated_files" | tr ' ' '\n' | sort -u | grep -v "^$target_file$" | head -n "$count"
+}
+sorted_files_on_change() {
+    while read -r FILE; do
+        git log --pretty="%ad $FILE" --date=iso8601-strict -1 -- "$FILE"
+    done < <( git ls-files ) | sort | cut -f 2 -d " "
+}
+# reads file paths from stdin and outputs a tree structure
+treeify() {
+    tree --charset=ascii --fromfile /dev/stdin
+}
+relevant_crates_for_files() {
+    local count="${1:-20}"
+    # 1. Extract crate names from 'extern crate' and 'use' statements
+    set +e
+    grep '\.rs$' | xargs head -n "$count" | sed -r -n '/ crate::/b;s/^(extern crate |use )([a-zA-Z0-9_]+).*/\2/p' | sort -u
+    set -e
+}
+top_symbols_for_files() {
+    local count="${1:-50}"
+    grep -E '\.(rs|sh)$' | xargs ctags -x --languages=Rust,sh,-TOML,-Cargo --sort=yes | \
+    grep -Pv '(test[s_]|[ \t](field|method)[ \t])' | head -n "$count"
+}
+git_log_summary_for_files() {
+    local files=("$@")
+    local count="${2:-30}"
+    git log -n "$count" --pretty=short -- "${files[@]}" | git shortlog
+}
+get_target_file_metadata() {
+    local f="$0"
+    [[ ! -f "$f" ]] && return
+
+    echo -e "\n[METADATA: $f]"
+    
+    # 0. Temporal Coupling (What else changes with this file?)
+    local associated; associated=$(list_associated_files "$f" 4)
+    [[ -n "$associated" ]] && echo -e "Temporally Associated Files:\n$associated"
+
+    # 1. Crate Dependencies (What external logic does this file rely on?)
+    local deps; deps=$(echo "$f" | relevant_crates_for_files 9)
+    [[ -n "$deps" ]] && echo -e "Detected Dependencies: $deps"
+
+    # 2. Structural Symbols (High-level API surface)
+    if [[ $f =~ \.md$ ]]; then
+        # ctags does not support TOML well; skip for markdown files
+        echo -e "Skipping Key Symbols for $f (Markdown file)." 1>&2
+    else
+        echo -e "Key Symbols in $f:"
+        echo "$f" | top_symbols_for_files 14
+    fi
+
+    # 3. Git History Summary (Recent churn and context)
+    echo -e "Recent History Summary:"
+    git_log_summary_for_files "$f" 2
+}
+
 # --- Helper Functions ---
+discover_relevant_files() {
+    local subject="${1:-}"
+    local files=""
+
+    # 1. Base: Modified & Recent files
+    local base_files
+    base_files=$(git status --porcelain | awk '{print $2}')
+    base_files+=" "$(git log -n 2 --pretty=format: --name-only)
+
+    # 2. Structural: Use ctags to find where symbols in base_files are defined
+    if [[ -f "tags" ]]; then
+        for f in $base_files; do
+            # Extract high-signal keywords (Structs, Enums, Traits) from the base file
+            local symbols
+            symbols=$(grep -E "(struct|enum|trait) " "$f" 2>/dev/null | awk '{print $2}' | tr -d '[:punct:]')
+            
+            for sym in $symbols; do
+                # Find the file where this symbol is defined
+                local def_file
+                def_file=$(awk -v s="$sym" '$1 == s {print $2}' tags | head -n 1)
+                [[ -n "$def_file" && -f "$def_file" ]] && files+=" $def_file"
+            done
+        done
+    fi
+
+    # 3. Keyword: ripgrep for the subject
+    [[ -n "$subject" ]] && files+=" "$(rg -l --max-count 1 "$subject" | head -n 3)
+
+    # Deduplicate and return
+    echo "$base_files $files" | tr ' ' '\n' | sort -u | grep -v '^$' | head -n 8
+}
 maintain_context_efficiency() {
     local history_size
     history_size=$(wc -c < "$HISTORY_FILE")
@@ -615,6 +782,87 @@ strip_chatter() {
         echo "$input" | sed -E '1,3s/^(Certainly|Sure|Okay|Here is|Based on).*[.:]//gI' | \
                         sed -E '/(If you need|Hope this|Let me know)/d'
     fi
+}
+run_ripple_validation() {
+    local primary_file="$1"
+    local val_cmd="$2"
+    local report=""
+
+    # 1. Primary Check
+    echo -ne "${C_VALI}VALIDATING PRIMARY: $primary_file... "
+    set +e
+    KEEP_ALIVE=true
+    V_RES=$(eval "$val_cmd" 2>&1)
+    V_EXIT=$?
+    KEEP_ALIVE=false
+    set -e
+    if [[ $V_EXIT -eq 0 ]]; then
+        echo -e "PASSED${NC}" 1>&2
+        report+="[Primary: $primary_file Passed]\n"
+    else
+        # --- POST-MORTEM BRANCH ---
+        # Detect Segfaults or Panics (Exit codes 139, 134, or specific strings)
+        if [[ $V_EXIT -eq 139 || "$V_LOG" == *"panic"* || "$V_LOG" == *"segfault"* ]]; then
+             echo -e "${C_CRIT}CRASH DETECTED. Extracting Post-Mortem...${NC}" 1>&2
+             
+             # Automatic GDB backtrace for the last binary run
+             # (Assumes we are debugging 'target/debug/app')
+             gdb -ex "set logging on gdb.log" -ex "run" -ex "bt" -ex "quit" ./target/debug/app &>/dev/null
+             
+             # Use Smart Validator to explain the crash
+             CURRENT_PROMPT=$(query_agent "$FD_VALI_IN" "$FD_VALI_OUT" "$C_VALI" "VALIDATOR" \
+                "Binary crashed (Code $V_EXIT). Analysis of log and GDB backtrace: \n$V_LOG\n$(cat gdb.log 2>/dev/null)")
+        else
+            # Standard compilation error
+            CURRENT_PROMPT="Validation Failed ($VAL_CMD):\n$V_LOG"
+        fi
+        echo "### VALIDATION FAILURE ###"$'\n'"$CURRENT_PROMPT" >> "$HISTORY_FILE"
+
+        echo -e "FAILED${NC}"
+        echo "$V_RES"
+        return 1
+    fi
+
+    # 2. Coupled Check (Check the 'Neighborhood')
+    local coupled; coupled=$(list_associated_files "$primary_file" 3)
+    if [[ -z "$coupled" ]]; then 
+        report+="[Check Passed: $val_cmd]\n"
+        return 0; 
+    fi
+
+    echo -e "${C_SUMM}CHECKING RIPPLE EFFECTS: $coupled${NC}" 1>&2
+    local passed=true
+    for f in $coupled; do
+        # Check if the coupled file still compiles/tests correctly
+        # We target specific tests if it's a Rust project
+        if [[ "$val_cmd" == *"cargo"* ]]; then
+             local test_cmd="cargo test --file $f"
+             if ! eval "$test_cmd" &>/dev/null; then
+                 report+="[RIPPLE FAILURE: $f might be broken by changes in $primary_file]\n"
+                 echo -e "${C_CRIT}WARNING: Ripple failure in $f${NC}" 1>&2
+                 passed=false
+
+             fi
+        fi
+    done
+    if [[ "$passed" = true ]]; then
+        report+="[Ripple Check Passed: $val_cmd]\n"
+    else
+        local broken_file; broken_file=$(echo "$VAL_REPORT" | grep "RIPPLE FAILURE" | cut -d' ' -f3 | tr -d ']')
+        
+        # Get symbols from the primary and the broken file to find the mismatch
+        local context_update="Regression detected in $broken_file.\n"
+        [[ $TARGET_FILE =~ \.md$ ]] ||
+            context_update+="Symbols in $TARGET_FILE:\n$(echo "$TARGET_FILE" | top_symbols_for_files 10)\n"
+        [[ $broken_file =~ \.md$ ]] ||
+            context_update+="Symbols in $broken_file:\n$(echo "$broken_file" | top_symbols_for_files 10)\n"
+
+        
+        CURRENT_PROMPT+="\n$context_update\nFix the interface mismatch."
+    fi
+    
+    echo -e "$report"
+    return 0
 }
 
 update_usage_stats() {
@@ -700,7 +948,7 @@ query_agent() {
     # 1. Identity & Meta-Stats
     if [[ "$TASK_TYPE" == "meta-gen" ]]; then
         context+="\n$(get_session_context)\n"
-        context+="\n[CAPABILITIES]\n$(usage_text)\n"
+        context+="\n[CAPABILITIES]\n$(usage)\n"
     fi
 
     # 2. Source Ground-Truth (Mutual Exclusivity Logic)
@@ -710,8 +958,31 @@ query_agent() {
         context+="\n[COMMIT]\n$(git show --abbrev-commit --stat -p -U1 "$TARGET_COMMIT")\n"
     fi
 
-    # Include file content if it's the primary target
-    [[ -f "$TARGET_FILE" ]] && context+="\n[FILE: $TARGET_FILE]\n$(cat "$TARGET_FILE")\n"
+    # --- Target File Enrichment ---
+    if [[ -f "$TARGET_FILE" ]]; then
+        # Inject the specialized Git/Symbol metadata
+        [[ "$TARGET_FILE" == *".md" ]] ||
+            context+="$(get_target_file_metadata "$TARGET_FILE")\n"
+        
+        # Inject full content of the primary file
+        context+="\n[SOURCE: $TARGET_FILE]\n$(cat "$TARGET_FILE")\n"
+    fi
+
+    # Handle Multi-File Context
+    if [[ -n "${DISCOVERED_FILES:-}" ]]; then
+        context+="\n[LOGICAL NEIGHBORHOOD TREE]\n"
+        context+="$(echo "$DISCOVERED_FILES" | treeify)\n"
+
+        for f in $DISCOVERED_FILES; do
+            if [[ "$f" == "$TARGET_FILE" ]]; then
+                context+="\n[PRIMARY FILE: $f]\n$(cat "$f")\n"
+            else
+                context+="\n[REFERENCE FILE: $f]\n$(head -n 50 "$f")\n... (truncated)\n"
+            fi
+        done
+    elif [[ -f "$TARGET_FILE" ]]; then
+        context+="\n[FILE: $TARGET_FILE]\n$(cat "$TARGET_FILE")\n"
+    fi
 
     # 3. Dynamic Tooling Context
     case "$TASK_TYPE" in
@@ -799,12 +1070,11 @@ validate_output() {
 }
 
 # --- Main Logic Engine ---
-if [ "$SUBJECT" == "" ]; then
+if [ "$USER_GOAL" == "" ]; then
   echo -e "${C_SUMM}TASK:${NC} Enter goal for $TASK_TYPE:"
   read -r USER_GOAL
 else
   echo -e "${C_SUMM}TASK:${NC} Using provided goal for $TASK_TYPE."
-  USER_GOAL="$SUBJECT"
 fi
 
 # --- Meta-Agent Dispatcher (exists early and recurses) ---
@@ -889,7 +1159,12 @@ for i in $(seq 1 "$ITERATIONS"); do
     # 4. WORKER: Implementation
     WORKER_OUT=$(query_agent "$FD_WORK_IN" "$FD_WORK_OUT" "$C_WORK" "WORKER" "$WORKER_INIT\nPlan: $PLAN")
     [[ -n "$STRIP_CHATTER" ]] && WORKER_OUT=$(strip_chatter "$WORKER_OUT")
-    WORKER_INIT="System: Continue implementation. Output code blocks only."
+    WORKER_INIT="You are the IMPLEMENTATION AGENT. 
+CONSTRAINTS:
+1. Output RAW CODE BLOCKS or VIM SCRIPTS only.
+2. API STABILITY: Your changes will be tested against 'Associated Files' (temporally coupled modules). 
+3. If you modify a public Struct, Trait, or Function signature, you MUST ensure all coupled files provided in the context are updated or that the change is backward-compatible.
+4. Minimize 'Diff Noise' to keep the validation rounds fast."
 
     # 5. ACTION & VALIDATION (The "Real World" result)
     VAL_REPORT=""
@@ -912,32 +1187,17 @@ for i in $(seq 1 "$ITERATIONS"); do
 
     # Smart Validation (Compiler/Check) with Post-Mortem Analysis
     if [[ "$LOOP_TYPE" == "VALIDATED" ]]; then
-        # Execute the command
-        V_LOG=$(eval "$VAL_CMD" 2>&1)
-        V_EXIT=$?
-
-        if [[ $V_EXIT -ne 0 ]]; then
-            # --- POST-MORTEM BRANCH ---
-            # Detect Segfaults or Panics (Exit codes 139, 134, or specific strings)
-            if [[ $V_EXIT -eq 139 || "$V_LOG" == *"panic"* || "$V_LOG" == *"segfault"* ]]; then
-                 echo -e "${C_CRIT}CRASH DETECTED. Extracting Post-Mortem...${NC}"
-                 
-                 # Automatic GDB backtrace for the last binary run
-                 # (Assumes we are debugging 'target/debug/app')
-                 gdb -ex "set logging on gdb.log" -ex "run" -ex "bt" -ex "quit" ./target/debug/app &>/dev/null
-                 
-                 # Use Smart Validator to explain the crash
-                 CURRENT_PROMPT=$(query_agent "$FD_VALI_IN" "$FD_VALI_OUT" "$C_VALI" "VALIDATOR" \
-                    "Binary crashed (Code $V_EXIT). Analysis of log and GDB backtrace: \n$V_LOG\n$(cat gdb.log 2>/dev/null)")
-            else
-                # Standard compilation error
-                CURRENT_PROMPT="Validation Failed ($VAL_CMD):\n$V_LOG"
-            fi
-            
-            echo "### VALIDATION FAILURE ###"$'\n'"$CURRENT_PROMPT" >> "$HISTORY_FILE"
+        # Pass the primary file and the validation command
+        if ! VAL_REPORT=$(run_ripple_validation "$TARGET_FILE" "$VAL_CMD"); then
+            # If primary fails, extract log and loop back
+            CURRENT_PROMPT="Validation Failed:\n$VAL_REPORT\nAdjust implementation."
             continue
         fi
-        VAL_REPORT+="\n[Validation Passed: $VAL_CMD]"
+        
+        # If primary passed but ripple failed, the Critic gets the report
+        if [[ "$VAL_REPORT" == *"RIPPLE FAILURE"* ]]; then
+            echo -e "${C_CRIT}SYSTEM: Primary passed, but regressions detected in coupled files.${NC}"
+        fi
     fi
     # 6. CRITICISM (Multi-Agent or Single)
     if [[ "${DUO_MODE:-false}" == "true" ]]; then
@@ -973,9 +1233,6 @@ done
 if [[ "$SAVE_MODE" == "true" ]]; then
     # If no name was provided, the function handles timestamping
     save_session "$SESSION_NAME"
-else
-    # Optional: Periodic auto-save to a 'latest' slot
-    save_session "last_interaction_backup"
 fi
 
 # --- Final Summarization ---

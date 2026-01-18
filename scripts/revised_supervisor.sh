@@ -65,14 +65,15 @@ query_agent() {
 }
 
 # send initial system prompts to each agent
-ARCHITECT_INIT="You are a Senior Software Architect. Your job is to turn vague goals into technical specifications. Be concise and use bullet points."
-WORKER_INIT="You are an expert Linux Developer. Provide only clean, commented code without excessive conversational filler."
-CRITIC_INIT="You are a pedantic QA Engineer. Look for security flaws, edge cases, and syntax errors. Do not be polite; be accurate."
+ARCHITECT_INIT="You are a Senior Software Architect. Your job is to turn vague goals into technical specifications. Be concise and use bullet points. "
+WORKER_INIT="You are an expert Linux Developer. Provide only clean, commented code without excessive conversational filler. "
+CRITIC_INIT="You are a pedantic QA Engineer. Look for security flaws, edge cases, and syntax errors. Do not be polite; be accurate. "
 
 # 3. Execution
 USER_GOAL="Design a simple Bash script that monitors CPU usage and alerts if it exceeds 90%."
 echo "USER GOAL: $USER_GOAL" >> "$HISTORY_FILE"
 CURRENT_PROMPT="User Goal: $USER_GOAL Architect, create the technical requirements."
+CRITIC_INSTRUCTION="Review this code. If perfect, say 'APPROVED'. Otherwise, list issues: "
 
 for i in {1..3}; do # Limit to 3 attempts for safety
     ARCH_PLAN=$(query_agent 3 4 "$C_ARCH" "ARCHITECT" "${ARCHITECT_INIT}$CURRENT_PROMPT
@@ -81,7 +82,7 @@ for i in {1..3}; do # Limit to 3 attempts for safety
     WORKER_OUT=$(query_agent 5 6 "$C_WORK" "WORKER" "Requirements: ${WORKER_INIT}$ARCH_PLAN
 ---")
     WORKER_INIT=
-    CRITIC_OUT=$(query_agent 7 8 "$C_CRIT" "CRITIC" "${CRITIC_INIT}Review this code. If perfect, say 'APPROVED'. Otherwise, list issues: $WORKER_OUT
+    CRITIC_OUT=$(query_agent 7 8 "$C_CRIT" "CRITIC" "${CRITIC_INIT}${CRITIC_INSTRUCTION}$WORKER_OUT
 ---")
     CRITIC_INIT=
 
