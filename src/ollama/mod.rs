@@ -6,6 +6,20 @@ pub(crate) mod pipe;
 use crate::args::Args;
 use crate::error::RuChatError;
 use ollama_rs::Ollama;
+use clap::Parser;
+
+#[derive(Parser, Debug, Clone, Default, PartialEq)]
+pub struct OllamaArgs {
+    /// Model to (down)load and use.
+    #[arg(short, long, default_value = "qwen2.5-coder:14b")]
+    pub(crate) model: String,
+
+    /// Path to a JSON file to amend default generation options, or a string
+    /// representing the options in JSON format.
+    #[arg(short, long)]
+    pub(crate) options: Option<String>,
+}
+
 
 /// Initializes a connection to an Ollama server.
 ///

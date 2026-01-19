@@ -9,6 +9,8 @@ use chroma::ChromaHttpClient;
 use clap::Parser;
 use http::{HeaderName, HeaderValue};
 use std::time::Duration;
+use chroma::types::{Metadata, MetadataValue, UpdateMetadata, UpdateMetadataValue};
+use crate::error::RuChatError;
 
 #[derive(Parser, Debug, Clone, PartialEq)]
 pub struct ChromaClientConfigArgs {
@@ -30,6 +32,21 @@ pub struct ChromaClientConfigArgs {
     pub chroma_database: Option<String>,
 }
 
+impl ChromaClientConfigArgs {
+    pub fn get_client_config(&self) -> ChromaClientConfigArgs {
+        ChromaClientConfigArgs {
+            chroma_server: self.chroma_server.clone(),
+            chroma_token: self.chroma_token.clone(),
+            max_retries: self.max_retries,
+            min_delay: self.min_delay,
+            max_delay: self.max_delay,
+            jitter: self.jitter,
+            tenant_id: self.tenant_id.clone(),
+            chroma_database: self.chroma_database.clone(),
+        }
+    }
+}
+
 /// Access a running Chroma server to store and retrieve data for embeddings.
 ///
 /// This function creates a client for interacting with a Chroma server. It
@@ -38,23 +55,11 @@ pub struct ChromaClientConfigArgs {
 ///
 /// # Parameters
 ///
-/// - `token`: An optional token for authentication.
-/// - `server`: The URL of the Chroma server.
-/// - `db`: The name of the database to connect to.
+/// - `config`: Configuration arguments for the Chroma client.
 ///
 /// # Returns
 ///
 /// A `Result` containing the `ChromaClient` or an error.
-///
-/// # Example
-///
-/// You can use the following Docker command to run a Chroma database:
-///
-/// ```bash
-/// docker pull chromadb/chroma
-/// # with auth using tokens and persistent storage:
-/// docker run -p 8000:8000 -e chroma_server_auth_credentials_provider="chromadb.auth.token.tokenconfigserverauthcredentialsprovider" -e chroma_server_auth_provider="chromadb.auth.token.tokenauthserverprovider" -e chroma_server_auth_token_transport_header="$(sed -n 1p ~/.chroma_creds.txt)" -e chroma_server_auth_credentials="$(sed -n 2p ~/.chroma_creds.txt)" -v ~/chroma_storage/:/chroma/chroma chromadb/chroma
-/// ```
 pub fn create_client(config: &ChromaClientConfigArgs) -> Result<ChromaHttpClient> {
     if let Some(token) = config.chroma_token.as_ref() {
         Ok(ChromaHttpClient::new(ChromaHttpClientOptions {
@@ -78,14 +83,75 @@ pub fn create_client(config: &ChromaClientConfigArgs) -> Result<ChromaHttpClient
     }
 }
 
+/// Parses metadata from a string of comma-separated key:value pairs.
+///
+/// # Parameters
+///
+/// - `arg_metadata`: An optional string containing metadata.
+///
+/// # Returns
+///
+/// A `Result` containing an optional map of metadata or a `RuChatError`.
+fn get_metadata(arg_metadata: &Option<String>) -> Result<Option<Metadata>, RuChatError> {
+    if arg_metadata.is_none() {
+        return Ok(None);
+    }
+    let mut metadata = Metadata::new();
+    if let Some(md) = arg_metadata {
+        for s in md.split(',') {
+            match s.split_once(':') {
+                Some((k, v)) => {
+                    _ = metadata.insert(k.to_string(), MetadataValue::Str(v.to_string()))
+                }
+                None => return Err(RuChatError::InvalidMetadata(s.to_string())),
+            }
+        }
+    }
+    Ok(Some(metadata))
+}
+
+/// Parses metadata from a string of comma-separated key:value pairs.
+///
+/// # Parameters
+///
+/// - `arg_metadata`: An optional string containing metadata.
+///
+/// # Returns
+///
+/// A `Result` containing an optional map of metadata or a `RuChatError`.
+fn get_update_metadata(
+    arg_metadata: &Option<String>,
+) -> Result<Option<Vec<Option<UpdateMetadata>>>, RuChatError> {
+    if arg_metadata.is_none() {
+        return Ok(None);
+    }
+    let mut metadata = UpdateMetadata::new();
+    if let Some(md) = arg_metadata {
+        for s in md.split(',') {
+            match s.split_once(':') {
+                Some((k, v)) => {
+                    _ = metadata.insert(k.to_string(), UpdateMetadataValue::Str(v.to_string()))
+                }
+                None => return Err(RuChatError::InvalidMetadata(s.to_string())),
+            }
+        }
+    }
+    Ok(Some(vec![Some(metadata)]))
+}
+
 /// Create a collection in the chroma database
 pub async fn get_or_create_chroma_collection(
     client: &ChromaHttpClient,
     collection: &str,
+    args: &ChromaClientConfigArgs,
 ) -> Result<String> {
+    // FIXME: currently no schema or metadata support
+    let collection_schema = None;
+    let collection_metadata = None;
+    let client = create_client(&args.get_client_config())?;
     // Get or create a collection with the given name and no metadata.
     let collection = client
-        .get_or_create_collection(collection, None, None)
+        .get_or_create_collection(collection, collection_schema, collection_metadata)
         .await?;
 
     // Get the UUID of the collection
