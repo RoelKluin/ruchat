@@ -1,5 +1,5 @@
 # Prepare RUCHAT workspace
-mkdir -p ${HOME}/.ruchat/{sessions,logs,bin}
+mkdir -p "${HOME}"/.ruchat/{sessions,logs,bin}
 export PERSIST_DIR="${HOME}/.ruchat/sessions"
 export SESSION_FILE="/tmp/ruchat_session_state.json"
 export HISTORY_FILE="/tmp/ruchat_history.log"

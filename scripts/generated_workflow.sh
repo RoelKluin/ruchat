@@ -22,7 +22,7 @@ Options:
     --crate-name NAME       Target rust crate (default: $CRATE_NAME)
     -h, --help              Show this help
 EOF
-  exit ${2:-0}
+  exit "${2:-0}"
 }
 
 # --- Argument Parsing ---

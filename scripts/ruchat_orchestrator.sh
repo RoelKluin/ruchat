@@ -23,10 +23,10 @@
 
 set -euo pipefail
 
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+
 # --- Configuration & Defaults ---
 ITERATIONS=4
-TEMP_WORKER=0.7
-TEMP_STRICT=0.0
 RUCHAT_BIN="target/release/ruchat"
 HISTORY_FILE="/tmp/ruchat_full_history.log"
 STRIP_CHATTER=true
@@ -36,121 +36,130 @@ STRICT_FORMAT="Requirement: Output raw data or code blocks only. No polite fille
 C_ARCH='\033[1;32m' C_WORK='\033[1;34m' C_VALI='\033[1;33m'
 C_CRIT='\033[1;31m' C_SUMM='\033[1;35m' NC='\033[0m'
 C_PERF='\033[1;94m'
-usage() {
-    cat <<EOF
-Usage: $0 <task> [options] [goal]
 
-Core Meta-Tasks:
-  meta-gen             Interpret natural language to generate orchestrator commands.
-  prompt-opt           Optimize inter-agent prompts for token efficiency/clarity.
-
-Development & Refactoring:
-  rust-refactor        General code improvement and structural changes.
-  rust-algo-optimize   Focus on Big-O, algorithm logic, and performance.
-  rust-fix-loop        Iterative 'cargo check' loop to resolve compilation errors.
-  rust-high-stakes     Mission-critical mode with Safety vs. Perf duo-critic debate.
-  editor-nav           Generate Vim/Ex scripts for automated file editing.
-  stream-edit-suite    Apply complex, multi-file transformations.
-  editor-nav2          Ctags-driven Vim automation for bulk refactoring.
-  bash-refactor        Improve script efficiency, error handling, and POSIX compliance.
-
-Analysis & Optimization:
-  rust-analysis        High-level code review and symbol mapping.
-  rust-deep-analysis   Macro expansion (cargo-expand) and binary size (cargo-bloat).
-  rust-meta-opt        Refine generics and macros to reduce monomorphization bloat.
-  profiling-analysis   Analyze execution bottlenecks and flamegraphs.
-  rust-clippy          Lint-driven code cleanup and idiomatic fixes.
-  rust-explain         Detailed explanation of complex logic or traits.
-  rust-analysis2       Focused ownership and unsafe code auditing.
-
-Dependency Management:
-  rust-crate-expert    Deep integration with a specific crate ecosystem.
-  rust-deps            Suggest and add relevant Cargo dependencies.
-  rust-deps2           Comprehensive crate search and dependency management.
-
-Testing & QA:
-  rust-test            Standard test suite execution and failure analysis.
-  debug-test           Targeted fixing of specific failing test cases.
-  debug-core           Post-mortem analysis of GDB/LLDB backtraces and core dumps.
-  test-sanitizer       Validate LLM output cleaning and regex robustness.
-  chaos-drill          Inject environmental hazards (OOM, Latency) to test resilience.
-  debug-core2          Refined core dump analysis with targeted Vim edits.
-
-Git & Lifecycle:
-  git-commit-gen       Generate clean, descriptive commits from staged changes.
-  git-feature-flow     End-to-end feature branch management.
-  git-pr-lifecycle     Review and apply PR diffs with validation.
-  git-conflict-solver  Mediate and resolve complex merge conflicts.
-  git-bisect-autofix   Automated binary search to find and fix regression culprits.
-  git-history-audit    Review commit history for security or logic regressions.
-  git-ops              General repository maintenance and plumbing.
-  git-feature-flow2    Streamlined feature branch creation and pushing.
-
-Documentation:
-  docs                 Generate standard project documentation.
-  doc-custom           Context-aware README or Rustdoc generation for specific traits.
-  doc-gen              Generate doc comments that compile successfully.  
-  doc-custom2         Enhanced context-aware documentation generation.
-
-Options:
-  --subject <text>     User goal for Artificial Architect.
-  --file <path>        Target source file for analysis or editing.
-  --commit <hash>      Specific Git revision to analyze or bisect.
-  --crate <name>       Target specific crate in a workspace.
-  --doc-type <type>    Format of documentation (md, html, etc.).
-  --explain <text>     The topic to explain in documentation tasks.
-  -m <role:model>      Override default model for a specific agent role.
-  -i <iterations>      Maximum number of loops (default 5).
-  -t <temp>            LLM temperature (0.0 for logic, 0.7 for chaos).
-  --dry-run            Estimate token cost and plan without executing.
-  --save <name>        Persist session state to ~/.ruchat/sessions/<name>.
-  --resume <name>      Reload state and history from a previous session.
-  --keep-chatter       Disable 'strip_chatter' (useful for debugging agent prose).
-  --debug              Enable verbose logging of pipe communication.
-
-Goal:
-  A natural language description of the user's objective.
-  either specified as the last argument or via --subject.
-EOF
-  [[ -n "${1:-}" ]] && echo -e "${C_CRIT}ERROR: $1${NC}"
-  [[ -n "${2:-}" ]] && exit "$2"
-}
+AGENT=("architect" "worker" "validator" "critic" "summarizer" "critic_perf" "chaos")
+SAVE_SESSION="auto_save_$(date +%s)}"
+RESUME_SESSION="$(lst -1t ~/.ruchat/sessions | head -n 1 2>/dev/null || echo "")"
 
 # Define default role-to-model mapping
-declare -A MODELS=(
-    [architect]="qwen2.5:7b"
-    [worker]="deepseek-coder-v2"
-    [validator]="qwen2.5:7b"
-    [critic]="qwen2.5:7b"
-    [summarizer]="mistral-nemo"
-    [critic_perf]="qwen2.5:7b"
-    [chaos]="mistral"
-)
-# New Global State
-TARGET_FILE=""
-TARGET_COMMIT=""
-TARGET_CRATE=""
-DOC_TYPE="README.md"
-EXPLAIN_SUBJECT=""
-TASK_TYPE=""
-USER_GOAL=""
-SAVE_MODE=false
-RESUME_MODE=false
-SESSION_NAME="auto_save_$(date +%s)}"
-DEBUG=false
-ONBOARD=""
+declare -A OPTS=(
+    [architect_model]="qwen2.5:7b"
+    [worker_model]="deepseek-coder-v2"
+    [validator_model]="qwen2.5:7b"
+    [critic_model]="qwen2.5:7b"
+    [summarizer_model]="mistral-nemo"
+    [critic_perf_model]="qwen2.5:7b"
+    [chaos_model]="mistral"
+ 
+    [architect_temp]=0.0
+    [worker_temp]=0.7
+    [validator_temp]=0.0
+    [critic_temp]=0.0
+    [summarizer_temp]=0.0
+    [critic_perf_temp]=0.0
+    [chaos_temp]=1.0
 
-# Function to parse model argument
-parse_model_arg() {
-    local arg="$1"
+    [architect_init]="System: You are the TECHNICAL ARCHITECT AGENT. Your role is to devise a comprehensive technical plan for the WORKER agent to implement. Focus on clarity, structure, and feasibility."
+    [worker_init]="You are the IMPLEMENTATION AGENT. Follow the Architect's plan precisely."
+    [validator_init]="You are the SMART VALIDATOR AGENT. Your role is to validate the WORKER's output against the provided specifications and ensure correctness."
+    [critic_init]="You are the SAFETY CRITIC AGENT. Your role is to review the WORKER's output for safety, security, and best practices."
+    [summarizer_init]="You are the SESSION SUMMARIZER AGENT. Your role is to condense the session history into a concise summary, focusing on key decisions and changes."
+    [critic_perf_init]="System: You are the PERFORMANCE CRITIC AGENT. Your role is to evaluate the WORKER's output for performance optimizations and efficiency improvements."
+    [chaos_init]="System: You are to inject random system constraints to test resilience."
+)
+CRITIC_SAFETY_INIT="Safety Critic. Focus: Memory safety, race conditions, edge-case handling, and error propagation. Be pedantic."
+CRITIC_PERF_INIT="Performance Critic. Focus: Zero-cost abstractions, avoiding heap allocations, Big-O complexity, and cache locality."
+
+# Function to set argument
+parse_opt_arg() {
+    local what="$1"
+    local arg="$2"
     if [[ "$arg" == *":"* ]]; then
         local role="${arg%%:*}"
-        local model="${arg#*:}"
-        MODELS[$role]="$model"
+        local opt="${arg#*:}"
+        OPTS[${role}_${what}]="$opt"
     else
-        MODELS[worker]="$arg"
+        OPTS[worker_${what}]="$arg"
     fi
 }
+
+options() {
+    cat <<EOF 1>&2
+
+Agent Configuration Options:
+    -m, --model "{agent}:{model}"     Specify the model for Agent [worker] (e.g., "${AGENT[1]}:${OPTS[worker_model]}").
+    -T, --temp "{agent}:<value>"      Temperature setting for Agent [worker] model (default: ${AGENT[1]}:${OPTS[worker_temp]}).
+    -I, --init "{agent}:<prompt>"     Custom initialization prompt for specified Agent.
+    --terse                           Enable terse mode for all agents (minimalist responses, adapts defaults).
+
+Context Discovery Options:
+    --file <path>                     Target file to operate on.
+    --commit <hash>                   Target git commit hash to operate on.
+    --subject <keyword>               Subject keyword to guide context discovery.
+    --crate <name>                    Target crate to lookup
+
+Session Management Options:
+    -S, --save <session_name>         Save the session state under the given name [${SAVE_SESSION}].
+    -R, --resume <session_name>       Resume a saved session by name [${RESUME_SESSION}].
+
+Orchestration Loop Options:
+    -i, --iterations <num>            Number of iterations for the orchestration loop (default: ${ITERATIONS}).
+    --val-cmd <command>               Command to validate changes (e.g., "cargo build").
+    --strip-chatter <true|false>      Enable or disable stripping of AI chatter from responses (default: ${STRIP_CHATTER}).
+
+General Options:
+    -h, --help [help-subject]         Show this help message. Optionally for a specific subject.
+    -j, --dry-run <true|false>            Estimate costs and tokens without executing (default: ${DRY_RUN}).
+    -D, --debug                           Enable debug mode with verbose logging.
+
+EOF
+}
+
+models() {
+    ollama list 1>&2
+}
+
+agents() {
+    cat <<EOF 1>&2
+Available Agents:
+    architect       - Technical Architect Agent
+    worker          - Implementation Agent
+    validator       - Smart Validator Agent
+    critic          - Safety Critic Agent
+    summarizer      - Session Summarizer Agent
+    critic_perf     - Performance Critic Agent
+    chaos           - Chaos Injection Agent
+EOF
+}
+
+usage() {
+    case "$1" in
+        options) options; exit 0;;
+        models) echo "Available Models (ollama list)" 1>&2;
+            models; exit 0;;
+        tasks) "$SCRIPT_DIR/task_manager.sh" --help tasks; exit 0;;
+        *)
+            echo -e "Usage: $0 [options] <task> \"<goal>\"\n\n" 1>&2
+            task_types
+            echo "" 1>&2
+            options
+            echo "" 1>&2
+            agents
+            echo -e "\nGoal:\n  A concise description of the user's objective for the orchestrator.\n" 1>&2
+            [[ -n "$1" ]] && echo -e "Error: $1\n\n" 1>&2
+            exit "${2-0}";;
+    esac
+}
+
+# New Global State
+TARGET_FILE=""
+TARGET_CRATE=""
+TARGET_COMMIT=""
+SUBJECT=""
+TASK_TYPE=""
+USER_GOAL=""
+DEBUG=false
+
 
 # --- Argument Parsing ---
 [ $# -lt 1 ] && usage "No task specified." 1
@@ -160,33 +169,95 @@ shift
 # Main Argument Loop Update
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        -m|--model) parse_model_arg "$2"; shift 2 ;;
+        -m|--mod*) parse_opt_arg "model" "$2"; shift 2 ;;
+        -I|--init*) parse_opt_arg "init" "$2" shift 2 ;;
+        -T|--temp*) parse_opt_arg "temp" "$2" shift 2 ;;
+        --strip-chatter) STRIP_CHATTER="$2"; shift 2 ;;
+        -i|--iter*) ITERATIONS="$2"; shift 2 ;;
+        -S|--save) SAVE_SESSION="$2"; shift 2 ;;
+        -R|--resume) RESUME_SESSION="$2"; shift 2 ;;
+        --val-cmd) VAL_CMD="$2"; shift 2 ;;
+        --terse)
+            OPTS[architect_init]="System: You are the TECHNICAL ARCHITECT AGENT. Provide concise, minimalist plans with no extra explanation."
+            OPTS[worker_init]="You are the IMPLEMENTATION AGENT. Provide concise code changes only."
+            OPTS[validator_init]="You are the SMART VALIDATOR AGENT. Provide brief validation results without extra commentary."
+            OPTS[critic_init]=""
+            OPTS[summarizer_init]="You are the SESSION SUMMARIZER AGENT. Provide a brief summary of key decisions and changes."
+            OPTS[critic_perf_init]="You are the PERFORMANCE CRITIC AGENT. Provide concise performance reviews focusing on major optimizations."
+            OPTS[chaos_init]="You are the CHAOS INJECTION AGENT. Introduce brief, impactful challenges without elaboration."
+            shift ;;
+
         --file) TARGET_FILE="$2"; shift 2 ;;
         --commit) TARGET_COMMIT="$2"; shift 2 ;;
+        --subject) SUBJECT="$2"; shift 2 ;;
         --crate) TARGET_CRATE="$2"; shift 2 ;;
-        --doc-type) DOC_TYPE="$2"; shift 2 ;;
-        --explain) EXPLAIN_SUBJECT="$2"; shift 2 ;;
-        --keep-chatter) STRIP_CHATTER=false; shift ;;
-        --dry-run) DRY_RUN=true; shift ;;
-        -i|--iter) ITERATIONS="$2"; shift 2 ;;
-        -t|--temp) TEMP_WORKER="$2"; shift 2 ;;
-        --save) SAVE_MODE=true; SESSION_NAME="$2"; shift 2 ;;
-        --resume) RESUME_MODE=true; SESSION_NAME="$2"; shift 2 ;;
-        --debug) DEBUG=true; set -x; shift ;;
-        --subject) USER_GOAL="${2%.}."; echo "User Goal: $USER_GOAL"; shift 2 ;;
+
+        -h|--help) usage "${2:-}";;
+        -j|--dry-run) DRY_RUN="$2"; shift 2 ;;
+        -D|--debug) DEBUG=true; shift ;;
         *) [ -z "${USER_GOAL}" ] && USER_GOAL="${1%.}." || 
         TASK_TYPE="$1"; shift ;;
     esac
 done
 
+[[ -z "$USER_GOAL" ]] && usage "No user goal provided." 1
+
+[[ -n "$VAL_CMD" ]] && LOOP_TYPE="VALIDATED" || LOOP_TYPE="STANDARD"
+
+# --- Dynamic Role Engine ---
+DUO_MODE=false
+CHAOS_MODE=false
+
+case "$TASK_TYPE" in
+    git-ops|git-pr-apply|git-bisect-autofix)
+        # Force these tasks to use the filtered context
+        if [[ -n "$TARGET_COMMIT" ]]; then
+            # Replace the heavy 'git show' in query_agent with this:
+            GIT_PAYLOAD=$(query_git_context "$TARGET_COMMIT")
+        fi
+        ;;
+    chaos-drill)
+        CHAOS_MODE=true
+        DUO_MODE=true
+        ;;
+    rust-high-stakes)
+        DUO_MODE=true
+        ;;
+esac
+# Append to all _INIT variables
+# Append to all system prompts to enforce high-signal communication
+WORKER_INIT+=" $STRICT_FORMAT"
+
+
+DENSE_SIGNAL="Instruction: Use Delimiters (###) for sections. Use 'Chain of Thought' (First, analyze... Then, implement...). Avoid all pleasantries. If providing code, provide ONLY the code."
+
+ARCHITECT_INIT+=" $DENSE_SIGNAL Task: Create a structured prompt for the Worker that includes: 1. Input Context 2. Constraints 3. Expected Output Format."
+
+
+CHAOS_REINIT="System: Continue chaos injection."
+ARCHITECT_REINIT="System: Continue technical plan. Keep logic dense."
+
+WORKER_REINIT="You are the IMPLEMENTATION AGENT. 
+CONSTRAINTS:
+1. Output RAW CODE BLOCKS or VIM SCRIPTS only.
+2. API STABILITY: Your changes will be tested against 'Associated Files' (temporally coupled modules). 
+3. If you modify a public Struct, Trait, or Function signature, you MUST ensure all coupled files provided in the context are updated or that the change is backward-compatible.
+4. Minimize 'Diff Noise' to keep the validation rounds fast."
+
+CRITIC_SAFETY_REINIT="System: Continue safety audit."
+CRITIC_PERF_REINIT="System: Continue performance audit."
+CRITIC_REINIT="Output: Use concise technical language. Provide raw code blocks only."
+
+CRITIC_REJECTION="Critic rejected previous attempt. Feedback: "
+
+
 # Cleanup function to close pipes and remove FIFOs
 KEEP_ALIVE="${KEEP_ALIVE:-}"
-AGENTS=("architect" "worker" "validator" "critic" "summarizer" "critic_perf" "chaos")
 cleanup() {
     if [[ -n "$KEEP_ALIVE" ]]; then
         return
     fi
-    for a in "${AGENTS[@]}"; do
+    for a in "${AGENT[@]}"; do
         # 1. Use indirect expansion to get the FD value safely
         local varname="FD_${a^^}_IN"
         local fd="${!varname:-}"
@@ -202,284 +273,6 @@ cleanup() {
         rm -f "/tmp/ruchat_${a}_in" "/tmp/ruchat_${a}_out" 2>/dev/null || true
     done
 }
-# --- Dynamic Role Engine ---
-CHAOS_MODE=false
-DUO_MODE=false
-
-case "$TASK_TYPE" in
-    prompt-opt)
-        ARCHITECT_INIT="Meta-Prompt Engineer. Your job is to transform user goals into highly optimized prompts for a Worker agent. Use Delimited instructions, Few-shot examples, and Chain-of-Thought triggers."
-        WORKER_INIT="Executor. Follow the optimized prompt exactly."
-        CRITIC_INIT="Prompt Auditor. Ensure the prompt is clear, concise, and unambiguous."
-        LOOP_TYPE="STANDARD" ;;
-    qa)
-        ARCHITECT_INIT="QA Architect. Define edge cases and unit test requirements."
-        WORKER_INIT="Test Engineer. Write robust tests and cargo audit patches."
-        CRITIC_INIT="Security Auditor. Identify gaps in test coverage."
-        LOOP_TYPE="VALIDATED"; VAL_CMD="cargo test --no-run" ;;
-    shell)
-        ARCHITECT_INIT="Systems Architect. Design POSIX-compliant script logic."
-        WORKER_INIT="Bash Expert. Write efficient scripts with error handling."
-        CRITIC_INIT="Linux Hardening Expert. Review for quoting and injection flaws."
-        LOOP_TYPE="VALIDATED"; VAL_CMD="shellcheck" ;;
-    # --- Rust Specialized ---
-    rust-analysis)
-        ARCHITECT_INIT="Senior Rust Architect. Focus: Ownership, Borrowing, and Unsafe Auditing."
-        WORKER_INIT="Rust Expert. Write safe, idiomatic code. Use 'cargo check' compatible syntax."
-        CRITIC_INIT="Pedantic Rust Reviewer. Hunt for memory leaks and race conditions."
-        LOOP_TYPE="VALIDATED"; VAL_CMD="cargo check" ;;
-    rust-analysis2)
-        ARCHITECT_INIT="Rust Safety Engineer. Identify ownership, borrowing, and unsafe code issues."
-        WORKER_INIT="Code Auditor. Suggest fixes for memory safety and concurrency."
-        CRITIC_INIT="Pedantic Reviewer. Ensure idiomatic Rust and no unsafe blocks remain."
-        LOOP_TYPE="VALIDATED"; VAL_CMD="rustc" ;;
-    rust-explain)
-        ARCHITECT_INIT="Rust Educator. Breakdown ownership, lifetimes, and trait bounds."
-        WORKER_INIT="Technical Writer. Explain code using analogies and memory diagrams."
-        CRITIC_INIT="Clarity Editor. Ensure explanations are accurate and accessible."
-        LOOP_TYPE="STANDARD" ;;
-    rust-clippy)
-        ARCHITECT_INIT="Rust Lint Specialist. Interpret Clippy output for performance/idiomatic improvements."
-        WORKER_INIT="Refactoring Expert. Apply suggested fixes to code blocks."
-        CRITIC_INIT="Code Reviewer. Ensure changes align with best practices."
-        LOOP_TYPE="VALIDATED"; VAL_CMD="rustc" ;;
-    rust-test)
-        ARCHITECT_INIT="SDET. Identify edge cases, panics, and boundary conditions in Rust modules."
-        WORKER_INIT="Test Engineer. Write #[cfg(test)] modules and integration tests."
-        CRITIC_INIT="QA Lead. Ensure tests cover all critical paths and validate assertions."
-        LOOP_TYPE="VALIDATED"; VAL_CMD="rustc" ;;
-
-    # --- Git & History ---
-    git-ops)
-        ARCHITECT_INIT="Git Workflow Specialist. Focus: Atomic commits and history legibility."
-        WORKER_INIT="Automation Expert. Generate git commands/scripts for complex rebasing."
-        CRITIC_INIT="QA Lead. Ensure operations are non-destructive and semantic."
-        LOOP_TYPE="STANDARD" ;;
-    git-history-audit)
-        ARCHITECT_INIT="Repo Historian. Analyze 'git log --graph' and 'git blame' to find technical debt origins."
-        WORKER_INIT="Analyst. Summarize development direction and identify 'hot' files with high churn."
-        CRITIC_INIT="Senior Reviewer. Spot security regressions or logic flaws in commit history."
-        LOOP_TYPE="STANDARD" ;;
-    git-commit-gen)
-        ARCHITECT_INIT="Semantic Versioning Expert. Group changes into atomic, logical units."
-        WORKER_INIT="Git Expert. Write Conventional Commit messages (feat/fix/chore)."
-        CRITIC_INIT="Senior Reviewer. Ensure commit messages are clear and follow guidelines."
-        LOOP_TYPE="STANDARD" ;;
-    git-conflict-solver)
-        ARCHITECT_INIT="Conflict Mediator. Analyze HEAD vs Incoming changes in Rust/Bash files."
-        WORKER_INIT="Git Surgeon. Resolve conflicts manually while preserving logic from both sides."
-        CRITIC_INIT="Logic Evaluator. Ensure merged code compiles and passes existing tests."
-        LOOP_TYPE="VALIDATED"; VAL_CMD="rustc" ;;
-
-    # --- Stream Editing & Automation ---
-    stream-edit-suite)
-        ARCHITECT_INIT="Automation Architect. Plan multi-stage transformations using Sed, Awk, and Perl."
-        WORKER_INIT="RegEx Wizard. Provide optimized one-liners for bulk code changes."
-        CRITIC_INIT="Safety Engineer. Verify patterns won't cause accidental data loss."
-        LOOP_TYPE="VALIDATED"; VAL_CMD="shellcheck" ;;
-    
-    # --- Performance ---
-    profiling-analysis)
-        ARCHITECT_INIT="Performance Engineer. Interpret Flamegraphs, 'perf' output, and 'cargo-expand'."
-        WORKER_INIT="Optimization Expert. Identify bottlenecks and suggest 'inline' or 'unroll' strategies."
-        CRITIC_INIT="Senior Reviewer. Ensure optimizations don't compromise safety or readability."
-        LOOP_TYPE="STANDARD" ;;
-
-    # --- Documentation ---
-    docs)
-        ARCHITECT_INIT="Technical Writer. Plan documentation structure (README/Rustdoc)."
-        WORKER_INIT="Markdown Specialist. Write clear, technical explanations."
-        CRITIC_INIT="Editor. Check for clarity and missing technical details."
-        LOOP_TYPE="STANDARD" ;;
-    doc-gen)
-        ARCHITECT_INIT="Technical Documentarian. Plan README.md, CHANGELOG.md, and Rustdoc architecture."
-        WORKER_INIT="Writer. Generate doc comments (///) and examples that actually compile."
-        CRITIC_INIT="Documentation Reviewer. Ensure examples are accurate and compile without errors."
-        LOOP_TYPE="VALIDATED"; VAL_CMD="rustc" ;; # Ensures doc examples compile
-
-    # --- Advanced Rust Dev ---
-    rust-deps)
-        ARCHITECT_INIT="Cargo Specialist. Imagine relevant crates for the goal: $USER_GOAL. Suggest features to enable."
-        WORKER_INIT="Dependency Manager. Edit Cargo.toml. Maintain MSRV and version compatibility."
-        CRITIC_INIT="Dependency Auditor. Check for crate bloat or security advisories."
-        LOOP_TYPE="STANDARD" ;;
-    rust-deps2)
-        ARCHITECT_INIT="Crate Scout. Search for crates relevant to: $USER_GOAL."
-        WORKER_INIT="Cargo Specialist. Update Cargo.toml dependencies and features."
-        CRITIC_INIT="Dependency Auditor. Check for crate bloat or security advisories."
-        LOOP_TYPE="VALIDATED"; VAL_CMD="cargo check" ;;
-    rust-refactor)
-        ARCHITECT_INIT="Algorithm Expert. Propose more efficient Big-O complexity or cache-friendly patterns."
-        WORKER_INIT="Code Simplifier. Refactor logic to reduce cognitive load and remove redundant clones."
-        CRITIC_INIT="Logic Evaluator. Identify non-compiler errors: off-by-one, logic inversions, or re-entrancy bugs."
-        LOOP_TYPE="VALIDATED"; VAL_CMD="rustc" ;;
-    rust-crate-expert)
-        ARCHITECT_INIT="Specialist in the '$TARGET_CRATE' ecosystem. Know the trait patterns and common pitfalls."
-        WORKER_INIT="API Integrator. Write idiomatic code using $TARGET_CRATE."
-        CRITIC_INIT="Senior Reviewer. Ensure proper usage of $TARGET_CRATE and adherence to best practices."
-        LOOP_TYPE="VALIDATED"; VAL_CMD="rustc" ;;
-
-    rust-fix-loop)
-        ARCHITECT_INIT="Senior Troubleshooter. Review the last compilation failure from session context."
-        WORKER_INIT="Fix Agent. Apply changes to $TARGET_FILE to resolve the specific error."
-        CRITIC_INIT="Logic Evaluator. Ensure the fix doesn't introduce regressions identified in session history."
-        LOOP_TYPE="VALIDATED"; VAL_CMD="cargo check" ;;
-
-    # --- Advanced bash Dev ---
-    bash-refactor)
-        ARCHITECT_INIT="Shell Scripting Expert. Propose POSIX-compliant refactorings for efficiency and safety."
-        WORKER_INIT="Bash Specialist. Apply 'set -euo pipefail', quote variables, and remove bashisms."
-        CRITIC_INIT="Linux Hardening Expert. Review for injection flaws and unquoted variables."
-        LOOP_TYPE="VALIDATED"; VAL_CMD="shellcheck" ;;
-
-    # --- Git & CI/CD Workflow ---
-    git-feature-flow)
-        ARCHITECT_INIT="Workflow Manager. Design branch naming and atomic commit strategy for: $USER_GOAL."
-        WORKER_INIT="Git Agent. Create feature branches and prepare local commits."
-        CRITIC_INIT="QA Lead. Ensure branch strategy aligns with team conventions."
-        LOOP_TYPE="STANDARD" ;;
-    git-feature-flow2)
-        ARCHITECT_INIT="Release Engineer. Plan a clean feature-branch strategy."
-        WORKER_INIT="Git Agent. Commands: git checkout -b, git push --set-upstream. Ensure branch naming is semantic."
-        CRITIC_INIT="QA Lead. Validate branch naming and push commands."
-        LOOP_TYPE="STANDARD" ;;
-    git-pr-lifecycle)
-        ARCHITECT_INIT="PR Strategist. Determine if changes meet repository contribution guidelines."
-        WORKER_INIT="PR Agent. Write PR descriptions, evaluate incoming PR diffs, and apply patches from remote contributors."
-        CRITIC_INIT="Senior Reviewer. Evaluate PR for breaking changes or security regressions."
-        LOOP_TYPE="STANDARD" ;;
-
-    # --- Tooling Integration ---
-    editor-nav)
-        ARCHITECT_INIT="Index Expert. Use ctags/etags output to map project symbols."
-        WORKER_INIT="Vim Automation Agent. Generate Vim scripts or macros for bulk refactoring based on symbol maps."
-        CRITIC_INIT="Logic Evaluator. Ensure generated scripts maintain code integrity and structure."
-        LOOP_TYPE="STANDARD" ;;
-    editor-nav2)
-        ARCHITECT_INIT="Vim/Ctags Specialist. Map the project structure using symbol indexes."
-        WORKER_INIT="Vim Automation Agent. Generate .vim refactoring scripts using Ex commands."
-        CRITIC_INIT="Logic Evaluator. Ensure generated scripts maintain code integrity and structure."
-        LOOP_TYPE="STANDARD" ;;
-
-
-    # --- Dynamic Documentation ---
-    doc-custom)
-        ARCHITECT_INIT="Technical Writer. Plan the $DOC_TYPE for the subject: $EXPLAIN_SUBJECT."
-        WORKER_INIT="Documentarian. Author $DOC_TYPE. Include ctags-referenced code navigation if relevant."
-        CRITIC_INIT="Editor. Ensure clarity, accuracy, and completeness of the $DOC_TYPE."
-        LOOP_TYPE="STANDARD" ;;
-    doc-custom2)
-        ARCHITECT_INIT="Technical Writer. Plan the $DOC_TYPE regarding $EXPLAIN_SUBJECT."
-        WORKER_INIT="Writer. Generate high-quality $DOC_TYPE using information from $TARGET_FILE."
-        CRITIC_INIT="Editor. Ensure clarity, accuracy, and completeness of the $DOC_TYPE."
-        LOOP_TYPE="STANDARD" ;;
-
-    # --- PR & Feature Lifecycle ---
-    git-pr-apply)
-        ARCHITECT_INIT="Integration Lead. Evaluate the incoming patch/PR for architectural fit."
-        WORKER_INIT="PR Agent. Use 'git apply' or 'git am' to integrate changes. Resolve logical drift."
-        CRITIC_INIT="Logic Evaluator. Ensure the PR doesn't violate safety invariants."
-        LOOP_TYPE="VALIDATED"; VAL_CMD="rustc" ;;
-
-
-    # --- Deep Code Evolution ---
-    rust-algo-optimize)
-        ARCHITECT_INIT="Algorithm Expert. Propose Big-O improvements (e.g., HashSets vs Vecs)."
-        WORKER_INIT="Code Simplifier. Remove redundant complexity. Use better algorithms."
-        CRITIC_INIT="Logic Evaluator. Check for subtle logical errors, off-by-ones, or incorrect edge-case handling."
-        LOOP_TYPE="VALIDATED"; VAL_CMD="rustc" ;;
-
-    # --- Toolchain Integration ---
-
-    # --- Crash Analysis & Debugging ---
-    debug-core)
-        ARCHITECT_INIT="Debugger Specialist. Interpret GDB/LLDB backtraces. Identify the crashing frame and signal (SIGSEGV, SIGABRT)."
-        WORKER_INIT="Fix Agent. Analyze $TARGET_FILE (source) at the reported line. Fix null derefs, OOB access, or unwrap() panics."
-        CRITIC_INIT="Logic Evaluator. Ensure the fix addresses the root cause, not just the symptom."
-        LOOP_TYPE="VALIDATED"; VAL_CMD="rustc" ;;
-    debug-core2)
-        # Refined Architect for GDB
-        ARCHITECT_INIT="Post-Mortem Specialist. Interpret stack frames and register state from core dumps."
-        WORKER_INIT="Vim Fix Agent. Directly edit source files to prevent the identified crash."
-        CRITIC_INIT="Logic Evaluator. Ensure fixes address root causes without introducing new issues."
-        LOOP_TYPE="VALIDATED"; VAL_CMD="rustc" ;;
-
-    rust-deep-analysis)
-        ARCHITECT_INIT="Rust Internalist. Use 'cargo expand' to check macro hygiene and 'cargo bloat' to identify generic monomorphization costs."
-        WORKER_INIT="Optimization Expert. Reduce binary size and compile times by optimizing generic usage and macros."
-        CRITIC_INIT="Logic Evaluator. Ensure optimizations maintain public API and safety invariants."
-        LOOP_TYPE="VALIDATED"; VAL_CMD="cargo-bloat" ;;
-    
-    rust-meta-opt)
-        ARCHITECT_INIT="Rust Metaprogramming Expert. Use 'cargo expand' to inspect macro expansion for hygiene and 'cargo bloat' for monomorphization bloat."
-        WORKER_INIT="Refactor Agent. Optimize generic usage and macro definitions to improve compile times and binary footprint."
-        CRITIC_INIT="Logic Evaluator. Ensure optimizations don't break the public API or safety invariants."
-        LOOP_TYPE="VALIDATED"; VAL_CMD="cargo bloat --release -n 20" ;;
-    rust-high-stakes)
-        ARCHITECT_INIT="Lead Mediator. Balance extreme safety requirements with high-performance targets."
-        WORKER_INIT="Expert Implementer. Write code that satisfies both a pedantic safety auditor and a performance engineer."
-        CRITIC_INIT="Safety Critic. Focus on memory safety, race conditions, and edge-case handling."
-        # This task flags the loop to use both FDs
-        DUO_MODE=true
-        LOOP_TYPE="VALIDATED"; VAL_CMD="cargo test" ;; 
-    debug-test)
-        ARCHITECT_INIT="QA Lead. Analyze test failures and stack traces to find regression roots."
-        WORKER_INIT="Fix Agent. Apply source changes or update test mocks to satisfy the test suite."
-        CRITIC_INIT="Logic Evaluator. Ensure fixes address root causes without introducing new issues."
-        LOOP_TYPE="VALIDATED"; VAL_CMD="cargo test" ;;
-
-    git-bisect-autofix)
-        ARCHITECT_INIT="Bisect Coordinator. Manage the binary search state. Determine the 'good' and 'bad' boundaries."
-        WORKER_INIT="Git Agent. Execute 'git bisect good/bad'. On the culprit commit, analyze the diff to find the regression."
-        CRITIC_INIT="Logic Evaluator. Verify if the identified commit truly contains the root cause of the failure."
-        LOOP_TYPE="VALIDATED"; VAL_CMD="cargo test" ;;
-
-    meta-gen)
-        ARCHITECT_INIT="System Dispatcher. Your goal is to map a user request to the correct orchestrator task and arguments."
-        WORKER_INIT="CLI Generator. Output ONLY the exact bash command to run the orchestrator. Do not explain."
-        CRITIC_INIT="Syntax Validator. Ensure the generated command uses valid tasks and flags from the provided usage text."
-        LOOP_TYPE="STANDARD" ;;
-    chaos-drill)
-        ARCHITECT_INIT="Resilience Architect. Build a system that survives hardware and network failures."
-        WORKER_INIT="Implementation Lead. Write robust, fault-tolerant code."
-        CRITIC_INIT="Chaos Engineer. Introduce random failures (OOM, Latency) and ensure system stability."
-        CHAOS_MODE=true
-        DUO_MODE=true # Chaos drills benefit from Duo-Critic debate
-        LOOP_TYPE="VALIDATED"; VAL_CMD="cargo test" ;;
-
-    test-sanitizer)
-        ARCHITECT_INIT="Test Engineer. Generate 5 diverse examples of 'chatty' LLM responses (prose + code)."
-        WORKER_INIT="Automation Specialist. Write a bash script that runs 'strip_chatter' against these examples and checks if the output matches the expected 'pure code'."
-        CRITIC_INIT="QA Lead. Ensure the script handles edge cases and various formatting styles."
-        LOOP_TYPE="VALIDATED"; VAL_CMD="bash" ;;
-    onboard)
-        # Gather structural metadata
-        REPO_TREE=$(tree --charset=ascii --gitignore -P '*.rs|*.sh|*.md' -I 'target|.git')
-        CRATE_DEPS=$(cargo metadata --format-version 1 | jq -r '.packages[0].dependencies[].name' | head -n 20)
-
-        GIT_LOG_SUMMARY=$(git log -n 30 --pretty=short |git shortlog)
-        # ctags: the TOML parser is broken.
-        TOP_SYMBOLS=$(ctags -x --languages=Rust,sh,-TOML,-Cargo --sort=yes $(git ls-files | grep -E '\.(sh|rs)$') | 
-        grep -Pv '(test[s_]|[ \t](field|method)[ \t])' | head -n 50)
-        ONBOARD="Structure:\n$REPO_TREE\n\nDependencies:\n$CRATE_DEPS\n\nSymbols:\n$TOP_SYMBOLS"
-        ;;
-    *) usage "Unknown task type: $TASK_TYPE" 1 ;;
-esac
-case "$TASK_TYPE" in
-    git-ops|git-pr-apply|git-bisect-autofix)
-        # Force these tasks to use the filtered context
-        if [[ -n "$TARGET_COMMIT" ]]; then
-            # Replace the heavy 'git show' in query_agent with this:
-            GIT_PAYLOAD=$(query_git_context "$TARGET_COMMIT")
-        fi
-        ;;
-esac
-# Append to all _INIT variables
-# Append to all system prompts to enforce high-signal communication
-DENSE_SIGNAL="Instruction: Use Delimiters (###) for sections. Use 'Chain of Thought' (First, analyze... Then, implement...). Avoid all pleasantries. If providing code, provide ONLY the code."
-
-ARCHITECT_INIT+=" $DENSE_SIGNAL Task: Create a structured prompt for the Worker that includes: 1. Input Context 2. Constraints 3. Expected Output Format."
-WORKER_INIT+=" $STRICT_FORMAT"
 
 # --- Infrastructure Setup ---
 SESSION_FILE="/tmp/ruchat_session_state.json"
@@ -572,48 +365,26 @@ trap cleanup EXIT
 
 cleanup # Ensure no stale pipes exist
 
-if [[ -n "${ONBOARD:-}" ]]; then
-        # Test that target file does not yet exist
-        [[ -z "${TARGET_FILE:-}" ]] && usage "Onboard task requires --file <path> to specify an output." 1
-        if [[ -f "${TARGET_FILE:-}" ]]; then
-            usage "Onboard task requires a non-existent target file to avoid overwriting." 1
-        fi
-
-        # Initialize Summarizer Agent FDs
-        mkfifo /tmp/ruchat_summarizer_in /tmp/ruchat_summarizer_out
-        exec {FD_SUMM_IN}>/tmp/ruchat_summarizer_in {FD_SUMM_OUT}</tmp/ruchat_summarizer_out
-        $RUCHAT_BIN pipe -m "${MODELS[summarizer]}" -o "{\"temperature\": $TEMP_STRICT }" < /tmp/ruchat_summarizer_in > /tmp/ruchat_summarizer_out &
-        # 3. Query the Summarizer
-        ONBOARD_RES=$(query_agent "$FD_SUMM_IN" "$FD_SUMM_OUT" "$C_SUMM" "ONBOARDER" "${USER_GOAL}${ONBOARD}")
-        printf "\n---\n" >&"$FD_SUMM_IN" || true
-             
-        echo -e "$ONBOARD_RES" > "${TARGET_FILE}"
-        echo -e "${C_VALI}SUCCESS: Created result file ${TARGET_FILE}${NC}"
-        cleanup
-        exit 0
-fi
-for agent in "${AGENTS[@]}"; do
+for agent in "${AGENT[@]}"; do
     mkfifo "/tmp/ruchat_${agent}_in" "/tmp/ruchat_${agent}_out"
 done
 
 # Start Ruchat Pipes
-$RUCHAT_BIN pipe -m "${MODELS[architect]}" -o "{\"temperature\": $TEMP_STRICT}" < /tmp/ruchat_architect_in > /tmp/ruchat_architect_out &
-$RUCHAT_BIN pipe -m "${MODELS[worker]}" -o "{\"temperature\": $TEMP_WORKER}" < /tmp/ruchat_worker_in > /tmp/ruchat_worker_out &
+$RUCHAT_BIN pipe -m "${OPTS[architect_model]}" -o "{\"temperature\": ${OPTS[architect_temp]}}" < /tmp/ruchat_architect_in > /tmp/ruchat_architect_out &
+$RUCHAT_BIN pipe -m "${OPTS[worker_model]}" -o "{\"temperature\": ${OPTS[worker_temp]}}" < /tmp/ruchat_worker_in > /tmp/ruchat_worker_out &
 [[ "$LOOP_TYPE" = "VALIDATED" ]] && \
-  $RUCHAT_BIN pipe -m "${MODELS[validator]}" -o "{\"temperature\": $TEMP_STRICT}" < /tmp/ruchat_validator_in > /tmp/ruchat_validator_out &
-$RUCHAT_BIN pipe -m "${MODELS[critic]}" -o "{\"temperature\": $TEMP_STRICT}" < /tmp/ruchat_critic_in > /tmp/ruchat_critic_out &
+  $RUCHAT_BIN pipe -m "${OPTS[validator_model]}" -o "{\"temperature\": ${OPTS[validator_temp]}}" < /tmp/ruchat_validator_in > /tmp/ruchat_validator_out &
+$RUCHAT_BIN pipe -m "${OPTS[critic_model]}" -o "{\"temperature\": ${OPTS[critic_temp]}}" < /tmp/ruchat_critic_in > /tmp/ruchat_critic_out &
 [[ "$STRIP_CHATTER" = true ]] && \
-  $RUCHAT_BIN pipe -m "${MODELS[summarizer]}" -o '{"temperature": 0.0}' < /tmp/ruchat_summarizer_in > /tmp/ruchat_summarizer_out &
+  $RUCHAT_BIN pipe -m "${OPTS[summarizer_model]}" -o "{\"temperature\": ${OPTS[summarizer_temp]}}" < /tmp/ruchat_summarizer_in > /tmp/ruchat_summarizer_out &
 [[ "$DUO_MODE" = true ]] && \
-  $RUCHAT_BIN pipe -m "${MODELS[critic_perf]}" -o '{"temperature": 0.0}' < /tmp/ruchat_critic_perf_in > /tmp/ruchat_critic_perf_out &
+  $RUCHAT_BIN pipe -m "${OPTS[critic_perf_model]}" -o "{\"temperature\": ${OPTS[critic_perf_temp]}}" < /tmp/ruchat_critic_perf_in > /tmp/ruchat_critic_perf_out &
 [[ "$CHAOS_MODE" = true ]] && \
-  $RUCHAT_BIN pipe -m "${MODELS[chaos]:-mistral}" -o '{"temperature": 1.0}' < /tmp/ruchat_chaos_in > /tmp/ruchat_chaos_out &
+  $RUCHAT_BIN pipe -m "${OPTS[chaos_model]:-mistral}" -o "{\"temperature\": ${OPTS[chaos_temp]}}" < /tmp/ruchat_chaos_in > /tmp/ruchat_chaos_out &
 
 # Infrastructure: Add the second Critic pipe
 
 # Role Definitions
-CRITIC_SAFETY_INIT="Safety Critic. Focus: Memory safety, race conditions, edge-case handling, and error propagation. Be pedantic."
-CRITIC_PERF_INIT="Performance Critic. Focus: Zero-cost abstractions, avoiding heap allocations, Big-O complexity, and cache locality."
 exec {FD_ARCH_IN}>/tmp/ruchat_architect_in {FD_ARCH_OUT}</tmp/ruchat_architect_out
 exec {FD_WORK_IN}>/tmp/ruchat_worker_in {FD_WORK_OUT}</tmp/ruchat_worker_out
 exec {FD_CRIT_IN}>/tmp/ruchat_critic_in {FD_CRIT_OUT}</tmp/ruchat_critic_out
@@ -635,6 +406,79 @@ if [ "$CHAOS_MODE" = true ]; then
     exec {FD_CHAOS_IN}>/tmp/ruchat_chaos_in {FD_CHAOS_OUT}</tmp/ruchat_chaos_out
 fi
 
+# --- Crate Helper Functions ---
+fetch_crate_context_recursive() {
+    local TARGET_CRATE=$1
+    local BASE_URL="https://docs.rs/$TARGET_CRATE/latest/$TARGET_CRATE"
+    
+    # Check for 'pup' (HTML parser) and 'pandoc' (Converter)
+    if ! command -v pup &> /dev/null || ! command -v pandoc &> /dev/null; then
+        echo "Error: This function requires 'pup' and 'pandoc'."
+        echo "Install via: brew install pup pandoc (or your package manager)"
+        return 1
+    fi
+
+    echo "# Full Documentation Context: $TARGET_CRATE"
+    
+    # 1. Fetch the main index to find submodules
+    local INDEX_HTML=$(curl -sL "$BASE_URL/index.html")
+    
+    # 2. Extract submodule links (looking for the 'modules' section in docs.rs)
+    local MODULES=$(echo "$INDEX_HTML" | pup 'table.item-table td.mod a attr{href}')
+
+    # 3. Process the Main Page
+    echo "## Root Module (lib.rs)"
+    echo "$INDEX_HTML" | pup '#main-content' | pandoc -f html -t markdown_strict
+    echo -e "\n---\n"
+
+    # 4. Iterate through found modules
+    for MOD_PATH in $MODULES; do
+        # Ensure we don't go out of bounds or hit external links
+        if [[ "$MOD_PATH" == index.html ]]; then continue; fi
+        
+        local MOD_NAME=$(echo "$MOD_PATH" | sed 's/\/index.html//g')
+        local FULL_URL="$BASE_URL/$MOD_PATH"
+        
+        echo "## Module: $MOD_NAME"
+        curl -sL "$FULL_URL" | pup '#main-content' | pandoc -f html -t markdown_strict
+        echo -e "\n---\n"
+    done
+}
+fetch_crate_docs() {
+    local TARGET_CRATE=$1
+
+    if [ -z "$TARGET_CRATE" ]; then
+        echo "Error: No crate name provided."
+        return 1
+    fi
+
+    # Ensure cargo-docs-rs is installed
+    if ! command -v cargo-docs-rs &> /dev/null; then
+        echo "Installing cargo-docs-rs dependency..."
+        cargo install cargo-docs-rs
+    fi
+
+    echo "--- START OF DOCUMENTATION FOR $TARGET_CRATE ---"
+    
+    # 1. Download and convert docs.rs content to Markdown
+    # 2. Use 'grep -v' or 'sed' to remove common noise if necessary
+    # 3. Output the result
+    cargo docs-rs "$TARGET_CRATE" --format markdown
+    
+    echo "--- END OF DOCUMENTATION FOR $TARGET_CRATE ---"
+}
+fetch_crate_docs_raw() {
+    local TARGET_CRATE=$1
+    local URL="https://docs.rs/$TARGET_CRATE/latest/$TARGET_CRATE/"
+
+    echo "Fetching documentation from $URL..."
+
+    # Use curl to get the HTML, then pandoc to turn it into clean markdown
+    # We target the 'main' ID which is where the actual content lives on docs.rs
+    curl -sL "$URL" | \
+        pandoc --from html --to markdown_strict-raw_html-native_divs-native_spans \
+        --lua-filter=<(echo "function Div (el) return el.content end") 
+}
 # --- Git Helper Functions ---
 query_git_context() {
     local commit="$1"
@@ -718,7 +562,7 @@ get_target_file_metadata() {
 # --- Helper Functions ---
 discover_relevant_files() {
     local subject="${1:-}"
-    local files=""
+    local more_files=""
 
     # 1. Base: Modified & Recent files
     local base_files
@@ -736,16 +580,16 @@ discover_relevant_files() {
                 # Find the file where this symbol is defined
                 local def_file
                 def_file=$(awk -v s="$sym" '$1 == s {print $2}' tags | head -n 1)
-                [[ -n "$def_file" && -f "$def_file" ]] && files+=" $def_file"
+                [[ -n "$def_file" && -f "$def_file" ]] && more_files+=" $def_file"
             done
         done
     fi
 
     # 3. Keyword: ripgrep for the subject
-    [[ -n "$subject" ]] && files+=" "$(rg -l --max-count 1 "$subject" | head -n 3)
+    [[ -n "$subject" ]] && more_files+=" "$(rg -l --max-count 1 "$subject" | head -n 3)
 
     # Deduplicate and return
-    echo "$base_files $files" | tr ' ' '\n' | sort -u | grep -v '^$' | head -n 8
+    echo "$base_files $more_files" | tr ' ' '\n' | sort -u | grep -v '^$' | head -n 8
 }
 maintain_context_efficiency() {
     local history_size
@@ -1070,12 +914,7 @@ validate_output() {
 }
 
 # --- Main Logic Engine ---
-if [ "$USER_GOAL" == "" ]; then
-  echo -e "${C_SUMM}TASK:${NC} Enter goal for $TASK_TYPE:"
-  read -r USER_GOAL
-else
-  echo -e "${C_SUMM}TASK:${NC} Using provided goal for $TASK_TYPE."
-fi
+echo -e "${C_SUMM}TASK:${NC} Using provided goal for $TASK_TYPE."
 
 # --- Meta-Agent Dispatcher (exists early and recurses) ---
 if [[ "$TASK_TYPE" == "meta-gen" ]]; then
@@ -1107,10 +946,9 @@ if [[ "$TASK_TYPE" == "meta-gen" ]]; then
     done
     exit 0
 fi
-CHAOS_INIT="System: You are to inject random system constraints to test resilience."
 # --- Consolidated Main Logic Engine ---
-if [[ "$RESUME_MODE" == "true" ]]; then
-    resume_session "$SESSION_NAME"
+if [[ -n "$RESUME_SESSION" ]]; then
+    resume_session "$RESUME_SESSION"
     # This function copies persistent logs into /tmp/ruchat_history.log
     # so the Architect sees the previous context in Round 1.
 else
@@ -1131,8 +969,8 @@ for i in $(seq 1 "$ITERATIONS"); do
     # 2. CHAOS INJECTION (Environmental constraints)
     if [[ "$CHAOS_MODE" == "true" ]]; then
         CHAOS_EVENT=$(query_agent "$FD_CHAOS_IN" "$FD_CHAOS_OUT" "$C_SUMM" "CHAOS" \
-            "$CHAOS_INIT Inject hazard based on files: $TARGET_FILE.")
-        CHAOS_INIT="System: Continue chaos injection."
+            "${OPTS[chaos_init]} Inject hazard based on files: $TARGET_FILE.")
+        OPTS[chaos_init]="${CHAOS_REINIT}"
         # Crucial: Prepend to the current goal so the Architect prioritizes the hazard
         CURRENT_PROMPT="[ENVIRONMENTAL HAZARD: $CHAOS_EVENT] Context: $CURRENT_PROMPT"
     fi
@@ -1146,25 +984,20 @@ for i in $(seq 1 "$ITERATIONS"); do
     # Branch logic for Prompt Optimization vs Standard
     if [[ "$TASK_TYPE" == "prompt-opt" ]]; then
         PLAN=$(query_agent "$FD_ARCH_IN" "$FD_ARCH_OUT" "$C_ARCH" "ARCHITECT" \
-            "$ARCHITECT_INIT\nContext:\n$(cat "$HISTORY_FILE")\n\nTask: $CURRENT_PROMPT")
+            "${OPTS[architect_init]}\nContext:\n$(cat "$HISTORY_FILE")\n\nTask: $CURRENT_PROMPT")
     else
         # Standard: Compress only the immediate prompt, not the system instructions
         CLEAN_PROMPT=$(compress_context "$CURRENT_PROMPT")
         PLAN=$(query_agent "$FD_ARCH_IN" "$FD_ARCH_OUT" "$C_ARCH" "ARCHITECT" \
-            "$ARCHITECT_INIT\nHistory:\n$(cat "$HISTORY_FILE")\n\nTask: $CLEAN_PROMPT")
+            "${OPTS[architect_init]}\nHistory:\n$(cat "$HISTORY_FILE")\n\nTask: $CLEAN_PROMPT")
     fi
     # Clear Architect system prompt for Round 2+
-    ARCHITECT_INIT="System: Continue technical plan. Keep logic dense."
+    OPTS[architect_init]="${ARCHITECT_REINIT}"
 
     # 4. WORKER: Implementation
-    WORKER_OUT=$(query_agent "$FD_WORK_IN" "$FD_WORK_OUT" "$C_WORK" "WORKER" "$WORKER_INIT\nPlan: $PLAN")
+    WORKER_OUT=$(query_agent "$FD_WORK_IN" "$FD_WORK_OUT" "$C_WORK" "WORKER" "${OPTS[worker_init]}\nPlan: $PLAN")
     [[ -n "$STRIP_CHATTER" ]] && WORKER_OUT=$(strip_chatter "$WORKER_OUT")
-    WORKER_INIT="You are the IMPLEMENTATION AGENT. 
-CONSTRAINTS:
-1. Output RAW CODE BLOCKS or VIM SCRIPTS only.
-2. API STABILITY: Your changes will be tested against 'Associated Files' (temporally coupled modules). 
-3. If you modify a public Struct, Trait, or Function signature, you MUST ensure all coupled files provided in the context are updated or that the change is backward-compatible.
-4. Minimize 'Diff Noise' to keep the validation rounds fast."
+    OPTS[worker_init]="${WORKER_REINIT}"
 
     # 5. ACTION & VALIDATION (The "Real World" result)
     VAL_REPORT=""
@@ -1195,19 +1028,18 @@ CONSTRAINTS:
         fi
         
         # If primary passed but ripple failed, the Critic gets the report
-        if [[ "$VAL_REPORT" == *"RIPPLE FAILURE"* ]]; then
-            echo -e "${C_CRIT}SYSTEM: Primary passed, but regressions detected in coupled files.${NC}"
-        fi
+        [[ "$VAL_REPORT" == *"RIPPLE FAILURE"* ]] &&
+            echo -e "${C_CRIT}SYSTEM: Primary passed, but regressions detected in coupled files.${NC}" 1>&2
     fi
     # 6. CRITICISM (Multi-Agent or Single)
     if [[ "${DUO_MODE:-false}" == "true" ]]; then
         echo -e "${C_CRIT}SYSTEM: Initiating Multi-Agent Debate...${NC}"
         
-        REVIEW_SAFETY=$(query_agent "$FD_CRIT_IN" "$FD_CRIT_OUT" "$C_CRIT" "SAFETY" "$CRITIC_SAFETY_INIT Review: $WORKER_OUT")
-        CRITIC_SAFETY_INIT="System: Continue safety audit."
+        REVIEW_SAFETY=$(query_agent "$FD_CRIT_IN" "$FD_CRIT_OUT" "$C_CRIT" "SAFETY" "${OPTS[critic_safety_init]} Review: $WORKER_OUT")
+        OPTS[critic_safety_init]="${CRITIC_SAFETY_REINIT}"
         
-        REVIEW_PERF=$(query_agent "$FD_CRIT_PERF_IN" "$FD_CRIT_PERF_OUT" "$C_PERF" "PERFORMANCE" "$CRITIC_PERF_INIT Review: $WORKER_OUT")
-        CRITIC_PERF_INIT="System: Continue performance audit."
+        REVIEW_PERF=$(query_agent "$FD_CRIT_PERF_IN" "$FD_CRIT_PERF_OUT" "$C_PERF" "PERFORMANCE" "${OPTS[critic_perf_init]} Review: $WORKER_OUT")
+        OPTS[critic_perf_init]="${CRITIC_PERF_REINIT}"
 
         if [[ "$REVIEW_SAFETY" == *"APPROVED"* && "$REVIEW_PERF" == *"APPROVED"* ]]; then
             update_session_debate "${TARGET_FILE}" "APPROVED" "APPROVED"
@@ -1216,27 +1048,27 @@ CONSTRAINTS:
             update_session_debate "${TARGET_FILE}" "$REVIEW_SAFETY" "$REVIEW_PERF"
             CURRENT_PROMPT="DEBATE CONFLICT:\nSafety: $REVIEW_SAFETY\nPerformance: $REVIEW_PERF"
         fi
-    elif [[ -n "${CRITIC_INIT:-}" ]]; then
+    elif [[ -n "${OPT[critic_init]:-}" ]]; then
         # Single Critic
         CRITIC_PROMPT="Goal: $USER_GOAL\nAction Result: $VAL_REPORT\nWorker Output: $WORKER_OUT"
-        REVIEW=$(query_agent "$FD_CRIT_IN" "$FD_CRIT_OUT" "$C_CRIT" "CRITIC" "$CRITIC_INIT\n$CRITIC_PROMPT")
-        CRITIC_INIT="System: Continue logic review."
+        REVIEW=$(query_agent "$FD_CRIT_IN" "$FD_CRIT_OUT" "$C_CRIT" "CRITIC" "${OPTS[critic_init]}\n$CRITIC_PROMPT")
+        OPTS[critic_init]="${CRITIC_REINIT}"
         
         [[ "$REVIEW" == *"APPROVED"* ]] && break
-        CURRENT_PROMPT="Critic rejected previous attempt. Feedback: $REVIEW"
+        CURRENT_PROMPT="${CRITIC_REJECTION}$REVIEW"
     else
         # No Critic, assume success
         break
     fi
 done
 # --- Session Persistence ---
-if [[ "$SAVE_MODE" == "true" ]]; then
+if [[ -n "$SAVE_SESSION" ]]; then
     # If no name was provided, the function handles timestamping
-    save_session "$SESSION_NAME"
+    save_session "$SAVE_SESSION"
 fi
 
 # --- Final Summarization ---
-$RUCHAT_BIN pipe -m "${MODELS[summarizer]}" -o "{\"temperature\": ${TEMP_STRICT}}" < /tmp/ruchat_summarizer_in > /tmp/ruchat_summarizer_out &
+$RUCHAT_BIN pipe -m "${OPTS[summarizer_model]}" -o "{\"temperature\": ${OPTS[summarizer_temp]}}" < /tmp/ruchat_summarizer_in > /tmp/ruchat_summarizer_out &
 exec {FD_SUMM_IN}>/tmp/ruchat_summarizer_in {FD_SUMM_OUT}</tmp/ruchat_summarizer_out
 
 echo -e "\n${C_SUMM}SYSTEM: Finalizing documentation...${NC}"
