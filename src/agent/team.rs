@@ -11,6 +11,9 @@ pub struct Team {
 }
 
 impl Team {
+    pub fn new(name: String, goal: String, agents: Vec<Agent>) -> Self {
+        Self { name, goal, agents }
+    }
     pub async fn execute(&mut self, ollama: &Ollama) -> Result<()> {
         println!("Team '{}' executing goal: {}", self.name, self.goal);
 

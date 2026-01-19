@@ -1,3 +1,4 @@
+use crate::agent::werker::Agent;
 use crate::agent::Team;
 use crate::config::{load_manager, save_manager}; // We will add these
 use anyhow::{anyhow, Result};
@@ -7,6 +8,10 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Parser, Debug, Clone, PartialEq)]
 pub struct ManagerArgs {
+    /// Optional path to manager config file
+    #[arg(short, long)]
+    pub path: Option<String>,
+
     #[command(subcommand)]
     pub command: ManagerCommands,
 }
@@ -48,21 +53,32 @@ impl Manager {
     }
 
     pub async fn execute_command(ollama: Ollama, args: &ManagerArgs) -> Result<()> {
-        let config_path = "ruchat_manager.json"; // Hardcoded for now, or move to args
+        let config_path = args
+            .path
+            .clone()
+            .unwrap_or_else(|| "ruchat_manager.json".into());
 
         match args.command {
             ManagerCommands::Init => {
-                let manager = Manager::new();
-                save_manager(config_path, &manager).await?;
+                let mut manager = Manager::new();
+                let name = "Default Team".to_string();
+                let goal = "Achieve the default goal.".to_string();
+                let mut agents = vec![];
+                agents.push(Agent::new(
+                    "qwen2.5-coder:7b".to_string(),
+                    "You are an agent that performs tasks.".to_string(),
+                ));
+                manager.teams.push(Team::new(name, goal, agents));
+                save_manager(config_path.as_str(), &manager).await?;
                 println!("Initialized empty manager at {}", config_path);
             }
             ManagerCommands::Run => {
-                let mut manager = load_manager(config_path).await?;
+                let mut manager = load_manager(config_path.as_str()).await?;
                 // We pass the ollama instance down to the team -> agent
                 manager.run_active(&ollama).await?;
             }
             ManagerCommands::List => {
-                let manager = load_manager(config_path).await?;
+                let manager = load_manager(config_path.as_str()).await?;
                 for (i, team) in manager.teams.iter().enumerate() {
                     let active = if i == manager.active_team { "*" } else { " " };
                     println!("[{}] {} - {}", active, i, team.name);
