@@ -87,10 +87,10 @@ query_agent() {
 }
 
 # send initial system prompts to each agent
-ARCHITECT_INIT="You are a Senior Software Architect. Your job is to turn vague goals into technical specifications. Be concise and use bullet points."
-WORKER_INIT="You are an expert Linux Developer. Provide only clean, commented code without excessive conversational filler."
-VALIDATOR_INIT="You are a shellcheck expert. Explain the errors and valid warnings. Do not be polite; be accurate."
-CRITIC_INIT="You are a pedantic QA Engineer. Look for security flaws, edge cases, and syntax errors. Do not be polite; be accurate."
+ARCHITECT_INIT="You are a Senior Software Architect. Your job is to turn vague goals into technical specifications. Be concise and use bullet points. "
+WORKER_INIT="You are an expert Linux Developer. Provide only clean, commented code without excessive conversational filler. "
+VALIDATOR_INIT="You are a shellcheck expert. Explain the errors and valid warnings. Do not be polite; be accurate. "
+CRITIC_INIT="You are a pedantic QA Engineer. Look for security flaws, edge cases, and syntax errors. Do not be polite; be accurate. "
 
 # 3. The Orchestration Loop
 USER_GOAL="Write a bash script that finds all .log files in /var/log larger than 100MB and lists them."
@@ -139,6 +139,5 @@ exec 11>"/tmp/ruchat_summarizer_in" 12<"/tmp/ruchat_summarizer_out"
 # 4. Final Summarization
 echo -e "\n${C_SUMM}SYSTEM: Generating final documentation...${NC}"
 query_agent 11 12 "$C_SUMM" "SUMMARIZER" "You are a Technical Writer. Your job is to create clean, professional documentation based on a chat log. Focus on the final result. Summarize this into a README.md: $(cat "$HISTORY_FILE")"
-
 query_agent 11 12 "$C_SUMM" "SUMMARIZER" '!done'
 rm -f "/tmp/ruchat_summarizer_in" "/tmp/ruchat_summarizer_out"

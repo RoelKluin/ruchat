@@ -33,7 +33,8 @@ for agent in "${AGENTS[@]}"; do
     mkfifo "/tmp/ruchat_${agent}_in" "/tmp/ruchat_${agent}_out"
 done
 
-MODEL=("qwen3:latest" "deepseek-coder:latest" "qwen3:latest" "mistral-nemo:latest")
+#MODEL=("qwen3:latest" "deepseek-coder:latest" "qwen3:latest" "mistral-nemo:latest")
+MODELS=("qwen3:4b" "qwen3:4b" "qwen3:4b" "qwen3:4b")
 TEMPERATURE=("0.0" "0.7" "0.0" "0.0")
 
 # Start Instances
@@ -72,7 +73,7 @@ CRITIC_INIT="You are a pedantic QA Engineer. Look for security flaws, edge cases
 # 3. Execution
 USER_GOAL="Design a simple Bash script that monitors CPU usage and alerts if it exceeds 90%."
 echo "USER GOAL: $USER_GOAL" >> "$HISTORY_FILE"
-CURRENT_PROMPT="User Goal: $USER_GOAL Architect, create the technical requirements."
+CURRENT_PROMPT="You are a Senior Software Architect. Your job is to turn vague goals into technical specifications. Be concise and use bullet points. User Goal: $USER_GOAL Architect, create the technical requirements."
 CRITIC_INSTRUCTION="Review this code. If perfect, say 'APPROVED'. Otherwise, list issues: "
 
 for i in {1..3}; do # Limit to 3 attempts for safety
