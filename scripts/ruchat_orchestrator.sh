@@ -39,7 +39,8 @@ C_PERF='\033[1;94m'
 
 AGENT=("architect" "worker" "validator" "critic" "summarizer" "critic_perf" "chaos")
 SAVE_SESSION="auto_save_$(date +%s)}"
-RESUME_SESSION="$(lst -1t ~/.ruchat/sessions | head -n 1 2>/dev/null || echo "")"
+RESUME_SESSION="$(ls -1t ~/.ruchat/sessions | head -n 1 2>/dev/null || echo "")"
+TERSE_MODE=false
 
 # Define default role-to-model mapping
 declare -A OPTS=(
@@ -48,24 +49,18 @@ declare -A OPTS=(
     [validator_model]="qwen2.5:7b"
     [critic_model]="qwen2.5:7b"
     [summarizer_model]="mistral-nemo"
-    [critic_perf_model]="qwen2.5:7b"
-    [chaos_model]="mistral"
  
     [architect_temp]=0.0
     [worker_temp]=0.7
     [validator_temp]=0.0
     [critic_temp]=0.0
     [summarizer_temp]=0.0
-    [critic_perf_temp]=0.0
-    [chaos_temp]=1.0
 
     [architect_init]="System: You are the TECHNICAL ARCHITECT AGENT. Your role is to devise a comprehensive technical plan for the WORKER agent to implement. Focus on clarity, structure, and feasibility."
     [worker_init]="You are the IMPLEMENTATION AGENT. Follow the Architect's plan precisely."
     [validator_init]="You are the SMART VALIDATOR AGENT. Your role is to validate the WORKER's output against the provided specifications and ensure correctness."
     [critic_init]="You are the SAFETY CRITIC AGENT. Your role is to review the WORKER's output for safety, security, and best practices."
     [summarizer_init]="You are the SESSION SUMMARIZER AGENT. Your role is to condense the session history into a concise summary, focusing on key decisions and changes."
-    [critic_perf_init]="System: You are the PERFORMANCE CRITIC AGENT. Your role is to evaluate the WORKER's output for performance optimizations and efficiency improvements."
-    [chaos_init]="System: You are to inject random system constraints to test resilience."
 )
 CRITIC_SAFETY_INIT="Safety Critic. Focus: Memory safety, race conditions, edge-case handling, and error propagation. Be pedantic."
 CRITIC_PERF_INIT="Performance Critic. Focus: Zero-cost abstractions, avoiding heap allocations, Big-O complexity, and cache locality."
@@ -73,19 +68,23 @@ CRITIC_PERF_INIT="Performance Critic. Focus: Zero-cost abstractions, avoiding he
 # Function to set argument
 parse_opt_arg() {
     local what="$1"
-    local arg="$2"
-    if [[ "$arg" == *":"* ]]; then
-        local role="${arg%%:*}"
-        local opt="${arg#*:}"
-        OPTS[${role}_${what}]="$opt"
-    else
-        OPTS[worker_${what}]="$arg"
-    fi
+    local opt="$2"
+    local val="$3"
+    case opt in
+        --*arch*) role="architect" ;;
+        --*work*) role="worker" ;;
+        --*vali*) role="validator" ;;
+        --*crit*) role="critic" ;;
+        --*summ*) role="summarizer" ;;
+        --*perf*) role="critic_perf" ;;
+        --*chaos*) role="chaos" ;;
+        *) role="worker" ;;
+    esac
+    OPTS[${role}_${what}]="$val"
 }
 
 options() {
     cat <<EOF 1>&2
-
 Agent Configuration Options:
     -m, --model "{agent}:{model}"     Specify the model for Agent [worker] (e.g., "${AGENT[1]}:${OPTS[worker_model]}").
     -T, --temp "{agent}:<value>"      Temperature setting for Agent [worker] model (default: ${AGENT[1]}:${OPTS[worker_temp]}).
@@ -116,6 +115,7 @@ EOF
 }
 
 models() {
+    ech0 "Available Models:" 1>&2
     ollama list 1>&2
 }
 
@@ -132,23 +132,34 @@ Available Agents:
 EOF
 }
 
+goal() {
+    cat <<EOF 1>&2
+Goal:
+    A concise description of the user's objective for the orchestrator.
+
+EOF
+}
 usage() {
     case "$1" in
-        options) options; exit 0;;
-        models) echo "Available Models (ollama list)" 1>&2;
-            models; exit 0;;
-        tasks) "$SCRIPT_DIR/task_manager.sh" --help tasks; exit 0;;
-        *)
-            echo -e "Usage: $0 [options] <task> \"<goal>\"\n\n" 1>&2
-            task_types
-            echo "" 1>&2
+        option*) options;;
+        agent*) agents;;
+        model*) echo "Available Models (ollama list)" 1>&2;
+            models;;
+        task*) "$SCRIPT_DIR/task_manager.sh" --help tasks;;
+        all)
             options
-            echo "" 1>&2
             agents
-            echo -e "\nGoal:\n  A concise description of the user's objective for the orchestrator.\n" 1>&2
+            goal
+            models
+            exit 0;;
+        *)  [[ "$1" != "continue" ]] && echo -e "Usage: $0 [options] <task> \"<goal>\"\n\n" 1>&2
+            options
+            agents
+            goal
             [[ -n "$1" ]] && echo -e "Error: $1\n\n" 1>&2
             exit "${2-0}";;
     esac
+    exit 0
 }
 
 # New Global State
@@ -160,31 +171,24 @@ TASK_TYPE=""
 USER_GOAL=""
 DEBUG=false
 
-
-# --- Argument Parsing ---
-[ $# -lt 1 ] && usage "No task specified." 1
-TASK_TYPE="$1"
-shift
-
 # Main Argument Loop Update
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        -m|--mod*) parse_opt_arg "model" "$2"; shift 2 ;;
-        -I|--init*) parse_opt_arg "init" "$2" shift 2 ;;
-        -T|--temp*) parse_opt_arg "temp" "$2" shift 2 ;;
+        -m|--mod*) parse_opt_arg "model" "$1" "$2"; shift 2 ;;
+        -I|--init*) parse_opt_arg "init" "$1" "$2"; shift 2 ;;
+        -T|--temp*) parse_opt_arg "temp" "$1" "$2"; shift 2 ;;
         --strip-chatter) STRIP_CHATTER="$2"; shift 2 ;;
         -i|--iter*) ITERATIONS="$2"; shift 2 ;;
         -S|--save) SAVE_SESSION="$2"; shift 2 ;;
         -R|--resume) RESUME_SESSION="$2"; shift 2 ;;
         --val-cmd) VAL_CMD="$2"; shift 2 ;;
         --terse)
+            TERSE_MODE=true
             OPTS[architect_init]="System: You are the TECHNICAL ARCHITECT AGENT. Provide concise, minimalist plans with no extra explanation."
             OPTS[worker_init]="You are the IMPLEMENTATION AGENT. Provide concise code changes only."
             OPTS[validator_init]="You are the SMART VALIDATOR AGENT. Provide brief validation results without extra commentary."
             OPTS[critic_init]=""
             OPTS[summarizer_init]="You are the SESSION SUMMARIZER AGENT. Provide a brief summary of key decisions and changes."
-            OPTS[critic_perf_init]="You are the PERFORMANCE CRITIC AGENT. Provide concise performance reviews focusing on major optimizations."
-            OPTS[chaos_init]="You are the CHAOS INJECTION AGENT. Introduce brief, impactful challenges without elaboration."
             shift ;;
 
         --file) TARGET_FILE="$2"; shift 2 ;;
@@ -194,19 +198,23 @@ while [[ $# -gt 0 ]]; do
 
         -h|--help) usage "${2:-}";;
         -j|--dry-run) DRY_RUN="$2"; shift 2 ;;
-        -D|--debug) DEBUG=true; shift ;;
-        *) [ -z "${USER_GOAL}" ] && USER_GOAL="${1%.}." || 
-        TASK_TYPE="$1"; shift ;;
+        -D|--debug) DEBUG=true; set -Tx; shift ;;
+        *) 
+            if [[ -z "${TASK_TYPE}" ]]; then
+                TASK_TYPE="$1"
+                shift
+            elif [[ -z "${USER_GOAL}" ]]; then
+                USER_GOAL="${1%.}."
+                shift
+            else
+                usage "Unknown argument: $1" 1
+            fi
     esac
 done
 
 [[ -z "$USER_GOAL" ]] && usage "No user goal provided." 1
 
-[[ -n "$VAL_CMD" ]] && LOOP_TYPE="VALIDATED" || LOOP_TYPE="STANDARD"
-
 # --- Dynamic Role Engine ---
-DUO_MODE=false
-CHAOS_MODE=false
 
 case "$TASK_TYPE" in
     git-ops|git-pr-apply|git-bisect-autofix)
@@ -216,14 +224,27 @@ case "$TASK_TYPE" in
             GIT_PAYLOAD=$(query_git_context "$TARGET_COMMIT")
         fi
         ;;
-    chaos-drill)
-        CHAOS_MODE=true
-        DUO_MODE=true
-        ;;
-    rust-high-stakes)
-        DUO_MODE=true
+    chaos-drill|rust-high-stakes)
+        OPTS[critic_perf_model]="qwen2.5:7b"
+        OPTS[critic_perf_temp]=0.0
+        if [[ "${TERSE_MODE}" = true ]]; then
+            OPTS[critic_perf_init]="System: You are the PERFORMANCE CRITIC AGENT. Provide concise performance reviews focusing on major optimizations."
+        else
+            OPTS[critic_perf_init]="System: You are the PERFORMANCE CRITIC AGENT. Your role is to evaluate the WORKER's output for performance optimizations and efficiency improvements."
+        fi
         ;;
 esac
+
+if [[ "${TASK_TYPE}" == "chaos-drill" ]]; then
+    OPTS[chaos_model]="mistral"
+    OPTS[chaos_temp]=1.0
+    if [[ "${TERSE_MODE}" = true ]]; then
+        OPTS[chaos_init]="System: You are the CHAOS INJECTION AGENT. Introduce brief, impactful challenges without elaboration."
+    else
+        OPTS[chaos_init]="System: You are to inject random system constraints to test resilience."
+    fi
+fi
+
 # Append to all _INIT variables
 # Append to all system prompts to enforce high-signal communication
 WORKER_INIT+=" $STRICT_FORMAT"
@@ -372,14 +393,14 @@ done
 # Start Ruchat Pipes
 $RUCHAT_BIN pipe -m "${OPTS[architect_model]}" -o "{\"temperature\": ${OPTS[architect_temp]}}" < /tmp/ruchat_architect_in > /tmp/ruchat_architect_out &
 $RUCHAT_BIN pipe -m "${OPTS[worker_model]}" -o "{\"temperature\": ${OPTS[worker_temp]}}" < /tmp/ruchat_worker_in > /tmp/ruchat_worker_out &
-[[ "$LOOP_TYPE" = "VALIDATED" ]] && \
+[[ -n "$VAL_CMD" ]] && \
   $RUCHAT_BIN pipe -m "${OPTS[validator_model]}" -o "{\"temperature\": ${OPTS[validator_temp]}}" < /tmp/ruchat_validator_in > /tmp/ruchat_validator_out &
 $RUCHAT_BIN pipe -m "${OPTS[critic_model]}" -o "{\"temperature\": ${OPTS[critic_temp]}}" < /tmp/ruchat_critic_in > /tmp/ruchat_critic_out &
 [[ "$STRIP_CHATTER" = true ]] && \
   $RUCHAT_BIN pipe -m "${OPTS[summarizer_model]}" -o "{\"temperature\": ${OPTS[summarizer_temp]}}" < /tmp/ruchat_summarizer_in > /tmp/ruchat_summarizer_out &
-[[ "$DUO_MODE" = true ]] && \
+[[ -n "${OPTS[critic_perf_init]:-}" ]] && \
   $RUCHAT_BIN pipe -m "${OPTS[critic_perf_model]}" -o "{\"temperature\": ${OPTS[critic_perf_temp]}}" < /tmp/ruchat_critic_perf_in > /tmp/ruchat_critic_perf_out &
-[[ "$CHAOS_MODE" = true ]] && \
+[[ -n "${OPTS[chaos_init]:-}" ]] && \
   $RUCHAT_BIN pipe -m "${OPTS[chaos_model]:-mistral}" -o "{\"temperature\": ${OPTS[chaos_temp]}}" < /tmp/ruchat_chaos_in > /tmp/ruchat_chaos_out &
 
 # Infrastructure: Add the second Critic pipe
@@ -390,7 +411,7 @@ exec {FD_WORK_IN}>/tmp/ruchat_worker_in {FD_WORK_OUT}</tmp/ruchat_worker_out
 exec {FD_CRIT_IN}>/tmp/ruchat_critic_in {FD_CRIT_OUT}</tmp/ruchat_critic_out
 
 # Conditional opens: Only open if the background process was actually started
-if [ "$LOOP_TYPE" = "VALIDATED" ]; then
+if [[ -n "$VAL_CMD" ]]; then
     exec {FD_VALI_IN}>/tmp/ruchat_validator_in {FD_VALI_OUT}</tmp/ruchat_validator_out
 fi
 
@@ -398,11 +419,11 @@ if [ "$STRIP_CHATTER" = true ]; then
     exec {FD_SUMM_IN}>/tmp/ruchat_summarizer_in {FD_SUMM_OUT}</tmp/ruchat_summarizer_out
 fi
 
-if [ "$DUO_MODE" = true ]; then
+if [[ -n "${OPTS[critic_perf_init]:-}" ]]; then
     exec {FD_CRIT_PERF_IN}>/tmp/ruchat_critic_perf_in {FD_CRIT_PERF_OUT}</tmp/ruchat_critic_perf_out
 fi
 
-if [ "$CHAOS_MODE" = true ]; then
+if [[ -n "${OPTS[chaos_init]:-}" ]]; then
     exec {FD_CHAOS_IN}>/tmp/ruchat_chaos_in {FD_CHAOS_OUT}</tmp/ruchat_chaos_out
 fi
 
@@ -967,7 +988,7 @@ for i in $(seq 1 "$ITERATIONS"); do
     maintain_context_efficiency 
 
     # 2. CHAOS INJECTION (Environmental constraints)
-    if [[ "$CHAOS_MODE" == "true" ]]; then
+    if [[ -n "${OPTS[chaos_init]:-}" ]]; then
         CHAOS_EVENT=$(query_agent "$FD_CHAOS_IN" "$FD_CHAOS_OUT" "$C_SUMM" "CHAOS" \
             "${OPTS[chaos_init]} Inject hazard based on files: $TARGET_FILE.")
         OPTS[chaos_init]="${CHAOS_REINIT}"
@@ -1019,7 +1040,7 @@ for i in $(seq 1 "$ITERATIONS"); do
     fi
 
     # Smart Validation (Compiler/Check) with Post-Mortem Analysis
-    if [[ "$LOOP_TYPE" == "VALIDATED" ]]; then
+    if [[ -n "$VAL_CMD" ]]; then
         # Pass the primary file and the validation command
         if ! VAL_REPORT=$(run_ripple_validation "$TARGET_FILE" "$VAL_CMD"); then
             # If primary fails, extract log and loop back
@@ -1032,7 +1053,7 @@ for i in $(seq 1 "$ITERATIONS"); do
             echo -e "${C_CRIT}SYSTEM: Primary passed, but regressions detected in coupled files.${NC}" 1>&2
     fi
     # 6. CRITICISM (Multi-Agent or Single)
-    if [[ "${DUO_MODE:-false}" == "true" ]]; then
+    if [[ -n "${OPTS[critic_perf_init]:-}" ]]; then
         echo -e "${C_CRIT}SYSTEM: Initiating Multi-Agent Debate...${NC}"
         
         REVIEW_SAFETY=$(query_agent "$FD_CRIT_IN" "$FD_CRIT_OUT" "$C_CRIT" "SAFETY" "${OPTS[critic_safety_init]} Review: $WORKER_OUT")
@@ -1048,7 +1069,7 @@ for i in $(seq 1 "$ITERATIONS"); do
             update_session_debate "${TARGET_FILE}" "$REVIEW_SAFETY" "$REVIEW_PERF"
             CURRENT_PROMPT="DEBATE CONFLICT:\nSafety: $REVIEW_SAFETY\nPerformance: $REVIEW_PERF"
         fi
-    elif [[ -n "${OPT[critic_init]:-}" ]]; then
+    elif [[ -n "${OPTS[critic_init]:-}" ]]; then
         # Single Critic
         CRITIC_PROMPT="Goal: $USER_GOAL\nAction Result: $VAL_REPORT\nWorker Output: $WORKER_OUT"
         REVIEW=$(query_agent "$FD_CRIT_IN" "$FD_CRIT_OUT" "$C_CRIT" "CRITIC" "${OPTS[critic_init]}\n$CRITIC_PROMPT")
