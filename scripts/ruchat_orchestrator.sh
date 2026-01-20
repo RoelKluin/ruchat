@@ -163,7 +163,7 @@ usage() {
 }
 
 # New Global State
-TARGET_FILE=""
+TARGET_FILES=()
 TARGET_CRATE=""
 TARGET_COMMIT=""
 SUBJECT=""
@@ -191,7 +191,7 @@ while [[ $# -gt 0 ]]; do
             OPTS[summarizer_init]="You are the SESSION SUMMARIZER AGENT. Provide a brief summary of key decisions and changes."
             shift ;;
 
-        --file) TARGET_FILE="$2"; shift 2 ;;
+        --file) TARGET_FILES+=("$2"); shift 2 ;;
         --commit) TARGET_COMMIT="$2"; shift 2 ;;
         --subject) SUBJECT="$2"; shift 2 ;;
         --crate) TARGET_CRATE="$2"; shift 2 ;;
@@ -309,7 +309,7 @@ save_session() {
     cp "$SESSION_FILE" "${target_path}/state.json"
     
     # Save target files to track drift
-    [[ -f "$TARGET_FILE" ]] && cp "$TARGET_FILE" "${target_path}/last_known_file"
+    [[ -f "${TARGET_FILES[0]}" ]] && cp "${TARGET_FILES[0]}" "${target_path}/last_known_file"
     
     echo -e "${C_SUMM}SESSION SAVED: ${session_name}${NC}"
 }
@@ -340,8 +340,10 @@ estimate_costs() {
     if [[ -n "$TARGET_COMMIT" ]]; then
         # Simulate query_git_context
         payload_size=$(git show --abbrev-commit --stat -p -U1 "$TARGET_COMMIT" | wc -c)
-    elif [[ -f "$TARGET_FILE" ]]; then
-        payload_size=$(wc -c < "$TARGET_FILE")
+    elif [[ -f "${TARGET_FILEs[0]}" ]]; then
+        for f in "${TARGET_FILES[@]}"; do
+            payload_size=$(( payload_size + $(wc -c < "$f") ))
+        done
     fi
 
     local est_input_tokens=$(( payload_size / 4 ))
@@ -366,7 +368,7 @@ if [[ ! -f "tags" ]] && command -v ctags &> /dev/null; then
 fi
 
 # --- Initialization Phase ---
-if [[ -z "$TARGET_FILE" && "$TASK_TYPE" != "meta-gen" ]]; then
+if [[ -z "${TARGET_FILES[0]}" && "$TASK_TYPE" != "meta-gen" ]]; then
     echo -e "${C_SUMM}SYSTEM: No target file provided. Discovering context...${NC}"
     DISCOVERED_FILES=$(discover_relevant_files "$SUBJECT")
     
@@ -717,8 +719,10 @@ run_ripple_validation() {
         
         # Get symbols from the primary and the broken file to find the mismatch
         local context_update="Regression detected in $broken_file.\n"
-        [[ $TARGET_FILE =~ \.md$ ]] ||
-            context_update+="Symbols in $TARGET_FILE:\n$(echo "$TARGET_FILE" | top_symbols_for_files 10)\n"
+        for f in ${TARGET_FILES[@]}; do
+            [[ $f =~ \.md$ ]] && continue
+            context_update+="Symbols in $f:\n$(echo "$f" | top_symbols_for_files 10)\n"
+        done
         [[ $broken_file =~ \.md$ ]] ||
             context_update+="Symbols in $broken_file:\n$(echo "$broken_file" | top_symbols_for_files 10)\n"
 
@@ -797,10 +801,14 @@ run_bisect_session() {
     git bisect start "$bad_rev" "$good_rev"
 
     # Use 'git bisect run' to automate the logic engine as the decider
+    local TARGETS=""
+    for f in "${TARGET_FILES[@]}"; do
+        TARGETS+=" --file $f"
+    done
     git bisect run bash -c "
         # Run the orchestrator in a non-interactive mode for a single iteration
         # If orchestrator returns 0 (APPROVED), git treats commit as 'good'
-        ./orchestrator.sh debug-test --iter 1 --file $TARGET_FILE
+        ./orchestrator.sh debug-test --iter 1 --file $TARGETS
     "
     
     echo -e "${C_SUMM}SYSTEM: Bisect Complete. Culprit identified.${NC}"
@@ -824,14 +832,16 @@ query_agent() {
     fi
 
     # --- Target File Enrichment ---
-    if [[ -f "$TARGET_FILE" ]]; then
-        # Inject the specialized Git/Symbol metadata
-        [[ "$TARGET_FILE" == *".md" ]] ||
-            context+="$(get_target_file_metadata "$TARGET_FILE")\n"
-        
-        # Inject full content of the primary file
-        context+="\n[SOURCE: $TARGET_FILE]\n$(cat "$TARGET_FILE")\n"
-    fi
+    for f in "${TARGET_FILES[@]}"; do
+        if [[ -f "$f" ]]; then
+            # Inject the specialized Git/Symbol metadata
+            [[ "$f" != *".md" ]] ||
+                context+="$(get_target_file_metadata "$f")\n"
+            
+            # Inject full content of the primary file
+            context+="\n[SOURCE: $f]\n$(cat "$f")\n"
+        fi
+    done
 
     # Handle Multi-File Context
     if [[ -n "${DISCOVERED_FILES:-}" ]]; then
@@ -839,20 +849,31 @@ query_agent() {
         context+="$(echo "$DISCOVERED_FILES" | treeify)\n"
 
         for f in $DISCOVERED_FILES; do
-            if [[ "$f" == "$TARGET_FILE" ]]; then
-                context+="\n[PRIMARY FILE: $f]\n$(cat "$f")\n"
-            else
+            local found=false
+            for tf in "${TARGET_FILES[@]}"; do
+                if [[ "$f" == "$tf" ]]; then
+                    context+="\n[PRIMARY FILE: $f]\n$(cat "$f")\n"
+                    found=true
+                    break
+                fi
+            done
+            [[ "$found" = false ]] && \
                 context+="\n[REFERENCE FILE: $f]\n$(head -n 50 "$f")\n... (truncated)\n"
-            fi
         done
-    elif [[ -f "$TARGET_FILE" ]]; then
-        context+="\n[FILE: $TARGET_FILE]\n$(cat "$TARGET_FILE")\n"
+    elif [[ -f "${TARGET_FILES[0]}" ]]; then
+        for f in "${TARGET_FILES[@]}"; do
+            [[ -f "$f" ]] && context+="\n[FILE: $f]\n$(cat "$f")\n"
+        done
     fi
 
     # 3. Dynamic Tooling Context
     case "$TASK_TYPE" in
         editor-nav)
-            [[ -f "tags" ]] && context+="\n[CTAGS]\n$(grep "${TARGET_FILE:-.*}" tags | head -n 30)\n" ;;
+            if [[ -f "tags" ]]; then
+                for f in "${TARGET_FILES[@]}"; do
+                    context+="\n[CTAGS]\n$(grep "${f:-.*}" tags | head -n 30)\n" 
+                done
+            fi;;
         rust-meta-opt)
             context+="\n[BLOAT]\n$(cargo bloat --release -n 5 2>/dev/null)\n" ;;
         debug-core)
@@ -989,8 +1010,12 @@ for i in $(seq 1 "$ITERATIONS"); do
 
     # 2. CHAOS INJECTION (Environmental constraints)
     if [[ -n "${OPTS[chaos_init]:-}" ]]; then
+        TARGETS=""
+        for f in "${TARGET_FILES[@]}"; do
+            TARGETS+=" $f"
+        done
         CHAOS_EVENT=$(query_agent "$FD_CHAOS_IN" "$FD_CHAOS_OUT" "$C_SUMM" "CHAOS" \
-            "${OPTS[chaos_init]} Inject hazard based on files: $TARGET_FILE.")
+            "${OPTS[chaos_init]} Inject hazard based on files: $TARGETS.")
         OPTS[chaos_init]="${CHAOS_REINIT}"
         # Crucial: Prepend to the current goal so the Architect prioritizes the hazard
         CURRENT_PROMPT="[ENVIRONMENTAL HAZARD: $CHAOS_EVENT] Context: $CURRENT_PROMPT"
@@ -1027,12 +1052,11 @@ for i in $(seq 1 "$ITERATIONS"); do
     if [[ "$WORKER_OUT" == *":%s/"* || "$WORKER_OUT" == *'```vim'* ]]; then
         VIM_SCRIPT=$(echo "$WORKER_OUT" | sed -n '/^```\(vim\)\?$/,/^```$/p' | sed '1d;$d')
         [[ -z "$VIM_SCRIPT" ]] && VIM_SCRIPT=$(echo "$WORKER_OUT" | grep -E '^(:|%|s/)')
-        
-        if [[ -n "$VIM_SCRIPT" && -f "$TARGET_FILE" ]]; then
+        if [[ -n "$VIM_SCRIPT" && -f "${TARGET_FILES[0]}" ]]; then
             TMP_VIM="/tmp/apply_fix.vim"
             { echo "set backup"; echo "$VIM_SCRIPT"; echo "wq"; } > "$TMP_VIM"
-            if vim -u NONE -es -S "$TMP_VIM" "$TARGET_FILE"; then
-                VAL_REPORT+="[Vim changes applied to $TARGET_FILE] "
+            if vim -u NONE -es -S "$TMP_VIM" "${TARGET_FILES[0]}"; then
+                VAL_REPORT+="[Vim changes applied to ${TARGET_FILES[0]}] "
             else
                 VAL_REPORT+="[Vim execution FAILED] "
             fi
@@ -1042,7 +1066,7 @@ for i in $(seq 1 "$ITERATIONS"); do
     # Smart Validation (Compiler/Check) with Post-Mortem Analysis
     if [[ -n "$VAL_CMD" ]]; then
         # Pass the primary file and the validation command
-        if ! VAL_REPORT=$(run_ripple_validation "$TARGET_FILE" "$VAL_CMD"); then
+        if ! VAL_REPORT=$(run_ripple_validation "${TARGET_FILES[0]}" "$VAL_CMD"); then
             # If primary fails, extract log and loop back
             CURRENT_PROMPT="Validation Failed:\n$VAL_REPORT\nAdjust implementation."
             continue
@@ -1063,10 +1087,10 @@ for i in $(seq 1 "$ITERATIONS"); do
         OPTS[critic_perf_init]="${CRITIC_PERF_REINIT}"
 
         if [[ "$REVIEW_SAFETY" == *"APPROVED"* && "$REVIEW_PERF" == *"APPROVED"* ]]; then
-            update_session_debate "${TARGET_FILE}" "APPROVED" "APPROVED"
+            update_session_debate "${TARGET_FILES[0]}" "APPROVED" "APPROVED"
             break
         else
-            update_session_debate "${TARGET_FILE}" "$REVIEW_SAFETY" "$REVIEW_PERF"
+            update_session_debate "${TARGET_FILES[0]}" "$REVIEW_SAFETY" "$REVIEW_PERF"
             CURRENT_PROMPT="DEBATE CONFLICT:\nSafety: $REVIEW_SAFETY\nPerformance: $REVIEW_PERF"
         fi
     elif [[ -n "${OPTS[critic_init]:-}" ]]; then
