@@ -1,4 +1,4 @@
-use crate::agent::werker::Agent;
+use crate::agent::worker::Agent;
 use crate::agent::Team;
 use crate::config::{load_manager, save_manager}; // We will add these
 use anyhow::{anyhow, Result};
