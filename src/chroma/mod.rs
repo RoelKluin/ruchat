@@ -3,14 +3,44 @@ pub(crate) mod ls;
 pub(crate) mod query;
 pub(crate) mod similarity;
 
+use crate::error::RuChatError;
 use anyhow::Result;
 use chroma::client::{ChromaAuthMethod, ChromaHttpClientOptions, ChromaRetryOptions};
+use chroma::types::{
+    Cmek, Metadata, MetadataValue, Schema, UpdateMetadata, UpdateMetadataValue, ValueTypes,
+};
 use chroma::ChromaHttpClient;
 use clap::Parser;
 use http::{HeaderName, HeaderValue};
+use std::collections::HashMap;
+use std::error::Error;
+use std::sync::Arc;
 use std::time::Duration;
-use chroma::types::{Metadata, MetadataValue, UpdateMetadata, UpdateMetadataValue};
-use crate::error::RuChatError;
+
+fn parse_key_val<T, U>(s: &str) -> Result<(T, U), Box<dyn Error + Send + Sync + 'static>>
+where
+    T: std::str::FromStr,
+    T::Err: Error + Send + Sync + 'static,
+    U: std::str::FromStr,
+    U::Err: Error + Send + Sync + 'static,
+{
+    match s.split_once('=') {
+        Some((key, value)) => Ok((key.parse()?, value.parse()?)),
+        None => Err(format!("invalid KEY=VALUE: no `=` found in `{}`", s).into()),
+    }
+}
+
+#[derive(Parser, Debug, Clone, PartialEq)]
+pub struct ChromaCollectionConfigArgs {
+    #[arg(short = 'c', long, default_value = "default")]
+    pub collection: String,
+
+    #[arg(short = 'm', long, value_name = "KEY=VALUE", value_parser = parse_key_val::<String, String>)]
+    pub metadata: HashMap<String, String>,
+
+    #[arg(short = 's', long, value_name = "KEY=VALUE", value_parser = parse_key_val::<String, String>)]
+    pub schema: HashMap<String, String>,
+}
 
 #[derive(Parser, Debug, Clone, PartialEq)]
 pub struct ChromaClientConfigArgs {
@@ -30,21 +60,6 @@ pub struct ChromaClientConfigArgs {
     pub tenant_id: Option<String>,
     #[arg(short = 'd', long, default_value = "default")]
     pub chroma_database: Option<String>,
-}
-
-impl ChromaClientConfigArgs {
-    pub fn get_client_config(&self) -> ChromaClientConfigArgs {
-        ChromaClientConfigArgs {
-            chroma_server: self.chroma_server.clone(),
-            chroma_token: self.chroma_token.clone(),
-            max_retries: self.max_retries,
-            min_delay: self.min_delay,
-            max_delay: self.max_delay,
-            jitter: self.jitter,
-            tenant_id: self.tenant_id.clone(),
-            chroma_database: self.chroma_database.clone(),
-        }
-    }
 }
 
 /// Access a running Chroma server to store and retrieve data for embeddings.
@@ -143,15 +158,49 @@ fn get_update_metadata(
 pub async fn get_or_create_chroma_collection(
     client: &ChromaHttpClient,
     collection: &str,
-    args: &ChromaClientConfigArgs,
+    args: &ChromaCollectionConfigArgs,
 ) -> Result<String> {
-    // FIXME: currently no schema or metadata support
-    let collection_schema = None;
-    let collection_metadata = None;
-    let client = create_client(&args.get_client_config())?;
+    let schema = match args.schema.is_empty() {
+        true => None,
+        false => {
+            // FIXME: currently no defaults or keys support
+            let defaults = ValueTypes {
+                string: None,
+                float_list: None,
+                sparse_vector: None,
+                int: None,
+                float: None,
+                boolean: None,
+            };
+            let keys: HashMap<String, ValueTypes> = HashMap::new();
+            let cmek: Option<Cmek> = args
+                .schema
+                .get("cmek")
+                .cloned()
+                .map(|s| Cmek::Gcp(Arc::new(s)));
+            let source_attached_function_id =
+                args.schema.get("source_attached_function_id").cloned();
+            Some(Schema {
+                defaults,
+                keys,
+                cmek,
+                source_attached_function_id,
+            })
+        }
+    };
+    let metadata: Option<Metadata> = match args.metadata.is_empty() {
+        true => None,
+        false => {
+            let mut md = Metadata::new();
+            for (k, v) in args.metadata.iter() {
+                _ = md.insert(k.to_string(), MetadataValue::Str(v.to_string()));
+            }
+            Some(md)
+        }
+    };
     // Get or create a collection with the given name and no metadata.
     let collection = client
-        .get_or_create_collection(collection, collection_schema, collection_metadata)
+        .get_or_create_collection(collection, schema, metadata)
         .await?;
 
     // Get the UUID of the collection

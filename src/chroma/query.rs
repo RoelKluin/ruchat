@@ -1,4 +1,7 @@
-use crate::chroma::{create_client, ChromaClientConfigArgs};
+use crate::chroma::{
+    create_client, get_or_create_chroma_collection, ChromaClientConfigArgs,
+    ChromaCollectionConfigArgs,
+};
 use crate::error::RuChatError;
 use crate::io::Io;
 use crate::ollama::model::get_name;
@@ -50,7 +53,62 @@ pub struct QueryArgs {
     pub(crate) metadata: Option<String>,
 
     #[command(flatten)]
+    pub collection_config: ChromaCollectionConfigArgs,
+
+    #[command(flatten)]
     pub client_config: ChromaClientConfigArgs,
+}
+
+pub async fn query_chroma(args: &QueryArgs) -> Result<Vec<Vec<f32>>, RuChatError> {
+    let mut children = vec![Where::Document(DocumentExpression {
+        operator: DocumentOperator::Contains,
+        pattern: args.query.clone(),
+    })];
+
+    if let Some(metadata) = args.metadata.as_ref() {
+        metadata.split(',').for_each(|s| {
+            if let Some((k, v)) = s.split_once(':') {
+                children.push(Where::Metadata(MetadataExpression {
+                    key: k.to_string(),
+                    comparison: MetadataComparison::Primitive(
+                        PrimitiveOperator::Equal,
+                        MetadataValue::Str(v.to_string()),
+                    ),
+                }));
+            }
+        });
+    }
+
+    let composite_expression = CompositeExpression {
+        operator: BooleanOperator::And,
+        children,
+    };
+
+    let where_metadata = Some(Where::Composite(composite_expression));
+
+    let client = create_client(&args.client_config)?;
+    // Perform the query
+    let collection_uuid =
+        get_or_create_chroma_collection(&client, &args.collection, &args.collection_config).await?;
+    let collection = client.get_collection(&collection_uuid).await?;
+    let query_embeddings: Vec<Vec<f32>> = vec![];
+    let n_results: Option<u32> = Some(args.count);
+    let where_metadata: Option<Where> = where_metadata;
+    let ids: Option<Vec<String>> = None;
+    let include: Option<IncludeList> = Some(IncludeList::default_get());
+
+    let result = collection
+        .query(query_embeddings, n_results, where_metadata, ids, include)
+        .await?;
+    let embeddings: Option<Vec<Vec<Option<Vec<f32>>>>> = result.embeddings;
+
+    match embeddings {
+        Some(embeddings) => Ok(embeddings
+            .into_iter()
+            .map(|e| e.into_iter().filter_map(|v| v).flatten().collect())
+            .collect()),
+        None => Ok(vec![]),
+    }
 }
 
 /// Performs a query on a Chroma database and generates a response.
@@ -69,18 +127,15 @@ pub struct QueryArgs {
 /// A `Result` indicating success or failure.
 pub(crate) async fn query(ollama: Ollama, args: &QueryArgs) -> Result<(), RuChatError> {
     let client = create_client(&args.client_config)?;
-    let collection = client
-        .get_or_create_collection(&args.collection, None, None)
-        .await?;
 
     // Get embeddings from a collection with filters and limit set to 1.
     // An empty IDs vec will return all embeddings.
     let ids: Option<Vec<String>> = None;
-    let mut children = vec![];
-    children.push(Where::Document(DocumentExpression {
+    let mut children = vec![Where::Document(DocumentExpression {
         operator: DocumentOperator::Contains,
         pattern: args.query.clone(),
-    }));
+    })];
+
     if let Some(md) = args.metadata.as_ref() {
         md.split(',').for_each(|s| {
             if let Some((k, v)) = s.split_once(':') {
@@ -107,6 +162,9 @@ pub(crate) async fn query(ollama: Ollama, args: &QueryArgs) -> Result<(), RuChat
     let limit = Some(args.count);
     let offset = None;
     let include = Some(IncludeList::default_get());
+    let collection = client
+        .get_or_create_collection(&args.collection, None, None)
+        .await?;
     let get_result = collection
         .get(ids, Some(where_metadata), limit, offset, include)
         .await?;
