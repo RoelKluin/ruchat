@@ -1,7 +1,6 @@
-use crate::error::{Result, RuChatError};
+use crate::error::Result;
 use crate::io::Io;
-use crate::ollama::model::get_name;
-use crate::options::get_options;
+use crate::ollama::OllamaArgs;
 use clap::Parser;
 use ollama_rs::{generation::completion::request::GenerationRequest, models::ModelOptions, Ollama};
 use tokio_stream::StreamExt;
@@ -14,21 +13,12 @@ const DEFAULT_MODEL: &str = "qwen2.5vl:latest";
 /// to a model, including model details and configuration options.
 #[derive(Parser, Debug, Clone, Default, PartialEq)]
 pub struct PipeArgs {
-    /// Initial model to (down)load and use.
-    #[arg(short, long, default_value = "qwen2.5vl:latest")]
-    pub(crate) model: Option<String>,
-
-    /// Optional configuration file for model options, or a string
-    /// representing the options in JSON format.
-    #[arg(short, long)]
-    pub(crate) options: Option<String>,
-
-    /// Specify the model using a positional argument.
-    pub(crate) positional_model: Option<String>,
-
     /// Silent mode: suppresses output if set to true.
     #[arg(short, long, default_value_t = false)]
     silent: bool,
+
+    #[command(flatten)]
+    pub(crate) ollama_args: OllamaArgs,
 }
 
 // Reusable generation logic for Agents
@@ -76,14 +66,6 @@ pub async fn generate_oneshot(
 /// A `Result` indicating success or failure.
 pub(crate) async fn pipe(ollama: Ollama, args: &PipeArgs) -> Result<()> {
     let mut cio = Io::new();
-    let options = get_options(args.options.as_deref()).await?;
-
-    // Determine the initial model name
-    let model_name = match args.model.as_deref().or(args.positional_model.as_deref()) {
-        Some(model) if !model.is_empty() => get_name(&ollama, model).await?,
-        _ => DEFAULT_MODEL.to_string(),
-    };
-
     let mut prompt = String::new();
     while let Ok(line) = cio.read_line().await {
         if line == "---" {
@@ -92,8 +74,12 @@ pub(crate) async fn pipe(ollama: Ollama, args: &PipeArgs) -> Result<()> {
             prompt.push_str(&line);
         }
     }
+
     if !prompt.is_empty() {
-        let request = GenerationRequest::new(model_name, prompt).options(options.clone());
+        // Determine the initial model name
+        let model_name = args.ollama_args.get_model(&ollama).await?;
+        let options = args.ollama_args.get_options().await?;
+        let request = GenerationRequest::new(model_name, prompt).options(options);
         let mut stream = ollama.generate_stream(request).await?;
         while let Some(responses) = stream.next().await.transpose()? {
             for resp in responses {

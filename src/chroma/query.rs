@@ -4,8 +4,7 @@ use crate::chroma::{
 };
 use crate::error::RuChatError;
 use crate::io::Io;
-use crate::ollama::model::get_name;
-use crate::options::get_options;
+use crate::ollama::OllamaArgs;
 use anyhow::Result;
 use chroma::types::{
     BooleanOperator, CompositeExpression, DocumentExpression, DocumentOperator, IncludeList,
@@ -23,15 +22,6 @@ use tokio_stream::StreamExt;
 /// and database connection information.
 #[derive(Parser, Debug, Clone, PartialEq)]
 pub struct QueryArgs {
-    /// The model to use for the query.
-    #[arg(short, long, default_value = "qwen2.5-coder:14b")]
-    pub(crate) model: String,
-
-    /// Optional configuration file for model options, or a string
-    /// representing the options in JSON format.
-    #[arg(short, long)]
-    pub(crate) options: Option<String>,
-
     /// The query string to search for in the database.
     #[arg(short, long)]
     pub(crate) query: String,
@@ -57,6 +47,9 @@ pub struct QueryArgs {
 
     #[command(flatten)]
     pub client_config: ChromaClientConfigArgs,
+
+    #[command(flatten)]
+    pub(crate) ollama_args: OllamaArgs,
 }
 
 pub async fn query_chroma(args: &QueryArgs) -> Result<Vec<Vec<f32>>, RuChatError> {
@@ -179,9 +172,9 @@ pub(crate) async fn query(ollama: Ollama, args: &QueryArgs) -> Result<(), RuChat
     );
 
     let mut cio = Io::new();
-    let model_name = get_name(&ollama, &args.model).await?;
-    let request = GenerationRequest::new(model_name, prompt)
-        .options(get_options(args.options.as_deref()).await?);
+    let model_name = args.ollama_args.get_model(&ollama).await?;
+    let options = args.ollama_args.get_options().await?;
+    let request = GenerationRequest::new(model_name, prompt).options(options);
     let mut stream = ollama.generate_stream(request).await?;
     while let Some(res) = stream.next().await {
         let responses = res?;
