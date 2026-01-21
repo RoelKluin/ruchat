@@ -1,6 +1,6 @@
-use crate::error::{Result,RuChatError};
+use crate::error::{Result, RuChatError};
 use crate::io::Io;
-use crate::ollama::model::get_name;
+use crate::ollama::{model::get_name, OllamaArgs};
 use crate::options::get_options;
 use clap::Parser;
 use ollama_rs::{generation::completion::request::GenerationRequest, Ollama};
@@ -13,10 +13,6 @@ use tokio_stream::StreamExt;
 /// to a model, including model details, prompt, and input options.
 #[derive(Parser, Debug, Clone, Default, PartialEq)]
 pub struct AskArgs {
-    /// Model to (down)load and use.
-    #[arg(short, long, default_value = "qwen2.5-coder:14b")]
-    pub(crate) model: String,
-
     /// Prompt to use, if not provided, stdin will be used.
     #[arg(short, long)]
     pub(crate) prompt: Option<String>,
@@ -29,13 +25,11 @@ pub struct AskArgs {
     #[arg(short = 'i', long)]
     pub(crate) text_files: Option<String>,
 
-    /// Path to a JSON file to amend default generation options, or a string
-    /// representing the options in JSON format.
-    #[arg(short, long)]
-    pub(crate) options: Option<String>,
-
     /// Specify the prompt using a positional argument.
     pub(crate) positional_prompt: Option<String>,
+
+    #[command(flatten)]
+    pub(crate) ollama_args: OllamaArgs,
 }
 
 /// Generates a prompt based on the provided arguments.
@@ -123,9 +117,9 @@ pub(crate) async fn ask(ollama: Ollama, args: &AskArgs) -> Result<()> {
         prompt.push_str(&args.output_format);
         prompt.push_str(" output format.\n");
     }
-    let model_name = get_name(&ollama, &args.model).await?;
-    let request = GenerationRequest::new(model_name, prompt)
-        .options(get_options(args.options.as_deref()).await?);
+    let model_name = args.ollama_args.get_model(&ollama).await?;
+    let options = args.ollama_args.get_options().await?;
+    let request = GenerationRequest::new(model_name, prompt).options(options);
     let mut stream = ollama.generate_stream(request).await?;
     while let Some(res) = stream.next().await {
         let responses = res?;

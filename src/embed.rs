@@ -1,15 +1,12 @@
-use crate::chroma::{create_client, ChromaClientConfigArgs};
+use crate::arg_utils::parse_key_val;
+use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs};
 use crate::error::RuChatError;
 use crate::ollama::model::get_name;
-use chroma::embed::EmbeddingFunction;
 use chroma::types::{Metadata, MetadataValue, UpdateMetadata, UpdateMetadataValue};
-use chroma::ChromaCollection;
 use clap::Parser;
 use log::warn;
 use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
 use ollama_rs::Ollama;
-use serde_json::Value;
-use std::collections::HashMap;
 
 /// Command-line arguments for embedding data into a Chroma database.
 ///
@@ -26,16 +23,8 @@ pub struct EmbedArgs {
     #[arg(short, long)]
     pub(crate) prompt: String,
 
-    /// Chroma database collection name.
-    #[arg(short, long, default_value = "default")]
-    pub(crate) collection: String,
-
-    /// Chroma collection metadata, comma separated key:value pairs.
-    #[arg(short, long, default_value = "version:0.01")]
-    pub(crate) collection_metadata: Option<String>,
-
     /// Chroma update metadata, comma separated key:value pairs.
-    #[arg(short, long, default_value = "version:0.01")]
+    #[arg(short, long, value_name = "KEY:VALUE", value_parser = parse_key_val::<String, String>)]
     pub(crate) update_metadata: Option<String>,
 
     /// URIs associated with the embedding entries.
@@ -44,6 +33,9 @@ pub struct EmbedArgs {
 
     #[command(flatten)]
     pub client_config: ChromaClientConfigArgs,
+
+    #[command(flatten)]
+    pub collection_config: ChromaCollectionConfigArgs,
 }
 
 /// Parses metadata from a string of comma-separated key:value pairs.
@@ -125,15 +117,12 @@ pub(crate) async fn embed(ollama: Ollama, args: &EmbedArgs) -> Result<(), RuChat
 
     let request = GenerateEmbeddingsRequest::new(model_name, vec![args.prompt.as_str()].into());
     let res = ollama.generate_embeddings(request).await?;
-    let client = create_client(&args.client_config)?;
+    let client = args.client_config.create_client()?;
 
-    let collection_metadata = get_metadata(&args.collection_metadata)?;
-    let collection_schema = None;
-
-    eprintln!("Collection name: {}", args.collection);
-    // XXX error here.
-    let collection = client
-        .get_or_create_collection(&args.collection, collection_schema, collection_metadata)
+    eprintln!("Collection name: {}", args.collection_config.collection);
+    let collection = args
+        .collection_config
+        .get_or_create_collection(&client)
         .await?;
 
     let id = collection.id().to_string();

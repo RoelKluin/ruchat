@@ -1,4 +1,4 @@
-use crate::chroma::{create_client, ChromaClientConfigArgs};
+use crate::chroma::ChromaClientConfigArgs;
 use crate::error::RuChatError;
 use clap::Parser;
 
@@ -11,7 +11,7 @@ pub struct ChromaDeleteArgs {
 }
 
 pub async fn chroma_delete(args: &ChromaDeleteArgs) -> Result<(), RuChatError> {
-    let client = create_client(&args.client_config)?;
+    let client = args.client_config.create_client()?;
 
     client.delete_collection(&args.collection).await?;
     println!("Deleted collection: {}", args.collection);

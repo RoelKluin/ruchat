@@ -1,7 +1,4 @@
-use crate::chroma::{
-    create_client, get_or_create_chroma_collection, ChromaClientConfigArgs,
-    ChromaCollectionConfigArgs,
-};
+use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs};
 use crate::error::RuChatError;
 use crate::io::Io;
 use crate::ollama::OllamaArgs;
@@ -52,7 +49,7 @@ pub struct QueryArgs {
     pub(crate) ollama_args: OllamaArgs,
 }
 
-pub async fn query_chroma(args: &QueryArgs) -> Result<Vec<Vec<f32>>, RuChatError> {
+fn get_where_metadata(args: &QueryArgs) -> Option<Where> {
     let mut children = vec![Where::Document(DocumentExpression {
         operator: DocumentOperator::Contains,
         pattern: args.query.clone(),
@@ -77,25 +74,28 @@ pub async fn query_chroma(args: &QueryArgs) -> Result<Vec<Vec<f32>>, RuChatError
         children,
     };
 
-    let where_metadata = Some(Where::Composite(composite_expression));
+    Some(Where::Composite(composite_expression))
+}
 
-    let client = create_client(&args.client_config)?;
+pub async fn query_chroma(args: &QueryArgs) -> Result<Vec<Vec<f32>>, RuChatError> {
+    let client = args.client_config.create_client()?;
     // Perform the query
-    let collection_uuid =
-        get_or_create_chroma_collection(&client, &args.collection, &args.collection_config).await?;
-    let collection = client.get_collection(&collection_uuid).await?;
+    let collection = args
+        .collection_config
+        .get_or_create_collection(&client)
+        .await?;
+
     let query_embeddings: Vec<Vec<f32>> = vec![];
     let n_results: Option<u32> = Some(args.count);
-    let where_metadata: Option<Where> = where_metadata;
+    let where_metadata: Option<Where> = get_where_metadata(args);
     let ids: Option<Vec<String>> = None;
     let include: Option<IncludeList> = Some(IncludeList::default_get());
 
     let result = collection
         .query(query_embeddings, n_results, where_metadata, ids, include)
         .await?;
-    let embeddings: Option<Vec<Vec<Option<Vec<f32>>>>> = result.embeddings;
 
-    match embeddings {
+    match result.embeddings {
         Some(embeddings) => Ok(embeddings
             .into_iter()
             .map(|e| e.into_iter().filter_map(|v| v).flatten().collect())
@@ -119,48 +119,23 @@ pub async fn query_chroma(args: &QueryArgs) -> Result<Vec<Vec<f32>>, RuChatError
 ///
 /// A `Result` indicating success or failure.
 pub(crate) async fn query(ollama: Ollama, args: &QueryArgs) -> Result<(), RuChatError> {
-    let client = create_client(&args.client_config)?;
-
     // Get embeddings from a collection with filters and limit set to 1.
     // An empty IDs vec will return all embeddings.
-    let ids: Option<Vec<String>> = None;
-    let mut children = vec![Where::Document(DocumentExpression {
-        operator: DocumentOperator::Contains,
-        pattern: args.query.clone(),
-    })];
 
-    if let Some(md) = args.metadata.as_ref() {
-        md.split(',').for_each(|s| {
-            if let Some((k, v)) = s.split_once(':') {
-                children.push(Where::Metadata(MetadataExpression {
-                    key: k.to_string(),
-                    comparison: MetadataComparison::Primitive(
-                        PrimitiveOperator::Equal,
-                        MetadataValue::Str(v.to_string()),
-                    ),
-                }))
-            }
-        });
-    }
-    let children = vec![Where::Composite(CompositeExpression {
-        operator: BooleanOperator::And,
-        children,
-    })];
-    let composite_expression = CompositeExpression {
-        operator: BooleanOperator::And,
-        children,
-    };
-    let where_metadata = Where::Composite(composite_expression);
-
-    let limit = Some(args.count);
-    let offset = None;
-    let include = Some(IncludeList::default_get());
+    let client = args.client_config.create_client()?;
     let collection = client
         .get_or_create_collection(&args.collection, None, None)
         .await?;
+
+    let ids: Option<Vec<String>> = None;
+    let where_metadata = get_where_metadata(args);
+    let limit = Some(args.count);
+    let offset = None;
+    let include = Some(IncludeList::default_get());
     let get_result = collection
-        .get(ids, Some(where_metadata), limit, offset, include)
+        .get(ids, where_metadata, limit, offset, include)
         .await?;
+
     let res: Vec<_> = get_result
         .embeddings
         .map(|embeddings| embeddings.into_iter().flatten().collect())

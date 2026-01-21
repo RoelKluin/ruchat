@@ -1,4 +1,4 @@
-use crate::chroma::{create_client, ChromaClientConfigArgs};
+use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs};
 use crate::error::RuChatError;
 use anyhow::Result;
 use clap::Parser;
@@ -10,12 +10,11 @@ use clap::Parser;
 /// database name, and an optional authentication token.
 #[derive(Parser, Debug, Clone, PartialEq)]
 pub struct ChromaLsArgs {
-    /// Chroma database collection name.
-    #[arg(short, long, default_value = "default")]
-    pub(crate) collection: String,
+    #[command(flatten)]
+    pub collection: ChromaCollectionConfigArgs,
 
     #[command(flatten)]
-    pub client_config: ChromaClientConfigArgs,
+    pub client: ChromaClientConfigArgs,
 }
 
 /// Lists collections in a Chroma database.
@@ -32,12 +31,11 @@ pub struct ChromaLsArgs {
 /// A `Result` indicating success or failure.
 pub(crate) async fn chroma_ls(args: &ChromaLsArgs) -> Result<(), RuChatError> {
     // Instantiate a ChromaClient to connect to the Chroma database
-    let client = create_client(&args.client_config)?;
+    let client = args.client.create_client()?;
 
     // Instantiate a ChromaCollection to perform operations on a collection
-    let collection = client
-        .get_or_create_collection(&args.collection, None, None)
-        .await?;
+    let collection = args.collection.get_or_create_collection(&client).await?;
+
     eprintln!("Collection Name: {}", collection.name());
     eprintln!("Collection ID: {}", collection.id());
     eprintln!("Collection Metadata: {:?}", collection.metadata());

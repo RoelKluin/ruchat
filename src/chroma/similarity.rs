@@ -1,4 +1,4 @@
-use crate::chroma::{create_client, ChromaClientConfigArgs};
+use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs};
 use crate::error::RuChatError;
 use anyhow::Result;
 use chroma::types::{
@@ -26,16 +26,15 @@ pub struct SimilarityArgs {
     #[arg(short, long, default_value = "5")]
     pub(crate) similarity_count: u32,
 
-    /// Chroma database collection name.
-    #[arg(short, long, default_value = "default")]
-    pub(crate) collection: String,
-
     /// Chroma database metadata, comma separated key:value pairs.
     #[arg(short, long)]
     pub(crate) metadata: Option<String>,
 
     #[command(flatten)]
     pub client_config: ChromaClientConfigArgs,
+
+    #[command(flatten)]
+    pub collection_config: ChromaCollectionConfigArgs,
 }
 
 /// Subcommand to find similar embeddings in a Chroma database.
@@ -52,11 +51,12 @@ pub struct SimilarityArgs {
 /// A `Result` indicating success or failure.
 pub(crate) async fn similarity_search(args: &SimilarityArgs) -> Result<(), RuChatError> {
     // Instantiate a ChromaClient to connect to the Chroma database
-    let client = create_client(&args.client_config)?;
+    let client = args.client_config.create_client()?;
 
     // Instantiate a ChromaCollection to perform operations on a collection
-    let collection = client
-        .get_or_create_collection(&args.collection, None, None)
+    let collection = args
+        .collection_config
+        .get_or_create_collection(&client)
         .await?;
 
     let ids: Option<Vec<String>> = None;

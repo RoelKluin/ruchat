@@ -1,4 +1,5 @@
 pub mod agent;
+pub(crate) mod arg_utils;
 pub mod args;
 pub mod chroma;
 pub(crate) mod config;
