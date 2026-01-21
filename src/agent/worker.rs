@@ -1,7 +1,7 @@
 use crate::ollama::pipe::generate_oneshot;
 use anyhow::Result;
-use ollama_rs::models::ModelOptions;
 use ollama_rs::Ollama;
+use ollama_rs::models::ModelOptions;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 

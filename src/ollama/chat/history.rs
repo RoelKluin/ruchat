@@ -1,6 +1,6 @@
 use crate::ollama::chat::pos::Pos;
-use std::collections::VecDeque;
 use crossterm::terminal::ClearType;
+use std::collections::VecDeque;
 
 #[derive(Clone, Debug)]
 pub enum EditKind {
@@ -657,4 +657,3 @@ mod tests {
         }
     }
 }
-

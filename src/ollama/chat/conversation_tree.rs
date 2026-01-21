@@ -199,11 +199,7 @@ impl ConversationTree {
     /// # Returns
     ///
     /// A `Result` indicating success or failure.
-    pub(crate) fn add_answer(
-        &mut self,
-        question_id: usize,
-        text: Vec<String>,
-    ) -> Result<()> {
+    pub(crate) fn add_answer(&mut self, question_id: usize, text: Vec<String>) -> Result<()> {
         let question = self
             .questions
             .get_mut(&question_id)
@@ -418,7 +414,9 @@ mod tests {
         let question_text = vec!["What is your name?".to_string()];
         let question_id = tree.question(question_text.clone()).unwrap();
         let new_question_text = vec!["What is your full name?".to_string()];
-        let new_question_id = tree.edit_question(question_id, new_question_text.clone()).unwrap();
+        let new_question_id = tree
+            .edit_question(question_id, new_question_text.clone())
+            .unwrap();
         assert_eq!(tree.questions.len(), 2);
         assert_eq!(tree.questions[&new_question_id].text, new_question_text);
     }
@@ -508,7 +506,10 @@ mod tests {
         let question_text = vec!["What is your name?".to_string()];
         let question_id = tree.question(question_text.clone()).unwrap();
         let new_question_text = vec!["What is your full name?".to_string()];
-        assert!(tree.edit_question(question_id + 1, new_question_text).is_err());
+        assert!(
+            tree.edit_question(question_id + 1, new_question_text)
+                .is_err()
+        );
     }
 
     #[test]

@@ -1,20 +1,20 @@
+use crate::RuChatError;
 use crate::agent::manager::{Manager, ManagerArgs};
-use crate::chroma::delete::{chroma_delete, ChromaDeleteArgs};
-use crate::chroma::ls::{chroma_ls, ChromaLsArgs};
-use crate::chroma::query::{query, QueryArgs};
-use crate::chroma::similarity::{similarity_search, SimilarityArgs};
-use crate::embed::{embed, EmbedArgs};
-use crate::ollama::ask::{ask, AskArgs};
-use crate::ollama::chat::{chat, ChatArgs};
+use crate::chroma::delete::{ChromaDeleteArgs, chroma_delete};
+use crate::chroma::ls::{ChromaLsArgs, chroma_ls};
+use crate::chroma::query::{QueryArgs, query};
+use crate::chroma::similarity::{SimilarityArgs, similarity_search};
+use crate::embed::{EmbedArgs, embed};
+use crate::ollama::OllamaArgs;
+use crate::ollama::ask::{AskArgs, ask};
+use crate::ollama::chat::{ChatArgs, chat};
 use crate::ollama::func::func;
 use crate::ollama::func::strukt::func_struct;
 use crate::ollama::model::ls::list;
 use crate::ollama::model::pull::pull;
 use crate::ollama::model::rm::remove;
-use crate::ollama::pipe::{pipe, PipeArgs};
+use crate::ollama::pipe::{PipeArgs, pipe};
 use crate::ollama::server::ServerArgs;
-use crate::ollama::OllamaArgs;
-use crate::RuChatError;
 use clap::{Parser, Subcommand};
 
 /// Main command line interface for RuChat.

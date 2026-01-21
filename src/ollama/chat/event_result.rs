@@ -1,5 +1,5 @@
-use crossterm::terminal::ClearType;
 use crossterm::event::Event;
+use crossterm::terminal::ClearType;
 
 #[derive(Debug)]
 pub(crate) enum EventResult {

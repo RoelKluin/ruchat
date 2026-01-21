@@ -737,7 +737,10 @@ mod tests {
                 }))
                 .unwrap();
         }
-        assert_eq!(cursor.buffer.join("\n"), "Hello, world!\n3\nabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ~1234567890!@#$%^&*()_+[]{}|;':\",.<>?/`");
+        assert_eq!(
+            cursor.buffer.join("\n"),
+            "Hello, world!\n3\nabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ~1234567890!@#$%^&*()_+[]{}|;':\",.<>?/`"
+        );
         assert_eq!(cursor.get_cursor(), (1, 1));
         cursor
             .handle_event(Event::Key(KeyEvent {
@@ -757,7 +760,10 @@ mod tests {
             }))
             .unwrap();
         assert_eq!(cursor.get_cursor(), (0, 1));
-        assert_eq!(cursor.read(), "Hello, world!\nabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ~1234567890!@#$%^&*()_+[]{}|;':\",.<>?/`");
+        assert_eq!(
+            cursor.read(),
+            "Hello, world!\nabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ~1234567890!@#$%^&*()_+[]{}|;':\",.<>?/`"
+        );
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use crate::error::{Result,RuChatError};
+use crate::error::{Result, RuChatError};
 use ollama_rs::models::ModelOptions;
 use serde_json::Value;
 

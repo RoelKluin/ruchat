@@ -1,5 +1,3 @@
-
-
 #[derive(Debug, Clone)]
 pub struct Pos {
     pub col: usize,
@@ -12,5 +10,3 @@ impl Pos {
         Self { col, row, offset }
     }
 }
-
-

@@ -9,7 +9,7 @@ use crate::ollama::model::get_name;
 use crate::options::get_options;
 use clap::Parser;
 use ollama_rs::generation::completion::request::GenerationRequest;
-use ollama_rs::{models::ModelOptions, Ollama};
+use ollama_rs::{Ollama, models::ModelOptions};
 use server::ServerArgs;
 
 const DEFAULT_MODEL: &str = "qwen2.5vl:latest";

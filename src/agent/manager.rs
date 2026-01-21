@@ -1,8 +1,8 @@
-use crate::agent::worker::Agent;
 use crate::agent::Team;
+use crate::agent::worker::Agent;
 use crate::config::{load_manager, save_manager}; // We will add these
 use crate::ollama::OllamaArgs;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use clap::{Parser, Subcommand};
 use ollama_rs::Ollama;
 use serde::{Deserialize, Serialize};
