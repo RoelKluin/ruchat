@@ -121,13 +121,16 @@ pub(crate) async fn embed(args: EmbedArgs) -> Result<(), RuChatError> {
 
     let request = GenerateEmbeddingsRequest::new(model_name, vec![args.prompt.as_str()].into());
     let res = ollama.generate_embeddings(request).await?;
+
     let client = args.client_config.create_client()?;
 
     eprintln!("Collection name: {}", args.collection_config.collection);
+    // XXX: error here.
     let collection = args
         .collection_config
         .get_or_create_collection(&client)
         .await?;
+    eprintln!("Connected to Chroma collection.");
 
     let id = collection.id().to_string();
     eprintln!("Collection Name: {}", collection.name());
