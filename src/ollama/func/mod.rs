@@ -1,8 +1,7 @@
 pub(crate) mod strukt;
 use crate::error::Result;
 use crate::io::Io;
-use crate::ollama::model::get_name;
-use clap::Parser;
+use crate::ollama::OllamaArgs;
 use ollama_rs::models::ModelOptions;
 use ollama_rs::{
     coordinator::Coordinator,
@@ -17,19 +16,7 @@ use ollama_rs::{
             // SerperSearchToo // seems to have issue and SERPER_API_KEY=... is required
         },
     },
-    Ollama,
 };
-
-/// Command-line arguments for querying a model using a function.
-///
-/// This struct defines the arguments required to query a model
-/// using a function, including model details.
-#[derive(Parser, Debug, Clone, PartialEq)]
-pub struct FuncArgs {
-    /// The model to use for the function query.
-    #[arg(short, long, default_value = "qwen2.5-coder:14b")]
-    pub(crate) model: String,
-}
 
 /// Subcommand to run a function using a model.
 ///
@@ -45,10 +32,11 @@ pub struct FuncArgs {
 /// # Returns
 ///
 /// A `Result` indicating success or failure.
-pub(crate) async fn func(ollama: Ollama, args: FuncArgs) -> Result<()> {
+pub(crate) async fn func(args: OllamaArgs) -> Result<()> {
     let history = vec![];
-    let model_name = get_name(&ollama, &args.model).await?;
-    let mut coordinator = Coordinator::new(ollama, model_name.to_string(), history)
+    let ollama = args.init()?;
+    let model = args.get_model(&ollama, "").await?;
+    let mut coordinator = Coordinator::new(ollama, model, history)
         .options(ModelOptions::default().num_ctx(16384))
         .add_tool(Calculator {})
         .add_tool(DDGSearcher::new())

@@ -1,12 +1,10 @@
 use crate::arg_utils::parse_key_val;
 use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs};
 use crate::error::RuChatError;
-use crate::ollama::model::get_name;
 use chroma::types::{Metadata, MetadataValue, UpdateMetadata, UpdateMetadataValue};
 use clap::Parser;
 use log::warn;
 use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
-use ollama_rs::Ollama;
 
 /// Command-line arguments for embedding data into a Chroma database.
 ///
@@ -15,10 +13,9 @@ use ollama_rs::Ollama;
 /// and database connection information.
 #[derive(Parser, Debug, Clone, PartialEq)]
 pub struct EmbedArgs {
-    /// The model to use for generating embeddings.
-    #[arg(short, long, default_value = "nomic-embed-text:latest")]
-    pub(crate) model: String,
-
+    // The model to use for generating embeddings.
+    //#[arg(short, long, default_value = "nomic-embed-text:latest")]
+    //pub(crate) model: String,
     /// The prompt to embed.
     #[arg(short, long)]
     pub(crate) prompt: String,
@@ -30,6 +27,9 @@ pub struct EmbedArgs {
     /// URIs associated with the embedding entries.
     #[arg(short, long)]
     pub(crate) uris: Option<Vec<Option<String>>>,
+
+    #[command(flatten)]
+    pub(crate) ollama_args: crate::ollama::OllamaArgs,
 
     #[command(flatten)]
     pub client_config: ChromaClientConfigArgs,
@@ -108,8 +108,12 @@ fn get_update_metadata(
 /// # Returns
 ///
 /// A `Result` indicating success or failure.
-pub(crate) async fn embed(ollama: Ollama, args: EmbedArgs) -> Result<(), RuChatError> {
-    let model_name = get_name(&ollama, &args.model).await?;
+pub(crate) async fn embed(args: EmbedArgs) -> Result<(), RuChatError> {
+    let ollama = args.ollama_args.init()?;
+    let model_name = args
+        .ollama_args
+        .get_model(&ollama, "nomic-embed-text:latest")
+        .await?;
     if !model_name.contains("embed") {
         warn!("Model {} might not be an embeddings model", model_name);
     }

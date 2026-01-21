@@ -1,5 +1,5 @@
 use crate::error::RuChatError;
-use ollama_rs::Ollama;
+use crate::ollama::ServerArgs;
 
 /// Pretty print the size of a model.
 ///
@@ -44,8 +44,9 @@ fn format_size(size: u64) -> String {
 /// # Returns
 ///
 /// A `Result` indicating success or failure.
-pub(crate) async fn list(ollama: Ollama) -> Result<(), RuChatError> {
-    let models = ollama.list_local_models().await?;
+pub(crate) async fn list(args: ServerArgs) -> Result<(), RuChatError> {
+    let ollama = args.init()?;
+    let models: Vec<_> = ollama.list_local_models().await?;
     let max_length = models.iter().map(|m| m.name.len()).max().unwrap_or(0);
     println!("Model name{}Size", " ".repeat(max_length - 8));
     for model in models {

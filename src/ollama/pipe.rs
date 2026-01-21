@@ -64,7 +64,7 @@ pub async fn generate_oneshot(
 /// # Returns
 ///
 /// A `Result` indicating success or failure.
-pub(crate) async fn pipe(ollama: Ollama, args: PipeArgs) -> Result<()> {
+pub(crate) async fn pipe(args: PipeArgs) -> Result<()> {
     let mut cio = Io::new();
     let mut prompt = String::new();
     while let Ok(line) = cio.read_line().await {
@@ -76,10 +76,12 @@ pub(crate) async fn pipe(ollama: Ollama, args: PipeArgs) -> Result<()> {
     }
 
     if !prompt.is_empty() {
-        // Determine the initial model name
-        let model_name = args.ollama_args.get_model(&ollama).await?;
-        let options = args.ollama_args.get_options().await?;
-        let request = GenerationRequest::new(model_name, prompt).options(options);
+        let ollama = args.ollama_args.init()?;
+        let model = args.ollama_args.get_model(&ollama, "").await?;
+        let request = args
+            .ollama_args
+            .build_generation_request(model, prompt)
+            .await?;
         let mut stream = ollama.generate_stream(request).await?;
         while let Some(responses) = stream.next().await.transpose()? {
             for resp in responses {

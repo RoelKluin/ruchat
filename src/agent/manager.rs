@@ -1,6 +1,7 @@
 use crate::agent::worker::Agent;
 use crate::agent::Team;
 use crate::config::{load_manager, save_manager}; // We will add these
+use crate::ollama::OllamaArgs;
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
 use ollama_rs::Ollama;
@@ -14,6 +15,9 @@ pub struct ManagerArgs {
 
     #[command(subcommand)]
     pub command: ManagerCommands,
+
+    #[command(flatten)]
+    ollama_args: OllamaArgs,
 }
 
 #[derive(Subcommand, Debug, Clone, PartialEq)]
@@ -52,7 +56,8 @@ impl Manager {
             .ok_or_else(|| anyhow!("Active team index out of bounds"))
     }
 
-    pub async fn execute_command(ollama: Ollama, args: ManagerArgs) -> Result<()> {
+    pub async fn execute_command(args: ManagerArgs) -> Result<()> {
+        let ollama = args.ollama_args.init()?;
         let config_path = args
             .path
             .clone()

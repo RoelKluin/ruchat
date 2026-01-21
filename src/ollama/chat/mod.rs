@@ -5,7 +5,7 @@ mod history;
 mod pos;
 use crate::error::RuChatError;
 use crate::ollama::chat::event_result::EventResult;
-use crate::ollama::model::get_name;
+use crate::ollama::OllamaArgs;
 use bufcursor::BufCursor;
 use clap::{ArgAction, Parser};
 use conversation_tree::ConversationTree;
@@ -16,7 +16,6 @@ use crossterm::{
     ExecutableCommand,
 };
 use ollama_rs::generation::chat::{request::ChatMessageRequest, ChatMessage};
-use ollama_rs::Ollama;
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 use tokio::task;
@@ -29,13 +28,12 @@ use tokio_stream::StreamExt;
 /// chat session with a model, including model details.
 #[derive(Parser, Debug, Clone, PartialEq)]
 pub struct ChatArgs {
-    /// The model to use for the chat session.
-    #[arg(short, long, default_value = "qwen2.5-coder:14b")]
-    pub(crate) model: String,
-
     /// Toggle debugging mode.
     #[arg(short, long, action=ArgAction::Count)]
     pub(crate) debug: u8,
+
+    #[command(flatten)]
+    pub(crate) ollama_args: OllamaArgs,
 }
 
 /// Creates a chat message request for the model.
@@ -321,18 +319,18 @@ where
 ///
 /// # Parameters
 ///
-/// - `ollama`: The Ollama client for generating responses.
 /// - `args`: The command-line arguments for the chat session.
 ///
 /// # Returns
 ///
 /// A `Result` indicating success or failure.
-async fn chat_raw_mode(ollama: Ollama, args: ChatArgs) -> Result<(), RuChatError> {
+async fn chat_raw_mode(args: ChatArgs) -> Result<(), RuChatError> {
     let chat_history = Arc::new(Mutex::new(ConversationTree::new()));
 
     //let running = Arc::new(Mutex::new(true))
     let mut stdout = io::stdout();
-    let model_name = get_name(&ollama, &args.model).await?;
+    let ollama = args.ollama_args.init()?;
+    let model: String = args.ollama_args.get_model(&ollama, "").await?;
     let mut bufcursor = BufCursor::new()?;
     let debug_level = args.debug;
     if debug_level & 0x2 != 0 {
@@ -386,7 +384,7 @@ async fn chat_raw_mode(ollama: Ollama, args: ChatArgs) -> Result<(), RuChatError
             }
             Ok(EventResult::Quit) => break,
             Ok(EventResult::Submit) => {
-                let request = get_chat_message_request(model_name.to_string(), bufcursor.read());
+                let request = get_chat_message_request(model.clone(), bufcursor.read());
                 let question_id = match chat_history.lock().unwrap().question(bufcursor.drain()) {
                     Ok(id) => id,
                     Err(e) => {
@@ -506,16 +504,15 @@ async fn chat_raw_mode(ollama: Ollama, args: ChatArgs) -> Result<(), RuChatError
 ///
 /// # Parameters
 ///
-/// - `ollama`: The Ollama client for generating responses.
 /// - `args`: The command-line arguments for the chat session.
 ///
 /// # Returns
 ///
 /// A `Result` indicating success or failure.
-pub(crate) async fn chat(ollama: Ollama, args: ChatArgs) -> Result<(), RuChatError> {
+pub(crate) async fn chat(args: ChatArgs) -> Result<(), RuChatError> {
     // Enter raw mode and alternate screen
     terminal::enable_raw_mode()?;
-    match chat_raw_mode(ollama, args).await {
+    match chat_raw_mode(args).await {
         Ok(_) => {}
         Err(e) => {
             terminal::disable_raw_mode()?;

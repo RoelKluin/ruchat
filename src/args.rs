@@ -6,15 +6,16 @@ use crate::chroma::similarity::{similarity_search, SimilarityArgs};
 use crate::embed::{embed, EmbedArgs};
 use crate::ollama::ask::{ask, AskArgs};
 use crate::ollama::chat::{chat, ChatArgs};
-use crate::ollama::func::strukt::{func_struct, FuncStructArgs};
-use crate::ollama::func::{func, FuncArgs};
+use crate::ollama::func::func;
+use crate::ollama::func::strukt::func_struct;
 use crate::ollama::model::ls::list;
-use crate::ollama::model::pull::{pull, PullArgs};
-use crate::ollama::model::rm::{remove, RmArgs};
+use crate::ollama::model::pull::pull;
+use crate::ollama::model::rm::remove;
 use crate::ollama::pipe::{pipe, PipeArgs};
+use crate::ollama::server::ServerArgs;
+use crate::ollama::OllamaArgs;
 use crate::RuChatError;
 use clap::{Parser, Subcommand};
-use ollama_rs::Ollama;
 
 /// Main command line interface for RuChat.
 ///
@@ -26,10 +27,6 @@ pub struct Args {
     /// The subcommand to execute.
     #[command(subcommand)]
     pub command: Option<Commands>,
-
-    /// Address and port of the ollama server.
-    #[arg(short, long, default_value = "http://localhost:11434")]
-    pub(crate) server: String,
 
     /// Toggle verbose mode.
     #[arg(short, long, default_value = "false")]
@@ -43,47 +40,23 @@ impl Args {
             let command_line = std::env::args().collect::<Vec<String>>().join(" ");
             println!("Command line: {}", command_line);
         }
-        let ollama = self.init()?;
         match self.command.unwrap_or(default) {
-            Commands::Ask(ask_args) => ask(ollama, ask_args).await?,
-            Commands::Pipe(pipe_args) => pipe(ollama, pipe_args).await?,
-            Commands::Chat(chat_args) => chat(ollama, chat_args).await?,
-            Commands::Ls => list(ollama).await?,
-            Commands::Rm(rm_args) => remove(ollama, rm_args).await?,
-            Commands::Pull(pull_args) => pull(ollama, pull_args).await?,
-            Commands::Func(func_args) => func(ollama, func_args).await?,
-            Commands::FuncStruct(func_args) => func_struct(ollama, func_args).await?,
-            Commands::Embed(embed_args) => embed(ollama, embed_args).await?,
-            Commands::Query(query_args) => query(ollama, query_args).await?,
+            Commands::Ask(ask_args) => ask(ask_args).await?,
+            Commands::Pipe(pipe_args) => pipe(pipe_args).await?,
+            Commands::Chat(chat_args) => chat(chat_args).await?,
+            Commands::Ls(ls_args) => list(ls_args).await?,
+            Commands::Rm(rm_args) => remove(rm_args).await?,
+            Commands::Pull(pull_args) => pull(pull_args).await?,
+            Commands::Func(func_args) => func(func_args).await?,
+            Commands::FuncStruct(func_args) => func_struct(func_args).await?,
+            Commands::Embed(embed_args) => embed(embed_args).await?,
+            Commands::Query(query_args) => query(query_args).await?,
             Commands::Similarity(similarity_args) => similarity_search(similarity_args).await?,
             Commands::ChromaLs(chroma_ls_args) => chroma_ls(chroma_ls_args).await?,
             Commands::ChromaDelete(chroma_delete_args) => chroma_delete(chroma_delete_args).await?,
-            Commands::Manager(manager_args) => {
-                Manager::execute_command(ollama, manager_args).await?
-            }
+            Commands::Manager(manager_args) => Manager::execute_command(manager_args).await?,
         }
         Ok(())
-    }
-    /// Initializes a connection to an Ollama server.
-    ///
-    /// This function parses the server address and port from the provided
-    /// arguments and establishes a connection to the Ollama server.
-    ///
-    /// # Parameters
-    ///
-    /// - `args`: The command-line arguments containing the server information.
-    ///
-    /// # Returns
-    ///
-    /// A `Result` containing the `Ollama` client or a `RuChatError`.
-    fn init(&self) -> Result<Ollama, RuChatError> {
-        if self.verbose {
-            println!("Connecting to Ollama server at {}", self.server);
-        }
-        self.server
-            .rsplit_once(':')
-            .and_then(|(host, port)| port.parse::<u16>().map(|p| Ollama::new(host, p)).ok())
-            .ok_or_else(|| RuChatError::ArgServerError(self.server.to_string()))
     }
 }
 
@@ -101,15 +74,15 @@ pub enum Commands {
     /// Chat with a language model.
     Chat(ChatArgs),
     /// List models.
-    Ls,
+    Ls(ServerArgs),
     /// Remove a model.
-    Rm(RmArgs),
+    Rm(OllamaArgs),
     /// Pull a model from a remote ollama server.
-    Pull(PullArgs),
+    Pull(OllamaArgs),
     /// Run a function using a language model.
-    Func(FuncArgs),
+    Func(OllamaArgs),
     /// Run a function using a language model with structured input.
-    FuncStruct(FuncStructArgs),
+    FuncStruct(OllamaArgs),
     /// Use embedding model to create embeddings in Chroma.
     Embed(EmbedArgs),
     /// Query Chroma database.

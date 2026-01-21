@@ -8,8 +8,6 @@ use chroma::types::{
     MetadataComparison, MetadataExpression, MetadataValue, PrimitiveOperator, Where,
 };
 use clap::Parser;
-use ollama_rs::generation::completion::request::GenerationRequest;
-use ollama_rs::Ollama;
 use tokio_stream::StreamExt;
 
 /// Command-line arguments for querying a Chroma database.
@@ -98,7 +96,7 @@ pub async fn query_chroma(args: &QueryArgs) -> Result<Vec<Vec<f32>>, RuChatError
     match result.embeddings {
         Some(embeddings) => Ok(embeddings
             .into_iter()
-            .map(|e| e.into_iter().filter_map(|v| v).flatten().collect())
+            .map(|e| e.into_iter().flatten().flatten().collect())
             .collect()),
         None => Ok(vec![]),
     }
@@ -118,7 +116,7 @@ pub async fn query_chroma(args: &QueryArgs) -> Result<Vec<Vec<f32>>, RuChatError
 /// # Returns
 ///
 /// A `Result` indicating success or failure.
-pub(crate) async fn query(ollama: Ollama, args: QueryArgs) -> Result<(), RuChatError> {
+pub(crate) async fn query(args: QueryArgs) -> Result<(), RuChatError> {
     // Get embeddings from a collection with filters and limit set to 1.
     // An empty IDs vec will return all embeddings.
 
@@ -147,9 +145,12 @@ pub(crate) async fn query(ollama: Ollama, args: QueryArgs) -> Result<(), RuChatE
     );
 
     let mut cio = Io::new();
-    let model_name = args.ollama_args.get_model(&ollama).await?;
-    let options = args.ollama_args.get_options().await?;
-    let request = GenerationRequest::new(model_name, prompt).options(options);
+    let ollama = args.ollama_args.init()?;
+    let model = args.ollama_args.get_model(&ollama, "").await?;
+    let request = args
+        .ollama_args
+        .build_generation_request(model, prompt)
+        .await?;
     let mut stream = ollama.generate_stream(request).await?;
     while let Some(res) = stream.next().await {
         let responses = res?;

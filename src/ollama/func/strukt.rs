@@ -1,7 +1,6 @@
 use crate::error::Result;
 use crate::io::Io;
-use crate::ollama::model::get_name;
-use clap::Parser;
+use crate::ollama::OllamaArgs;
 use ollama_rs::models::ModelOptions;
 use ollama_rs::{
     coordinator::Coordinator,
@@ -9,21 +8,9 @@ use ollama_rs::{
         chat::ChatMessage,
         parameters::{FormatType, JsonSchema, JsonStructure},
     },
-    Ollama,
 };
 use serde::Deserialize;
 use std::path::PathBuf;
-
-/// Command-line arguments for querying a model using structured functions.
-///
-/// This struct defines the arguments required to query a model
-/// using structured functions, including model details.
-#[derive(Parser, Debug, Clone, PartialEq)]
-pub struct FuncStructArgs {
-    /// The model to use for the structured function query.
-    #[arg(short, long, default_value = "qwen2.5-coder:14b")]
-    pub(crate) model: String,
-}
 
 /// Get the weather for a given city.
 ///
@@ -84,10 +71,11 @@ async fn get_available_space(
 /// # Returns
 ///
 /// A `Result` indicating success or failure.
-pub(crate) async fn func_struct(ollama: Ollama, args: FuncStructArgs) -> Result<()> {
+pub(crate) async fn func_struct(args: OllamaArgs) -> Result<()> {
     // browserless requires an BROWSERLESS_TOKEN=... environment variable
     let history = vec![];
-    let model_name = get_name(&ollama, &args.model).await?;
+    let ollama = args.init()?;
+    let model_name = args.get_model(&ollama, "").await?;
 
     let format = FormatType::StructuredJson(Box::new(JsonStructure::new::<Weather>()));
 

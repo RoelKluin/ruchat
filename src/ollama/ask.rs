@@ -1,12 +1,11 @@
 use crate::error::{Result, RuChatError};
 use crate::io::Io;
-use crate::ollama::{model::get_name, OllamaArgs};
-use crate::options::get_options;
+use crate::ollama::OllamaArgs;
 use clap::Parser;
-use ollama_rs::{generation::completion::request::GenerationRequest, Ollama};
 use std::iter::Iterator;
 use std::{fs, io::Read};
 use tokio_stream::StreamExt;
+
 /// Command-line arguments for asking a question to a model.
 ///
 /// This struct defines the arguments required to ask a question
@@ -91,13 +90,12 @@ fn generate_prompt(args: &AskArgs) -> Result<String> {
 ///
 /// # Parameters
 ///
-/// - `ollama`: The Ollama client for generating responses.
 /// - `args`: The command-line arguments for the ask operation.
 ///
 /// # Returns
 ///
 /// A `Result` indicating success or failure.
-pub(crate) async fn ask(ollama: Ollama, args: AskArgs) -> Result<()> {
+pub(crate) async fn ask(args: AskArgs) -> Result<()> {
     let mut cio = Io::new();
     let mut prompt =
         if args.prompt.is_some() || args.positional_prompt.is_some() || args.text_files.is_some() {
@@ -117,9 +115,12 @@ pub(crate) async fn ask(ollama: Ollama, args: AskArgs) -> Result<()> {
         prompt.push_str(&args.output_format);
         prompt.push_str(" output format.\n");
     }
-    let model_name = args.ollama_args.get_model(&ollama).await?;
-    let options = args.ollama_args.get_options().await?;
-    let request = GenerationRequest::new(model_name, prompt).options(options);
+    let ollama = args.ollama_args.init()?;
+    let model = args.ollama_args.get_model(&ollama, "").await?;
+    let request = args
+        .ollama_args
+        .build_generation_request(model, prompt)
+        .await?;
     let mut stream = ollama.generate_stream(request).await?;
     while let Some(res) = stream.next().await {
         let responses = res?;
