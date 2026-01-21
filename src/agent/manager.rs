@@ -52,7 +52,7 @@ impl Manager {
             .ok_or_else(|| anyhow!("Active team index out of bounds"))
     }
 
-    pub async fn execute_command(ollama: Ollama, args: &ManagerArgs) -> Result<()> {
+    pub async fn execute_command(ollama: Ollama, args: ManagerArgs) -> Result<()> {
         let config_path = args
             .path
             .clone()

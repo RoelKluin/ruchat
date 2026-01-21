@@ -97,11 +97,11 @@ fn generate_prompt(args: &AskArgs) -> Result<String> {
 /// # Returns
 ///
 /// A `Result` indicating success or failure.
-pub(crate) async fn ask(ollama: Ollama, args: &AskArgs) -> Result<()> {
+pub(crate) async fn ask(ollama: Ollama, args: AskArgs) -> Result<()> {
     let mut cio = Io::new();
     let mut prompt =
         if args.prompt.is_some() || args.positional_prompt.is_some() || args.text_files.is_some() {
-            generate_prompt(args)?
+            generate_prompt(&args)?
         } else {
             let mut input = String::new();
             while let Ok(line) = cio.read_line().await {

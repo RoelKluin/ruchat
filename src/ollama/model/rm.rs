@@ -1,8 +1,7 @@
-use crate::args::Args;
-use crate::error::{Result,RuChatError};
-use crate::ollama::init;
+use crate::error::{Result, RuChatError};
 use crate::ollama::model::get_name;
 use clap::Parser;
+use ollama_rs::Ollama;
 
 /// Command-line arguments for removing a model from the local Ollama instance.
 ///
@@ -31,8 +30,7 @@ pub struct RmArgs {
 /// # Returns
 ///
 /// A `Result` indicating success or failure.
-pub(crate) async fn remove(args: &Args, rm_args: &RmArgs) -> Result<()> {
-    let ollama = init(args)?;
+pub(crate) async fn remove(ollama: Ollama, rm_args: RmArgs) -> Result<()> {
     match rm_args
         .model
         .as_deref()

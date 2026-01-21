@@ -84,7 +84,7 @@ async fn get_available_space(
 /// # Returns
 ///
 /// A `Result` indicating success or failure.
-pub(crate) async fn func_struct(ollama: Ollama, args: &FuncStructArgs) -> Result<()> {
+pub(crate) async fn func_struct(ollama: Ollama, args: FuncStructArgs) -> Result<()> {
     // browserless requires an BROWSERLESS_TOKEN=... environment variable
     let history = vec![];
     let model_name = get_name(&ollama, &args.model).await?;

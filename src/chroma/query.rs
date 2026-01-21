@@ -118,7 +118,7 @@ pub async fn query_chroma(args: &QueryArgs) -> Result<Vec<Vec<f32>>, RuChatError
 /// # Returns
 ///
 /// A `Result` indicating success or failure.
-pub(crate) async fn query(ollama: Ollama, args: &QueryArgs) -> Result<(), RuChatError> {
+pub(crate) async fn query(ollama: Ollama, args: QueryArgs) -> Result<(), RuChatError> {
     // Get embeddings from a collection with filters and limit set to 1.
     // An empty IDs vec will return all embeddings.
 
@@ -128,7 +128,7 @@ pub(crate) async fn query(ollama: Ollama, args: &QueryArgs) -> Result<(), RuChat
         .await?;
 
     let ids: Option<Vec<String>> = None;
-    let where_metadata = get_where_metadata(args);
+    let where_metadata = get_where_metadata(&args);
     let limit = Some(args.count);
     let offset = None;
     let include = Some(IncludeList::default_get());

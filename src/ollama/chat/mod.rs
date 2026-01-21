@@ -1,27 +1,27 @@
 mod bufcursor;
 mod conversation_tree;
+mod event_result;
 mod history;
 mod pos;
-mod event_result;
 use crate::error::RuChatError;
+use crate::ollama::chat::event_result::EventResult;
 use crate::ollama::model::get_name;
 use bufcursor::BufCursor;
-use clap::{Parser,ArgAction};
+use clap::{ArgAction, Parser};
 use conversation_tree::ConversationTree;
 use crossterm::{
-    ExecutableCommand,
-    cursor::{MoveTo, Show, Hide},
+    cursor::{Hide, MoveTo, Show},
     event::{self, DisableMouseCapture, EnableMouseCapture},
     terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
+    ExecutableCommand,
 };
+use ollama_rs::generation::chat::{request::ChatMessageRequest, ChatMessage};
 use ollama_rs::Ollama;
-use ollama_rs::generation::chat::{ChatMessage, request::ChatMessageRequest};
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 use tokio::task;
-use tokio::time::{Duration, timeout, sleep};
+use tokio::time::{sleep, timeout, Duration};
 use tokio_stream::StreamExt;
-use crate::ollama::chat::event_result::EventResult;
 
 /// Command-line arguments for interactive chat sessions with a model.
 ///
@@ -80,7 +80,7 @@ fn redraw_screen(
 
     let it = chat_history.get_current_question_ids().iter().rev();
     let cp = bufcursor.get_cursor(); // Cursor position editing the question
-    // the last line is a status line. The second to last line is the last line of the question
+                                     // the last line is a status line. The second to last line is the last line of the question
     text_view.push("Ask your question (Alt+Enter to send, Esc to quit):".to_string());
 
     // Clear the screen
@@ -113,19 +113,40 @@ fn redraw_screen(
                 if i == start.1 && i == end.1 {
                     if end.0 > line.len() {
                         // XXX
-                        return Err(RuChatError::InvalidCursorPosition(format!("{i} (both), end"), end.0, end.1));
+                        return Err(RuChatError::InvalidCursorPosition(
+                            format!("{i} (both), end"),
+                            end.0,
+                            end.1,
+                        ));
                     } else if start.0 > line.len() {
-                        return Err(RuChatError::InvalidCursorPosition(format!("{i} (both), start"), start.0, start.1));
+                        return Err(RuChatError::InvalidCursorPosition(
+                            format!("{i} (both), start"),
+                            start.0,
+                            start.1,
+                        ));
                     }
-                    println!("{}\x1b[7m{}\x1b[0m{}", &line[..start.0], &line[start.0..end.0], &line[end.0..]);
+                    println!(
+                        "{}\x1b[7m{}\x1b[0m{}",
+                        &line[..start.0],
+                        &line[start.0..end.0],
+                        &line[end.0..]
+                    );
                 } else if i == start.1 {
-                    if  start.0 > line.len() {
-                        return Err(RuChatError::InvalidCursorPosition(format!("{i}, start (only)"), start.0, start.1));
+                    if start.0 > line.len() {
+                        return Err(RuChatError::InvalidCursorPosition(
+                            format!("{i}, start (only)"),
+                            start.0,
+                            start.1,
+                        ));
                     }
                     println!("{}\x1b[7m{}\x1b[0m", &line[..start.0], &line[start.0..]);
                 } else if i == end.1 {
                     if end.0 > line.len() {
-                        return Err(RuChatError::InvalidCursorPosition(format!("{i}, end (only)"), end.0, end.1));
+                        return Err(RuChatError::InvalidCursorPosition(
+                            format!("{i}, end (only)"),
+                            end.0,
+                            end.1,
+                        ));
                     }
                     println!("\x1b[7m{}\x1b[0m{}", &line[..end.0], &line[end.0..]);
                 } else {
@@ -140,10 +161,7 @@ fn redraw_screen(
     }
 
     // Move the cursor to the correct position
-    stdout.execute(MoveTo(
-        cp.0.try_into()?,
-        (offset + cp.1).try_into()?,
-    ))?;
+    stdout.execute(MoveTo(cp.0.try_into()?, (offset + cp.1).try_into()?))?;
     stdout.flush()?;
     //min(terminal::size()?.1 - 2, text_view.len() as u16 - 2),
 
@@ -157,7 +175,12 @@ fn redraw_line(stdout: &mut io::Stdout, bufcursor: &mut BufCursor) -> Result<(),
     stdout.execute(MoveTo(0, cp.1 as u16))?;
     if let Some((start, end)) = bufcursor.normalized_selection() {
         if cp.1 == start.1 {
-            println!("{}\x1b[7m{}\x1b[0m{}", &line[..start.0], &line[start.0..end.0], &line[end.0..]);
+            println!(
+                "{}\x1b[7m{}\x1b[0m{}",
+                &line[..start.0],
+                &line[start.0..end.0],
+                &line[end.0..]
+            );
         } else if cp.1 == end.1 {
             println!("\x1b[7m{}\x1b[0m{}", &line[..end.0], &line[end.0..]);
         } else {
@@ -187,7 +210,11 @@ fn redraw_from_cursor_down(
         let i = i + offset;
         if let Some((start, end)) = bufcursor.normalized_selection() {
             if i == start.1 {
-                println!("{}\x1b[7m{}\x1b[0m", &line[..start.0], &line[start.0..end.0]);
+                println!(
+                    "{}\x1b[7m{}\x1b[0m",
+                    &line[..start.0],
+                    &line[start.0..end.0]
+                );
             } else if i == end.1 {
                 println!("\x1b[7m{}\x1b[0m{}", &line[..end.0], &line[end.0..]);
             } else if i >= start.1 && i <= end.1 {
@@ -223,7 +250,11 @@ fn redraw_from_cursor_up(
                 std::mem::swap(&mut start, &mut end);
             }
             if i == start.1 {
-                println!("{}\x1b[7m{}\x1b[0m", &line[..start.0], &line[start.0..end.0]);
+                println!(
+                    "{}\x1b[7m{}\x1b[0m",
+                    &line[..start.0],
+                    &line[start.0..end.0]
+                );
             } else if i == end.1 {
                 println!("\x1b[7m{}\x1b[0m{}", &line[..end.0], &line[end.0..]);
             } else if i >= start.1 && i <= end.1 {
@@ -250,7 +281,9 @@ async fn show_spinner(x: usize, y: usize) {
 
     loop {
         stdout.execute(Hide).expect("Hide cursor");
-        stdout.execute(MoveTo(x as u16, y as u16)).expect("Move cursor");
+        stdout
+            .execute(MoveTo(x as u16, y as u16))
+            .expect("Move cursor");
         print!("{}", spinner_chars[index]);
         stdout.flush().unwrap();
         index = (index + 1) % spinner_chars.len();
@@ -276,7 +309,7 @@ where
                         }
                     }
                 },
-            }
+            },
         }
     }
 }
@@ -294,7 +327,7 @@ where
 /// # Returns
 ///
 /// A `Result` indicating success or failure.
-async fn chat_raw_mode(ollama: Ollama, args: &ChatArgs) -> Result<(), RuChatError> {
+async fn chat_raw_mode(ollama: Ollama, args: ChatArgs) -> Result<(), RuChatError> {
     let chat_history = Arc::new(Mutex::new(ConversationTree::new()));
 
     //let running = Arc::new(Mutex::new(true))
@@ -341,7 +374,10 @@ async fn chat_raw_mode(ollama: Ollama, args: &ChatArgs) -> Result<(), RuChatErro
         };
         clear_option = None;
         let (x, y) = bufcursor.get_cursor();
-        match res.and_then(|_| event::read().map_err(|e| e.into())).and_then(|e| bufcursor.handle_event(e)) {
+        match res
+            .and_then(|_| event::read().map_err(|e| e.into()))
+            .and_then(|e| bufcursor.handle_event(e))
+        {
             Ok(EventResult::CursorChange) => {
                 let (x, y) = bufcursor.get_cursor();
                 if let Err(e) = stdout.execute(MoveTo(x as u16, y as u16)) {
@@ -411,7 +447,14 @@ async fn chat_raw_mode(ollama: Ollama, args: &ChatArgs) -> Result<(), RuChatErro
                     // Stop the spinner
                     spinner_handle.abort();
                     if let Err(e) = stdout.execute(Show) {
-                        display_err(debug_level > 0, &mut stdout, "Error: Show cursor: ", x, y, e);
+                        display_err(
+                            debug_level > 0,
+                            &mut stdout,
+                            "Error: Show cursor: ",
+                            x,
+                            y,
+                            e,
+                        );
                     }
                     if let Err(e) = stdout.execute(Clear(ClearType::CurrentLine)) {
                         display_err(debug_level > 0, &mut stdout, "Error: Clear line: ", x, y, e);
@@ -421,17 +464,29 @@ async fn chat_raw_mode(ollama: Ollama, args: &ChatArgs) -> Result<(), RuChatErro
                 task.await?;
                 clear_option = Some(ClearType::All);
             }
-            Ok(EventResult::UnhandledEvent(evt)) => {
-                match evt {
-                    event::Event::Key(event::KeyEvent { .. }) => {
-                        display_err(debug_level & 0x4 != 0, &mut stdout, "Unhandled event", x, y, evt);
-                    }
-                    _ => {
-                        display_err(debug_level & 0x8 != 0, &mut stdout, "Unhandled event", x, y, evt);
-                    }
+            Ok(EventResult::UnhandledEvent(evt)) => match evt {
+                event::Event::Key(event::KeyEvent { .. }) => {
+                    display_err(
+                        debug_level & 0x4 != 0,
+                        &mut stdout,
+                        "Unhandled event",
+                        x,
+                        y,
+                        evt,
+                    );
                 }
-            }
-            Ok(EventResult::Unchanged) => {},
+                _ => {
+                    display_err(
+                        debug_level & 0x8 != 0,
+                        &mut stdout,
+                        "Unhandled event",
+                        x,
+                        y,
+                        evt,
+                    );
+                }
+            },
+            Ok(EventResult::Unchanged) => {}
             Ok(EventResult::UpdateView(ct)) => clear_option = Some(ct),
             Err(e) => display_err(debug_level > 0, &mut stdout, "Error", x, y, e),
         }
@@ -457,7 +512,7 @@ async fn chat_raw_mode(ollama: Ollama, args: &ChatArgs) -> Result<(), RuChatErro
 /// # Returns
 ///
 /// A `Result` indicating success or failure.
-pub(crate) async fn chat(ollama: Ollama, args: &ChatArgs) -> Result<(), RuChatError> {
+pub(crate) async fn chat(ollama: Ollama, args: ChatArgs) -> Result<(), RuChatError> {
     // Enter raw mode and alternate screen
     terminal::enable_raw_mode()?;
     match chat_raw_mode(ollama, args).await {

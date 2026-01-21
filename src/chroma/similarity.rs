@@ -49,7 +49,7 @@ pub struct SimilarityArgs {
 /// # Returns
 ///
 /// A `Result` indicating success or failure.
-pub(crate) async fn similarity_search(args: &SimilarityArgs) -> Result<(), RuChatError> {
+pub(crate) async fn similarity_search(args: SimilarityArgs) -> Result<(), RuChatError> {
     // Instantiate a ChromaClient to connect to the Chroma database
     let client = args.client_config.create_client()?;
 
@@ -63,7 +63,7 @@ pub(crate) async fn similarity_search(args: &SimilarityArgs) -> Result<(), RuCha
     let mut children = vec![];
     children.push(Where::Document(DocumentExpression {
         operator: DocumentOperator::Contains,
-        pattern: args.query.clone(),
+        pattern: args.query,
     }));
     if let Some(md) = args.metadata.as_ref() {
         md.split(',').for_each(|s| {

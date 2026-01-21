@@ -45,7 +45,7 @@ pub struct FuncArgs {
 /// # Returns
 ///
 /// A `Result` indicating success or failure.
-pub(crate) async fn func(ollama: Ollama, args: &FuncArgs) -> Result<()> {
+pub(crate) async fn func(ollama: Ollama, args: FuncArgs) -> Result<()> {
     let history = vec![];
     let model_name = get_name(&ollama, &args.model).await?;
     let mut coordinator = Coordinator::new(ollama, model_name.to_string(), history)

@@ -37,32 +37,45 @@ pub struct Args {
 }
 
 impl Args {
-    pub(crate) async fn handle_request(&self) -> Result<(), RuChatError> {
+    pub(crate) async fn handle_request(self) -> Result<(), RuChatError> {
         let default = Commands::Pipe(PipeArgs::default());
         if self.verbose {
             let command_line = std::env::args().collect::<Vec<String>>().join(" ");
             println!("Command line: {}", command_line);
         }
-        match self.command.as_ref().unwrap_or(&default) {
-            Commands::Ask(ask_args) => ask(self.init()?, ask_args).await?,
-            Commands::Pipe(pipe_args) => pipe(self.init()?, pipe_args).await?,
-            Commands::Chat(chat_args) => chat(self.init()?, chat_args).await?,
-            Commands::Ls => list(self.init()?).await?,
-            Commands::Rm(rm_args) => remove(self, rm_args).await?,
-            Commands::Pull(pull_args) => pull(self, pull_args).await?,
-            Commands::Func(func_args) => func(self.init()?, func_args).await?,
-            Commands::FuncStruct(func_args) => func_struct(self.init()?, func_args).await?,
-            Commands::Embed(embed_args) => embed(self.init()?, embed_args).await?,
-            Commands::Query(query_args) => query(self.init()?, query_args).await?,
+        let ollama = self.init()?;
+        match self.command.unwrap_or(default) {
+            Commands::Ask(ask_args) => ask(ollama, ask_args).await?,
+            Commands::Pipe(pipe_args) => pipe(ollama, pipe_args).await?,
+            Commands::Chat(chat_args) => chat(ollama, chat_args).await?,
+            Commands::Ls => list(ollama).await?,
+            Commands::Rm(rm_args) => remove(ollama, rm_args).await?,
+            Commands::Pull(pull_args) => pull(ollama, pull_args).await?,
+            Commands::Func(func_args) => func(ollama, func_args).await?,
+            Commands::FuncStruct(func_args) => func_struct(ollama, func_args).await?,
+            Commands::Embed(embed_args) => embed(ollama, embed_args).await?,
+            Commands::Query(query_args) => query(ollama, query_args).await?,
             Commands::Similarity(similarity_args) => similarity_search(similarity_args).await?,
             Commands::ChromaLs(chroma_ls_args) => chroma_ls(chroma_ls_args).await?,
             Commands::ChromaDelete(chroma_delete_args) => chroma_delete(chroma_delete_args).await?,
             Commands::Manager(manager_args) => {
-                Manager::execute_command(self.init()?, manager_args).await?
+                Manager::execute_command(ollama, manager_args).await?
             }
         }
         Ok(())
     }
+    /// Initializes a connection to an Ollama server.
+    ///
+    /// This function parses the server address and port from the provided
+    /// arguments and establishes a connection to the Ollama server.
+    ///
+    /// # Parameters
+    ///
+    /// - `args`: The command-line arguments containing the server information.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the `Ollama` client or a `RuChatError`.
     fn init(&self) -> Result<Ollama, RuChatError> {
         if self.verbose {
             println!("Connecting to Ollama server at {}", self.server);

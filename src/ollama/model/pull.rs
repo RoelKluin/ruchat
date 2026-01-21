@@ -1,8 +1,7 @@
-use crate::args::Args;
-use crate::error::{Result,RuChatError};
-use crate::ollama::init;
+use crate::error::{Result, RuChatError};
 use crate::ollama::model::get_name;
 use clap::Parser;
+use ollama_rs::Ollama;
 
 /// Command-line arguments for pulling a model from the main Ollama server.
 ///
@@ -31,8 +30,7 @@ pub struct PullArgs {
 /// # Returns
 ///
 /// A `Result` indicating success or failure.
-pub(crate) async fn pull(args: &Args, pull_args: &PullArgs) -> Result<()> {
-    let ollama = init(args)?;
+pub(crate) async fn pull(ollama: Ollama, pull_args: PullArgs) -> Result<()> {
     match pull_args
         .model
         .as_deref()

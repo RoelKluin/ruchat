@@ -29,7 +29,7 @@ pub struct ChromaLsArgs {
 /// # Returns
 ///
 /// A `Result` indicating success or failure.
-pub(crate) async fn chroma_ls(args: &ChromaLsArgs) -> Result<(), RuChatError> {
+pub(crate) async fn chroma_ls(args: ChromaLsArgs) -> Result<(), RuChatError> {
     // Instantiate a ChromaClient to connect to the Chroma database
     let client = args.client.create_client()?;
 

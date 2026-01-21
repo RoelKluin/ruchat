@@ -108,7 +108,7 @@ fn get_update_metadata(
 /// # Returns
 ///
 /// A `Result` indicating success or failure.
-pub(crate) async fn embed(ollama: Ollama, args: &EmbedArgs) -> Result<(), RuChatError> {
+pub(crate) async fn embed(ollama: Ollama, args: EmbedArgs) -> Result<(), RuChatError> {
     let model_name = get_name(&ollama, &args.model).await?;
     if !model_name.contains("embed") {
         warn!("Model {} might not be an embeddings model", model_name);
@@ -133,8 +133,8 @@ pub(crate) async fn embed(ollama: Ollama, args: &EmbedArgs) -> Result<(), RuChat
 
     let ids = vec![id];
     let embeddings = res.embeddings;
-    let documents = Some(vec![Some(args.prompt.clone())]);
-    let uris = args.uris.as_ref().cloned().or_else(|| Some(vec![None]));
+    let documents = Some(vec![Some(args.prompt)]);
+    let uris = args.uris.or_else(|| Some(vec![None]));
 
     collection
         .upsert(ids, embeddings, documents, uris, update_metadata)

@@ -64,7 +64,7 @@ pub async fn generate_oneshot(
 /// # Returns
 ///
 /// A `Result` indicating success or failure.
-pub(crate) async fn pipe(ollama: Ollama, args: &PipeArgs) -> Result<()> {
+pub(crate) async fn pipe(ollama: Ollama, args: PipeArgs) -> Result<()> {
     let mut cio = Io::new();
     let mut prompt = String::new();
     while let Ok(line) = cio.read_line().await {
