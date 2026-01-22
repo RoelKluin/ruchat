@@ -1,4 +1,4 @@
-use crate::RuChatError;
+use crate::error::Result;
 use crate::agent::manager::{Manager, ManagerArgs};
 use crate::chroma::delete::{ChromaDeleteArgs, chroma_delete};
 use crate::chroma::ls::{ChromaLsArgs, chroma_ls};
@@ -34,29 +34,28 @@ pub struct Args {
 }
 
 impl Args {
-    pub(crate) async fn handle_request(self) -> Result<(), RuChatError> {
+    pub(crate) async fn handle_request(self) -> Result<()> {
         let default = Commands::Pipe(PipeArgs::default());
         if self.verbose {
             let command_line = std::env::args().collect::<Vec<String>>().join(" ");
             println!("Command line: {}", command_line);
         }
         match self.command.unwrap_or(default) {
-            Commands::Ask(ask_args) => ask(ask_args).await?,
-            Commands::Pipe(pipe_args) => pipe(pipe_args).await?,
-            Commands::Chat(chat_args) => chat(chat_args).await?,
-            Commands::Ls(ls_args) => list(ls_args).await?,
-            Commands::Rm(rm_args) => remove(rm_args).await?,
-            Commands::Pull(pull_args) => pull(pull_args).await?,
-            Commands::Func(func_args) => func(func_args).await?,
-            Commands::FuncStruct(func_args) => func_struct(func_args).await?,
-            Commands::Embed(embed_args) => embed(embed_args).await?,
-            Commands::Query(query_args) => query(query_args).await?,
-            Commands::Similarity(similarity_args) => similarity_search(similarity_args).await?,
-            Commands::ChromaLs(chroma_ls_args) => chroma_ls(chroma_ls_args).await?,
-            Commands::ChromaDelete(chroma_delete_args) => chroma_delete(chroma_delete_args).await?,
-            Commands::Manager(manager_args) => Manager::execute_command(manager_args).await?,
+            Commands::Ask(args) => ask(args).await,
+            Commands::Pipe(args) => pipe(args).await,
+            Commands::Chat(args) => chat(args).await,
+            Commands::Ls(args) => list(args).await,
+            Commands::Rm(args) => remove(args).await,
+            Commands::Pull(args) => pull(args).await,
+            Commands::Func(args) => func(args).await,
+            Commands::FuncStruct(args) => func_struct(args).await,
+            Commands::Embed(args) => embed(args).await,
+            Commands::Query(args) => query(args).await,
+            Commands::Similarity(args) => similarity_search(args).await,
+            Commands::ChromaLs(args) => chroma_ls(args).await,
+            Commands::ChromaDelete(args) => chroma_delete(args).await,
+            Commands::Manager(args) => Manager::execute_command(args).await,
         }
-        Ok(())
     }
 }
 

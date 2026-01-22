@@ -82,6 +82,10 @@ pub enum RuChatError {
     /// Error from the Chroma HTTP client.
     #[error("Chroma HTTP client error: {0}")]
     ChromaHttpClientError(#[from] chroma::client::ChromaHttpClientError),
+
+    /// Error when the active team index is out of bounds.
+    #[error("Active team index out of bounds")]
+    ActiveTeamIndexOutOfBounds,
 }
 
 pub type Result<T> = std::result::Result<T, RuChatError>;

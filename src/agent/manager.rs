@@ -2,7 +2,7 @@ use crate::agent::Team;
 use crate::agent::worker::Agent;
 use crate::config::{load_manager, save_manager}; // We will add these
 use crate::ollama::OllamaArgs;
-use anyhow::{Result, anyhow};
+use crate::error::{Result, RuChatError};
 use clap::{Parser, Subcommand};
 use ollama_rs::Ollama;
 use serde::{Deserialize, Serialize};
@@ -47,13 +47,13 @@ impl Manager {
     pub fn current_team(&self) -> Result<&Team> {
         self.teams
             .get(self.active_team)
-            .ok_or_else(|| anyhow!("Active team index out of bounds"))
+            .ok_or(RuChatError::ActiveTeamIndexOutOfBounds)
     }
 
     pub fn current_team_mut(&mut self) -> Result<&mut Team> {
         self.teams
             .get_mut(self.active_team)
-            .ok_or_else(|| anyhow!("Active team index out of bounds"))
+            .ok_or(RuChatError::ActiveTeamIndexOutOfBounds)
     }
 
     pub async fn execute_command(args: ManagerArgs) -> Result<()> {
