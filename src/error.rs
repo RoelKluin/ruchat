@@ -86,6 +86,10 @@ pub enum RuChatError {
     /// Error when the active team index is out of bounds.
     #[error("Active team index out of bounds")]
     ActiveTeamIndexOutOfBounds,
+
+    /// Error when the prompt is empty.
+    #[error("Prompt is empty")]
+    EmptyPrompt,
 }
 
 pub type Result<T> = std::result::Result<T, RuChatError>;

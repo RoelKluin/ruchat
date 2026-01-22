@@ -1,10 +1,12 @@
 use crate::arg_utils::parse_key_val;
 use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs};
 use crate::error::RuChatError;
-use chroma::types::{Metadata, MetadataValue, UpdateMetadata, UpdateMetadataValue};
+use chroma::types::{UpdateMetadata, UpdateMetadataValue};
 use clap::Parser;
 use log::warn;
 use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
+use uuid::{Builder,Uuid};
+use md5;
 
 /// Command-line arguments for embedding data into a Chroma database.
 ///
@@ -24,6 +26,10 @@ pub struct EmbedArgs {
     #[arg(short, long, value_name = "KEY:VALUE", value_parser = parse_key_val::<String, String>)]
     pub(crate) update_metadata: Option<String>,
 
+    /// ID associated with the embedding entry.
+    #[arg(short, long)]
+    pub(crate) id: Option<String>,
+
     /// URIs associated with the embedding entries.
     #[arg(short, long)]
     pub(crate) uris: Option<Vec<Option<String>>>,
@@ -36,33 +42,6 @@ pub struct EmbedArgs {
 
     #[command(flatten)]
     pub collection_config: ChromaCollectionConfigArgs,
-}
-
-/// Parses metadata from a string of comma-separated key:value pairs.
-///
-/// # Parameters
-///
-/// - `arg_metadata`: An optional string containing metadata.
-///
-/// # Returns
-///
-/// A `Result` containing an optional map of metadata or a `RuChatError`.
-fn get_metadata(arg_metadata: &Option<String>) -> Result<Option<Metadata>, RuChatError> {
-    if arg_metadata.is_none() {
-        return Ok(None);
-    }
-    let mut metadata = Metadata::new();
-    if let Some(md) = arg_metadata {
-        for s in md.split(',') {
-            match s.split_once(':') {
-                Some((k, v)) => {
-                    _ = metadata.insert(k.to_string(), MetadataValue::Str(v.to_string()))
-                }
-                None => return Err(RuChatError::InvalidMetadata(s.to_string())),
-            }
-        }
-    }
-    Ok(Some(metadata))
 }
 
 /// Parses metadata from a string of comma-separated key:value pairs.
@@ -112,11 +91,17 @@ pub(crate) async fn embed(args: EmbedArgs) -> Result<(), RuChatError> {
     let ollama = args.ollama_args.init()?;
     let model_name = args
         .ollama_args
-        .get_model(&ollama, "nomic-embed-text:latest")
+        .get_model(&ollama, "all-minilm:l6-v2")
         .await?;
-    if !model_name.contains("embed") {
+    if model_name != "all-minilm:l6-v2" && !model_name.contains("embed") {
         warn!("Model {} might not be an embeddings model", model_name);
     }
+    let id = match args.id {
+        Some(id) => id.to_string(),
+        None => args.prompt.lines().next().ok_or(RuChatError::EmptyPrompt)?.to_string(),
+    };
+    let digest = md5::compute(format!("{model_name}:{id}"));
+    let id = Builder::from_md5_bytes(digest.0).into_uuid().hyphenated().to_string();
     let update_metadata = get_update_metadata(&args.update_metadata)?;
 
     let request = GenerateEmbeddingsRequest::new(model_name, vec![args.prompt.as_str()].into());
@@ -132,7 +117,6 @@ pub(crate) async fn embed(args: EmbedArgs) -> Result<(), RuChatError> {
         .await?;
     eprintln!("Connected to Chroma collection.");
 
-    let id = collection.id().to_string();
     eprintln!("Collection Name: {}", collection.name());
     eprintln!("Collection ID: {}", id);
     eprintln!("Collection Metadata: {:?}", collection.metadata());
