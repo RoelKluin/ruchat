@@ -5,7 +5,7 @@ use chroma::types::{UpdateMetadata, UpdateMetadataValue};
 use clap::Parser;
 use log::warn;
 use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
-use uuid::{Builder,Uuid};
+use uuid::Builder;
 use md5;
 
 /// Command-line arguments for embedding data into a Chroma database.

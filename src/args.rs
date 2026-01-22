@@ -6,14 +6,13 @@ use crate::chroma::query::{QueryArgs, query};
 use crate::chroma::similarity::{SimilarityArgs, similarity_search};
 use crate::embed::{EmbedArgs, embed};
 use crate::ollama::OllamaArgs;
-use crate::ollama::ask::{AskArgs, ask};
+use crate::ollama::ask::AskArgs;
 use crate::ollama::chat::{ChatArgs, chat};
 use crate::ollama::func::func;
 use crate::ollama::func::strukt::func_struct;
 use crate::ollama::model::ls::list;
 use crate::ollama::model::pull::pull;
 use crate::ollama::model::rm::remove;
-use crate::ollama::pipe::{PipeArgs, pipe};
 use crate::ollama::server::ServerArgs;
 use clap::{Parser, Subcommand};
 
@@ -35,14 +34,14 @@ pub struct Args {
 
 impl Args {
     pub(crate) async fn handle_request(self) -> Result<()> {
-        let default = Commands::Pipe(PipeArgs::default());
+        let default = Commands::Pipe(AskArgs::default());
         if self.verbose {
             let command_line = std::env::args().collect::<Vec<String>>().join(" ");
             println!("Command line: {}", command_line);
         }
         match self.command.unwrap_or(default) {
-            Commands::Ask(args) => ask(args).await,
-            Commands::Pipe(args) => pipe(args).await,
+            Commands::Ask(args) => args.ask(true).await,
+            Commands::Pipe(args) => args.ask(false).await,
             Commands::Chat(args) => chat(args).await,
             Commands::Ls(args) => list(args).await,
             Commands::Rm(args) => remove(args).await,
@@ -69,7 +68,7 @@ pub enum Commands {
     /// Query language model using a prompt, you may include file context.
     Ask(AskArgs),
     /// Pipe markdown to language model separated by three hyphens/dashes, asterisks, or underscores.
-    Pipe(PipeArgs),
+    Pipe(AskArgs),
     /// Chat with a language model.
     Chat(ChatArgs),
     /// List models.

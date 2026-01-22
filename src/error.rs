@@ -90,6 +90,34 @@ pub enum RuChatError {
     /// Error when the prompt is empty.
     #[error("Prompt is empty")]
     EmptyPrompt,
+
+    /// Error when the exit code format is invalid.
+    #[error("Invalid exit code format: {0}")]
+    InvalidExitCodeFormat(String),
+
+    /// Error when there are conflicting prompts.
+    #[error("Conflicting prompts provided")]
+    ConflictingPrompts,
+
+    /// Error when parsing an integer fails.
+    #[error("Parse int error: {0}")]
+    ParseIntError(#[from] std::num::ParseIntError),
+
+    /// Error when reading a file fails.
+    #[error("File read error: {0}")]
+    FileReadError(String),
+
+    /// Error when a command exits with a non-zero status.
+    #[error("Command `{0}` exited with status: {1}")]
+    CommandExitError(String, String),
+
+    /// Error when multiple commands exit with errors.
+    #[error("Multiple command exit errors: {0}")]
+    MultipleCommandExitErrors(String),
+
+    /// Error when no prompt is provided.
+    #[error("No prompt provided")]
+    NoPromptProvided,
 }
 
 pub type Result<T> = std::result::Result<T, RuChatError>;

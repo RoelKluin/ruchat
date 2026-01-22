@@ -8,6 +8,7 @@ pub mod error;
 pub(crate) mod io;
 pub mod ollama;
 pub(crate) mod options;
+pub(crate) mod prompt;
 
 use args::Args;
 use clap::Parser;
@@ -38,6 +39,8 @@ mod tests {
     use super::*;
     use crate::args::Commands;
     use crate::ollama::ask::AskArgs;
+    use crate::prompt::PromptArgs;
+    use crate::ollama::OllamaArgs;
     use args::Args;
 
     #[tokio::test]
@@ -45,12 +48,15 @@ mod tests {
         // Create a mock Args instance
         let args = Args {
             command: Some(Commands::Ask(AskArgs {
-                model: "qwen2.5-coder:14b".to_string(),
-                prompt: Some("Testing, please ignore".to_string()),
                 output_format: "text".to_string(),
-                text_files: None,
-                options: None,
-                positional_prompt: None,
+                prompt_args: PromptArgs {
+                    prompt: Some("Testing, please ignore".to_string()),
+                    ..Default::default()
+                },
+                ollama_args: OllamaArgs {
+                    model: Some("qwen2.5-coder:14b".to_string()),
+                    ..Default::default()
+                },
             })),
             verbose: true,
             server: "localhost".to_string() + ":8080",
@@ -64,12 +70,15 @@ mod tests {
         // Create a mock Args instance
         let args = Args {
             command: Some(Commands::Ask(AskArgs {
-                model: "NO_MODEL".to_string(),
-                prompt: Some("Testing, please ignore".to_string()),
                 output_format: "text".to_string(),
-                text_files: None,
-                options: None,
-                positional_prompt: None,
+                prompt_args: PromptArgs {
+                    prompt: Some("Testing, please ignore".to_string()),
+                    ..Default::default()
+                },
+                ollama_args: OllamaArgs {
+                    model: Some("NO_MODEL".to_string()),
+                    ..Default::default()
+                },
             })),
             verbose: true,
             server: "localhost".to_string() + ":8080",
