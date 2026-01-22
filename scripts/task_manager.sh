@@ -2,24 +2,6 @@
 # Principal Software Engineer | Linux Automation Expert
 # Dynamic AI Agent Orchestrator for Ruchat/Ollama
 
-# example:
-# ./scripts/ruchat_orchestrator.sh meta-gen "Generate a commandline to improve scripts/ruchat_orchestrator.sh"
-
-# Summary of Session JSON structure:
-#{
-#  "history": ["./orchestrator.sh rust-analysis --file main.rs"],
-#  "last_task": "rust-analysis",
-#  "total_tokens": 14520,
-#  "total_cost": 0.029,
-#  "debate_logs": [
-#    {
-#      "file": "main.rs",
-#      "safety_issue": "Potential use-after-free in FFI block",
-#      "perf_issue": "APPROVED",
-#      "timestamp": "14:20:05"
-#    }
-#  ]
-#}
 
 set -euo pipefail
 
@@ -151,6 +133,19 @@ while [[ $# -gt 0 ]]; do
             fi
     esac
 done
+
+case "$TASK_TYPE" in
+    "") usage "Task type is required." 1 ;;
+    rust-deps|rust-deps2|git-feature-flow)
+        [[ -z "$USER_GOAL" ]] && usage "$TASK_TYPE task requires a user goal." 1 ;;
+    doc-custom|doc-custom2)
+        [[ -z "$SUBJECT" ]] && usage "doc-custom task requires --subject argument." 1
+        [[ -z "$TARGET_FILE" ]] && usage "doc-custom task requires --file argument." 1
+        [[ ! -f "$TARGET_FILE" ]] && usage "Target file not found: $TARGET_FILE" 1
+        [[ -z "$DOC_TYPE" ]] && usage "doc-custom task requires --doc-type argument." 1 ;;
+esac
+
+[[ -z "$USER_GOAL" ]] && usage "User goal is required." 1
 
 case "$TASK_TYPE" in
     prompt-opt)
