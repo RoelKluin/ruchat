@@ -1,7 +1,7 @@
 use crate::agent::Team;
 use crate::agent::worker::Agent;
 use crate::config::{load_manager, save_manager}; // We will add these
-use crate::ollama::OllamaArgs;
+use crate::ollama::ServerArgs;
 use crate::error::{Result, RuChatError};
 use clap::{Parser, Subcommand};
 use ollama_rs::Ollama;
@@ -17,7 +17,7 @@ pub struct ManagerArgs {
     pub command: ManagerCommands,
 
     #[command(flatten)]
-    ollama_args: OllamaArgs,
+    server_args: ServerArgs,
 }
 
 #[derive(Subcommand, Debug, Clone, PartialEq)]
@@ -57,7 +57,7 @@ impl Manager {
     }
 
     pub async fn execute_command(args: ManagerArgs) -> Result<()> {
-        let ollama = args.ollama_args.init()?;
+        let ollama = args.server_args.init()?;
         let config_path = args
             .path
             .clone()

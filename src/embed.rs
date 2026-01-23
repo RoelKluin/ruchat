@@ -69,20 +69,16 @@ impl EmbedArgs {
     ///
     /// A `Result` indicating success or failure.
     pub(super) async fn embed(prompt: String, args: EmbedArgs) -> Result<(), RuChatError> {
-        let ollama = args.ollama_args.init()?;
-        let model_name = args
-            .ollama_args
-            .get_model(&ollama, "all-minilm:l6-v2")
-            .await?;
-        if model_name != "all-minilm:l6-v2" && !model_name.contains("embed") {
-            warn!("Model {} might not be an embeddings model", model_name);
+        let (ollama, model) = args.ollama_args.init("all-minilm:l6-v2").await?;
+        if model != "all-minilm:l6-v2" && !model.contains("embed") {
+            warn!("Model {model} might not be an embeddings model");
         }
 
         let id = match args.id {
             Some(id) => id.to_string(),
             None => prompt.lines().next().ok_or(RuChatError::EmptyPrompt)?.to_string(),
         };
-        let digest = md5::compute(format!("{model_name}:{id}"));
+        let digest = md5::compute(format!("{model}:{id}"));
         let id = Builder::from_md5_bytes(digest.0).into_uuid().hyphenated().to_string();
 
         let client = args.client_config.create_client()?;
@@ -102,7 +98,7 @@ impl EmbedArgs {
         eprintln!("Collection Count: {}", collection.count().await?);
 
         let ids = vec![id];
-        let request = GenerateEmbeddingsRequest::new(model_name, vec![prompt.as_str()].into());
+        let request = GenerateEmbeddingsRequest::new(model, vec![prompt.as_str()].into());
         let res = ollama.generate_embeddings(request).await?;
         let embeddings = res.embeddings;
         let documents = Some(vec![Some(prompt)]);

@@ -72,8 +72,7 @@ impl ChatArgs {
 
         //let running = Arc::new(Mutex::new(true))
         let mut stdout = io::stdout();
-        let ollama = self.ollama_args.init()?;
-        let model: String = self.ollama_args.get_model(&ollama, "").await?;
+        let (ollama, model) = self.ollama_args.init("").await?;
         let mut bufcursor = BufCursor::new()?;
         let debug_level = self.debug;
         if debug_level & 0x2 != 0 {

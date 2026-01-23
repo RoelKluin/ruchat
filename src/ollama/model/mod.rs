@@ -5,7 +5,7 @@ use ollama_rs::{Ollama, models::ModelOptions};
 use ollama_rs::generation::completion::request::GenerationRequest;
 
 #[derive(Parser, Debug, Clone, Default, PartialEq)]
-pub(super) struct ModelArgs {
+pub(crate) struct ModelArgs {
     /// Model to (down)load and use.
     #[arg(short, long)]
     model: String,
@@ -17,22 +17,21 @@ pub(super) struct ModelArgs {
 }
 
 impl ModelArgs {
-    pub(super) async fn get_model(&self, ollama: &Ollama, default: &str) -> Result<String> {
-        // Determine the initial model name
-        if self.model.is_empty() {
-            if default.is_empty() {
-                Err(RuChatError::NoModelSpecified)
-            } else {
-                get_model_name(ollama, default).await
-            }
+    pub(crate) async fn get_model(&self, ollama: &Ollama, default: &str) -> Result<String> {
+        let model = match self.model.as_str() {
+            m if m.is_empty() => default,
+            m => m,
+        };
+        if model.is_empty() {
+            Err(RuChatError::NoModelSpecified)
         } else {
-            get_model_name(ollama, &self.model).await
+            get_model_name(ollama, model).await
         }
     }
-    pub(super) async fn get_options(&self) -> Result<ModelOptions> {
+    pub(crate) async fn get_options(&self) -> Result<ModelOptions> {
         get_options(self.options.as_deref()).await
     }
-    pub(super) async fn build_generation_request(
+    pub(crate) async fn build_generation_request(
         &self,
         model: String,
         prompt: String,

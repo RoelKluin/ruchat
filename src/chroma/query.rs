@@ -149,8 +149,7 @@ pub(crate) async fn query(args: QueryArgs) -> Result<(), RuChatError> {
     );
 
     let mut cio = Io::new();
-    let ollama = args.ollama_args.init()?;
-    let model = args.ollama_args.get_model(&ollama, "").await?;
+    let (ollama, model) = args.ollama_args.init("").await?;
     let request = args
         .ollama_args
         .build_generation_request(model, prompt)

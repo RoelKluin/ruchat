@@ -3,10 +3,10 @@ use clap::Parser;
 use ollama_rs::Ollama;
 
 #[derive(Parser, Debug, Default, PartialEq, Clone)]
-pub struct ServerArgs {
+pub(crate) struct ServerArgs {
     /// Address and port of the ollama server.
     #[arg(short, long, default_value = "http://localhost:11434")]
-    pub(crate) server: String,
+    server: String,
 }
 
 impl ServerArgs {
@@ -18,7 +18,7 @@ impl ServerArgs {
     /// # Returns
     ///
     /// A `Result` containing the `Ollama` client or a `RuChatError`.
-    pub(super) fn init(&self) -> Result<Ollama> {
+    pub(crate) fn init(&self) -> Result<Ollama> {
         self.server
             .rsplit_once(':')
             .and_then(|(host, port)| port.parse::<u16>().map(|p| Ollama::new(host, p)).ok())

@@ -6,11 +6,11 @@ use crate::chroma::query::{QueryArgs, query};
 use crate::chroma::similarity::{SimilarityArgs, similarity_search};
 use crate::embed::EmbedPromptArgs;
 use crate::ollama::OllamaArgs;
-use crate::ollama::ask::AskArgs;
-use crate::ollama::chat::ChatArgs;
-use crate::ollama::func::func;
-use crate::ollama::func::strukt::func_struct;
-use crate::ollama::server::ServerArgs;
+use crate::ollama::AskArgs;
+use crate::ollama::ChatArgs;
+use crate::ollama::func;
+use crate::ollama::func::func_struct;
+use crate::ollama::ServerArgs;
 use clap::{Parser, Subcommand};
 
 /// Main command line interface for RuChat.

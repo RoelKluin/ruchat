@@ -13,16 +13,16 @@ const DEFAULT_MODEL: &str = "qwen2.5vl:latest";
 /// This struct defines the arguments required to ask a question
 /// to a model, including model details, prompt, and input options.
 #[derive(Parser, Debug, Clone, Default, PartialEq)]
-pub struct AskArgs {
+pub(crate) struct AskArgs {
     /// Request a certain output format, the default leaves the text as is.
     #[arg(short, long, default_value_t = String::from("text"))]
-    pub(crate) output_format: String,
+    output_format: String,
 
     #[command(flatten)]
-    pub(crate) prompt_args: PromptArgs,
+    prompt_args: PromptArgs,
 
     #[command(flatten)]
-    pub(crate) ollama_args: OllamaArgs,
+    ollama_args: OllamaArgs,
 }
 
 // Reusable generation logic for Agents
@@ -92,8 +92,7 @@ impl AskArgs {
             prompt.push_str(&self.output_format);
             prompt.push_str(" output format.\n");
         }
-        let ollama = self.ollama_args.init()?;
-        let model = self.ollama_args.get_model(&ollama, "").await?;
+        let (ollama, model) = self.ollama_args.init("").await?;
         let request = self
             .ollama_args
             .build_generation_request(model, prompt)

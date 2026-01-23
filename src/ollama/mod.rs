@@ -1,14 +1,18 @@
-pub(crate) mod ask;
-pub(crate) mod chat;
-pub(crate) mod func;
-pub(crate) mod model;
-pub(crate) mod server;
+mod ask;
+mod chat;
+pub(super) mod func;
+mod model;
+pub(super) mod server;
 use crate::error::Result;
-use crate::ollama::model::ModelArgs;
 use clap::Parser;
 use ollama_rs::generation::completion::request::GenerationRequest;
 use ollama_rs::{Ollama, models::ModelOptions};
-use server::ServerArgs;
+
+pub(super) use ask::*;
+pub(super) use chat::*;
+pub(super) use func::{func};
+pub(super) use model::ModelArgs;
+pub(crate) use server::ServerArgs;
 
 #[derive(Parser, Debug, Clone, Default, PartialEq)]
 pub struct OllamaArgs {
@@ -29,8 +33,7 @@ impl OllamaArgs {
     ///
     /// A `Result` indicating success or failure.
     pub(super) async fn rm(&self) -> Result<()> {
-        let ollama = self.server_args.init()?;
-        let model = self.model_args.get_model(&ollama, "").await?;
+        let (ollama, model) = self.init("").await?;
         ollama.delete_model(model).await?;
         Ok(())
     }
@@ -43,18 +46,17 @@ impl OllamaArgs {
     ///
     /// A `Result` indicating success or failure.
     pub(super) async fn pull(&self) -> Result<()> {
-        let ollama = self.init()?;
-        let model = self.get_model(&ollama, "").await?;
+        let (ollama, model) = self.init("").await?;
         ollama.pull_model(model, false).await?;
         Ok(())
     }
-    /// see [ServerArgs::init]
-    pub fn init(&self) -> Result<Ollama> {
+    pub fn init_server(&self) -> Result<Ollama> {
         self.server_args.init()
     }
-    /// see [ModelArgs::get_model]
-    pub async fn get_model(&self, ollama: &Ollama, default: &str) -> Result<String> {
-        self.model_args.get_model(ollama, default).await
+    /// see [ServerArgs::init]
+    pub async fn init(&self, default: &str) -> Result<(Ollama, String)> {
+        let ollama = self.init_server()?;
+        self.model_args.get_model(&ollama, default).await.map(|model| (ollama, model))
     }
     /// see [ModelArgs::get_options]
     pub async fn get_options(&self) -> Result<ModelOptions> {

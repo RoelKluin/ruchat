@@ -1,4 +1,4 @@
-pub(crate) mod strukt;
+mod strukt;
 use crate::error::Result;
 use crate::io::Io;
 use crate::ollama::OllamaArgs;
@@ -17,6 +17,7 @@ use ollama_rs::{
         },
     },
 };
+pub(crate) use strukt::func_struct;
 
 /// Subcommand to run a function using a model.
 ///
@@ -34,8 +35,7 @@ use ollama_rs::{
 /// A `Result` indicating success or failure.
 pub(crate) async fn func(args: OllamaArgs) -> Result<()> {
     let history = vec![];
-    let ollama = args.init()?;
-    let model = args.get_model(&ollama, "").await?;
+    let (ollama, model) = args.init("").await?;
     let mut coordinator = Coordinator::new(ollama, model, history)
         .options(ModelOptions::default().num_ctx(16384))
         .add_tool(Calculator {})
