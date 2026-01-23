@@ -1,4 +1,4 @@
-use crate::ollama::pipe::generate_oneshot;
+use crate::ollama::ask::generate_oneshot;
 use anyhow::Result;
 use ollama_rs::Ollama;
 use ollama_rs::models::ModelOptions;

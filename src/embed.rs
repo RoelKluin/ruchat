@@ -7,6 +7,7 @@ use log::warn;
 use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
 use uuid::Builder;
 use md5;
+use crate::ollama::OllamaArgs;
 
 /// Command-line arguments for embedding data into a Chroma database.
 ///
