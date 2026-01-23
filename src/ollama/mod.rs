@@ -34,6 +34,20 @@ impl OllamaArgs {
         ollama.delete_model(model).await?;
         Ok(())
     }
+    /// Subcommand to pull a model from the main Ollama server.
+    ///
+    /// This function connects to the Ollama server, retrieves the specified
+    /// model, and pulls it to the local environment.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` indicating success or failure.
+    pub(super) async fn pull(&self) -> Result<()> {
+        let ollama = self.init()?;
+        let model = self.get_model(&ollama, "").await?;
+        ollama.pull_model(model, false).await?;
+        Ok(())
+    }
     /// see [ServerArgs::init]
     pub fn init(&self) -> Result<Ollama> {
         self.server_args.init()

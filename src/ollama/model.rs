@@ -1,4 +1,3 @@
-pub(crate) mod pull;
 use crate::error::{Result, RuChatError};
 use crate::options::get_options;
 use clap::Parser;

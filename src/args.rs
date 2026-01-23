@@ -7,10 +7,9 @@ use crate::chroma::similarity::{SimilarityArgs, similarity_search};
 use crate::embed::EmbedPromptArgs;
 use crate::ollama::OllamaArgs;
 use crate::ollama::ask::AskArgs;
-use crate::ollama::chat::{ChatArgs, chat};
+use crate::ollama::chat::ChatArgs;
 use crate::ollama::func::func;
 use crate::ollama::func::strukt::func_struct;
-use crate::ollama::model::pull::pull;
 use crate::ollama::server::ServerArgs;
 use clap::{Parser, Subcommand};
 
@@ -40,10 +39,10 @@ impl Args {
         match self.command.unwrap_or(default) {
             Commands::Ask(args) => args.ask("").await,
             Commands::Pipe(args) => args.ask("---").await,
-            Commands::Chat(args) => chat(args).await,
+            Commands::Chat(args) => args.chat().await,
             Commands::Ls(args) => args.ls().await,
             Commands::Rm(args) => args.rm().await,
-            Commands::Pull(args) => pull(args).await,
+            Commands::Pull(args) => args.pull().await,
             Commands::Func(args) => func(args).await,
             Commands::FuncStruct(args) => func_struct(args).await,
             Commands::Embed(args) => args.embed().await,
