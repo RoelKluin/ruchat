@@ -2,7 +2,7 @@ use crate::error::Result;
 use crate::agent::manager::{Manager, ManagerArgs};
 use crate::chroma::delete::{ChromaDeleteArgs, chroma_delete};
 use crate::chroma::ls::{ChromaLsArgs, chroma_ls};
-use crate::chroma::query::{QueryArgs, query};
+use crate::chroma::query::QueryArgs;
 use crate::chroma::similarity::{SimilarityArgs, similarity_search};
 use crate::embed::EmbedPromptArgs;
 use crate::ollama::OllamaArgs;
@@ -46,7 +46,7 @@ impl Args {
             Commands::Func(args) => func(args).await,
             Commands::FuncStruct(args) => func_struct(args).await,
             Commands::Embed(args) => args.embed().await,
-            Commands::Query(args) => query(args).await,
+            Commands::Query(args) => args.query().await,
             Commands::Similarity(args) => similarity_search(args).await,
             Commands::ChromaLs(args) => chroma_ls(args).await,
             Commands::ChromaDelete(args) => chroma_delete(args).await,

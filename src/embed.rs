@@ -6,7 +6,6 @@ use clap::Parser;
 use log::warn;
 use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
 use uuid::Builder;
-use md5;
 use crate::ollama::OllamaArgs;
 
 #[derive(Parser, Debug, Clone, PartialEq)]

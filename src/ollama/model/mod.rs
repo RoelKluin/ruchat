@@ -19,7 +19,7 @@ pub(crate) struct ModelArgs {
 impl ModelArgs {
     pub(crate) async fn get_model(&self, ollama: &Ollama, default: &str) -> Result<String> {
         let model = match self.model.as_str() {
-            m if m.is_empty() => default,
+            "" => default,
             m => m,
         };
         if model.is_empty() {

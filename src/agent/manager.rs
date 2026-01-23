@@ -68,11 +68,10 @@ impl Manager {
                 let mut manager = Manager::new();
                 let name = "Default Team".to_string();
                 let goal = "Achieve the default goal.".to_string();
-                let mut agents = vec![];
-                agents.push(Agent::new(
+                let agents = vec![Agent::new(
                     "qwen2.5-coder:7b".to_string(),
                     "You are an agent that performs tasks.".to_string(),
-                ));
+                )];
                 manager.teams.push(Team::new(name, goal, agents));
                 save_manager(config_path.as_str(), &manager).await?;
                 println!("Initialized empty manager at {}", config_path);

@@ -5,10 +5,11 @@ use std::process::Command;
 use clap::ValueEnum;
 use std::collections::HashSet;
 
-#[derive(ValueEnum, Clone, Debug, PartialEq)]
+#[derive(ValueEnum, Clone, Debug, PartialEq, Default)]
 enum StdCapture {
     Stdout,
     Stderr,
+    #[default]
     Both,
 }
 
@@ -19,22 +20,6 @@ impl StdCapture {
             StdCapture::Stderr => "Stderr",
             StdCapture::Both => "Stderr and Stdout",
         }
-    }
-}
-
-impl ToString for StdCapture {
-    fn to_string(&self) -> String {
-        match self {
-            StdCapture::Stdout => "stdout".to_string(),
-            StdCapture::Stderr => "stderr".to_string(),
-            StdCapture::Both => "both".to_string(),
-        }
-    }
-}
-
-impl Default for StdCapture {
-    fn default() -> Self {
-        StdCapture::Both
     }
 }
 
@@ -97,7 +82,7 @@ impl PromptArgs {
                 for file in files.split(',') {
                     let file = file.trim();
                     let content = fs::read_to_string(file)
-                        .map_err(|e| RuChatError::FileReadError(format!("{}, {e}", file.to_string())))?;
+                        .map_err(|e| RuChatError::FileReadError(format!("{}, {e}", file)))?;
                     combined_content.push_str("```\n");
                     combined_content.push_str(&content);
                     combined_content.push_str("\n```\n");
@@ -123,13 +108,12 @@ impl PromptArgs {
                             combined_content.push_str("No stdout.\n");
                         }
                     }
-                    if self.capture == StdCapture::Stderr || self.capture == StdCapture::Both {
-                        if !output.stderr.is_empty() {
+                    if (self.capture == StdCapture::Stderr || self.capture == StdCapture::Both)
+                        && !output.stderr.is_empty() {
                             combined_content.push_str("Stderr:\n```\n");
                             combined_content.push_str(&String::from_utf8_lossy(&output.stderr));
                             combined_content.push_str("\n```\n");
                         }
-                    }
                     if allowed_exit_codes.contains(&status.code().unwrap_or(-1)) {
                         combined_content.push_str(&format!("`{cmd} {args} {file}` exited with status code {}.\n", status.code().unwrap_or(-1)));
                     } else {
@@ -156,7 +140,7 @@ impl PromptArgs {
         }
     }
 
-    pub fn get_prompt(&self) -> Result<String> {
+    pub(super) fn get_prompt(&self) -> Result<String> {
         if self.prompt.is_some() && self.positional_prompt.is_some() && self.prompt != self.positional_prompt {
             Err(RuChatError::ConflictingPrompts)
         } else {

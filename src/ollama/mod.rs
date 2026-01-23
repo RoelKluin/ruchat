@@ -6,7 +6,7 @@ pub(super) mod server;
 use crate::error::Result;
 use clap::Parser;
 use ollama_rs::generation::completion::request::GenerationRequest;
-use ollama_rs::{Ollama, models::ModelOptions};
+use ollama_rs::Ollama;
 
 pub(super) use ask::*;
 pub(super) use chat::*;
@@ -57,10 +57,6 @@ impl OllamaArgs {
     pub async fn init(&self, default: &str) -> Result<(Ollama, String)> {
         let ollama = self.init_server()?;
         self.model_args.get_model(&ollama, default).await.map(|model| (ollama, model))
-    }
-    /// see [ModelArgs::get_options]
-    pub async fn get_options(&self) -> Result<ModelOptions> {
-        self.model_args.get_options().await
     }
     /// see [ModelArgs::build_generation_request]
     pub async fn build_generation_request(

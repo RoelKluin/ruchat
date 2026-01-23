@@ -74,7 +74,7 @@ impl AskArgs {
             Ok(p) => p,
             Err(RuChatError::NoPromptProvided) => {
                 let mut input = String::new();
-                if end_marker == "" { // indicates user mode
+                if end_marker.is_empty() { // indicates user mode
                     cio.write_line("Enter your question (empty line to finish):").await?;
                 }
                 while let Ok(line) = cio.read_line().await {
