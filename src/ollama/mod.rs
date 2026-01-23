@@ -20,28 +20,33 @@ pub struct OllamaArgs {
 }
 
 impl OllamaArgs {
-    /// Initializes a connection to an Ollama server.
+    /// Subcommand to remove a model from the local Ollama instance.
     ///
-    /// This function parses the server address and port from the provided
-    /// arguments and establishes a connection to the Ollama server.
-    ///
-    /// # Parameters
-    ///
-    /// - `args`: The command-line arguments containing the server information.
+    /// This function connects to the local Ollama instance, retrieves the specified
+    /// model, and removes it from the local environment.
     ///
     /// # Returns
     ///
-    /// A `Result` containing the `Ollama` client or a `RuChatError`.
+    /// A `Result` indicating success or failure.
+    pub(super) async fn rm(&self) -> Result<()> {
+        let ollama = self.server_args.init()?;
+        let model = self.model_args.get_model(&ollama, "").await?;
+        ollama.delete_model(model).await?;
+        Ok(())
+    }
+    /// see [ServerArgs::init]
     pub fn init(&self) -> Result<Ollama> {
         self.server_args.init()
     }
-
+    /// see [ModelArgs::get_model]
     pub async fn get_model(&self, ollama: &Ollama, default: &str) -> Result<String> {
         self.model_args.get_model(ollama, default).await
     }
+    /// see [ModelArgs::get_options]
     pub async fn get_options(&self) -> Result<ModelOptions> {
         self.model_args.get_options().await
     }
+    /// see [ModelArgs::build_generation_request]
     pub async fn build_generation_request(
         &self,
         model: String,

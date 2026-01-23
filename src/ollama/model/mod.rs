@@ -1,6 +1,4 @@
-pub(crate) mod ls;
 pub(crate) mod pull;
-pub(crate) mod rm;
 use crate::error::{Result, RuChatError};
 use crate::options::get_options;
 use clap::Parser;
@@ -23,10 +21,10 @@ impl ModelArgs {
     pub async fn get_model(&self, ollama: &Ollama, default: &str) -> Result<String> {
         // Determine the initial model name
         if self.model.is_empty() {
-            if !default.is_empty() {
-                get_model_name(ollama, default).await
+            if default.is_empty() {
+                Err(RuChatError::NoModelSpecified)
             } else {
-                Ok("qwen2.5vl:latest".to_string())
+                get_model_name(ollama, default).await
             }
         } else {
             get_model_name(ollama, &self.model).await

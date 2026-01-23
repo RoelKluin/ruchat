@@ -11,7 +11,6 @@ use crate::ollama::chat::{ChatArgs, chat};
 use crate::ollama::func::func;
 use crate::ollama::func::strukt::func_struct;
 use crate::ollama::model::pull::pull;
-use crate::ollama::model::rm::remove;
 use crate::ollama::server::ServerArgs;
 use clap::{Parser, Subcommand};
 
@@ -42,8 +41,8 @@ impl Args {
             Commands::Ask(args) => args.ask("").await,
             Commands::Pipe(args) => args.ask("---").await,
             Commands::Chat(args) => chat(args).await,
-            Commands::Ls(args) => args.list().await,
-            Commands::Rm(args) => remove(args).await,
+            Commands::Ls(args) => args.ls().await,
+            Commands::Rm(args) => args.rm().await,
             Commands::Pull(args) => pull(args).await,
             Commands::Func(args) => func(args).await,
             Commands::FuncStruct(args) => func_struct(args).await,

@@ -15,10 +15,6 @@ impl ServerArgs {
     /// This function parses the server address and port from the provided
     /// arguments and establishes a connection to the Ollama server.
     ///
-    /// # Parameters
-    ///
-    /// - `args`: The command-line arguments containing the server information.
-    ///
     /// # Returns
     ///
     /// A `Result` containing the `Ollama` client or a `RuChatError`.
@@ -35,14 +31,10 @@ impl ServerArgs {
     /// of local models, and prints their names and sizes in a formatted
     /// table.
     ///
-    /// # Parameters
-    ///
-    /// - `args`: The command-line arguments containing the server information.
-    ///
     /// # Returns
     ///
     /// A `Result` indicating success or failure.
-    pub(crate) async fn list(&self) -> Result<()> {
+    pub(crate) async fn ls(&self) -> Result<()> {
         let ollama = self.init()?;
         let models: Vec<_> = ollama.list_local_models().await?;
         let max_length = models.iter().map(|m| m.name.len()).max().unwrap_or(0);
