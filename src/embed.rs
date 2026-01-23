@@ -9,6 +9,20 @@ use uuid::Builder;
 use md5;
 use crate::ollama::OllamaArgs;
 
+#[derive(Parser, Debug, Clone, PartialEq)]
+pub struct EmbedPromptArgs {
+    prompt: String,
+
+    #[command(flatten)]
+    embed_args: EmbedArgs,
+}
+
+impl EmbedPromptArgs {
+    pub(crate) async fn embed(self) -> Result<(), RuChatError> {
+        EmbedArgs::embed(self.prompt, self.embed_args).await
+    }
+}
+
 /// Command-line arguments for embedding data into a Chroma database.
 ///
 /// This struct defines the arguments required to perform an embedding
@@ -16,34 +30,93 @@ use crate::ollama::OllamaArgs;
 /// and database connection information.
 #[derive(Parser, Debug, Clone, PartialEq)]
 pub struct EmbedArgs {
-    // The model to use for generating embeddings.
-    //#[arg(short, long, default_value = "nomic-embed-text:latest")]
-    //pub(crate) model: String,
-    /// The prompt to embed.
-    #[arg(short, long)]
-    pub(crate) prompt: String,
-
     /// Chroma update metadata, comma separated key:value pairs.
     #[arg(short, long, value_name = "KEY:VALUE", value_parser = parse_key_val::<String, String>)]
-    pub(crate) update_metadata: Option<String>,
+    update_metadata: Option<String>,
 
     /// ID associated with the embedding entry.
     #[arg(short, long)]
-    pub(crate) id: Option<String>,
+    id: Option<String>,
 
     /// URIs associated with the embedding entries.
     #[arg(short, long)]
-    pub(crate) uris: Option<Vec<Option<String>>>,
+    uris: Option<Vec<Option<String>>>,
+
+    // FIXME: this is clashing with AskArgs ollama_args
+    #[command(flatten)]
+    ollama_args: OllamaArgs,
 
     #[command(flatten)]
-    pub(crate) ollama_args: crate::ollama::OllamaArgs,
+    client_config: ChromaClientConfigArgs,
 
     #[command(flatten)]
-    pub client_config: ChromaClientConfigArgs,
-
-    #[command(flatten)]
-    pub collection_config: ChromaCollectionConfigArgs,
+    collection_config: ChromaCollectionConfigArgs,
 }
+
+impl EmbedArgs {
+    /// Embeds data into a Chroma database.
+    ///
+    /// This function connects to a Chroma database using the provided
+    /// arguments, generates embeddings for the specified prompt, and
+    /// stores the embeddings in the database.
+    ///
+    /// # Parameters
+    ///
+    /// - `ollama`: The Ollama client for generating embeddings.
+    /// - `args`: The command-line arguments for the embedding operation.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` indicating success or failure.
+    pub(crate) async fn embed(prompt: String, args: EmbedArgs) -> Result<(), RuChatError> {
+        let ollama = args.ollama_args.init()?;
+        let model_name = args
+            .ollama_args
+            .get_model(&ollama, "all-minilm:l6-v2")
+            .await?;
+        if model_name != "all-minilm:l6-v2" && !model_name.contains("embed") {
+            warn!("Model {} might not be an embeddings model", model_name);
+        }
+
+        let id = match args.id {
+            Some(id) => id.to_string(),
+            None => prompt.lines().next().ok_or(RuChatError::EmptyPrompt)?.to_string(),
+        };
+        let digest = md5::compute(format!("{model_name}:{id}"));
+        let id = Builder::from_md5_bytes(digest.0).into_uuid().hyphenated().to_string();
+
+        let client = args.client_config.create_client()?;
+
+        eprintln!("Collection name: {}", args.collection_config.collection);
+        // XXX: error here.
+        let collection = args
+            .collection_config
+            .get_or_create_collection(&client)
+            .await?;
+        eprintln!("Connected to Chroma collection.");
+
+
+        eprintln!("Collection Name: {}", collection.name());
+        eprintln!("Collection ID: {}", id);
+        eprintln!("Collection Metadata: {:?}", collection.metadata());
+        eprintln!("Collection Count: {}", collection.count().await?);
+
+        let ids = vec![id];
+        let request = GenerateEmbeddingsRequest::new(model_name, vec![prompt.as_str()].into());
+        let res = ollama.generate_embeddings(request).await?;
+        let embeddings = res.embeddings;
+        let documents = Some(vec![Some(prompt)]);
+        let uris = args.uris.or_else(|| Some(vec![None]));
+        let update_metadata = get_update_metadata(&args.update_metadata)?;
+
+        collection
+            .upsert(ids, embeddings, documents, uris, update_metadata)
+            .await?;
+        Ok(())
+    }
+
+}
+
 
 /// Parses metadata from a string of comma-separated key:value pairs.
 ///
@@ -72,66 +145,6 @@ fn get_update_metadata(
         }
     }
     Ok(Some(vec![Some(metadata)]))
-}
-
-/// Embeds data into a Chroma database.
-///
-/// This function connects to a Chroma database using the provided
-/// arguments, generates embeddings for the specified prompt, and
-/// stores the embeddings in the database.
-///
-/// # Parameters
-///
-/// - `ollama`: The Ollama client for generating embeddings.
-/// - `args`: The command-line arguments for the embedding operation.
-///
-/// # Returns
-///
-/// A `Result` indicating success or failure.
-pub(crate) async fn embed(args: EmbedArgs) -> Result<(), RuChatError> {
-    let ollama = args.ollama_args.init()?;
-    let model_name = args
-        .ollama_args
-        .get_model(&ollama, "all-minilm:l6-v2")
-        .await?;
-    if model_name != "all-minilm:l6-v2" && !model_name.contains("embed") {
-        warn!("Model {} might not be an embeddings model", model_name);
-    }
-    let id = match args.id {
-        Some(id) => id.to_string(),
-        None => args.prompt.lines().next().ok_or(RuChatError::EmptyPrompt)?.to_string(),
-    };
-    let digest = md5::compute(format!("{model_name}:{id}"));
-    let id = Builder::from_md5_bytes(digest.0).into_uuid().hyphenated().to_string();
-    let update_metadata = get_update_metadata(&args.update_metadata)?;
-
-    let request = GenerateEmbeddingsRequest::new(model_name, vec![args.prompt.as_str()].into());
-    let res = ollama.generate_embeddings(request).await?;
-
-    let client = args.client_config.create_client()?;
-
-    eprintln!("Collection name: {}", args.collection_config.collection);
-    // XXX: error here.
-    let collection = args
-        .collection_config
-        .get_or_create_collection(&client)
-        .await?;
-    eprintln!("Connected to Chroma collection.");
-
-    eprintln!("Collection Name: {}", collection.name());
-    eprintln!("Collection ID: {}", id);
-    eprintln!("Collection Metadata: {:?}", collection.metadata());
-    eprintln!("Collection Count: {}", collection.count().await?);
-
-    let ids = vec![id];
-    let embeddings = res.embeddings;
-    let documents = Some(vec![Some(args.prompt)]);
-    let uris = args.uris.or_else(|| Some(vec![None]));
-
-    collection
-        .upsert(ids, embeddings, documents, uris, update_metadata)
-        .await?;
-    Ok(())
 }
 
 #[cfg(test)]

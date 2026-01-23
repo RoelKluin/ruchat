@@ -9,6 +9,7 @@ use chroma::types::{
 };
 use clap::Parser;
 use tokio_stream::StreamExt;
+use crate::embed::EmbedArgs;
 
 /// Command-line arguments for querying a Chroma database.
 ///
@@ -19,32 +20,35 @@ use tokio_stream::StreamExt;
 pub struct QueryArgs {
     /// The query string to search for in the database.
     #[arg(short, long)]
-    pub(crate) query: String,
+    query: String,
 
     /// The prompt to use for generating a response.
     #[arg(short, long)]
-    pub(crate) prompt: String,
+    prompt: String,
 
     /// The number of results to return.
     #[arg(short, long, default_value = "1")]
-    pub(crate) count: u32,
+    count: u32,
 
     /// Chroma database collection name.
     #[arg(short, long, default_value = "default")]
-    pub(crate) collection: String,
+    collection: String,
 
     /// Chroma database metadata, comma separated key:value pairs.
     #[arg(short, long)]
-    pub(crate) metadata: Option<String>,
+    metadata: Option<String>,
 
     #[command(flatten)]
-    pub collection_config: ChromaCollectionConfigArgs,
+    collection_config: ChromaCollectionConfigArgs,
 
     #[command(flatten)]
-    pub client_config: ChromaClientConfigArgs,
+    client_config: ChromaClientConfigArgs,
 
     #[command(flatten)]
-    pub(crate) ollama_args: OllamaArgs,
+    ollama_args: OllamaArgs,
+
+    #[command(flatten)]
+    embed_args: EmbedArgs,
 }
 
 fn get_where_metadata(args: &QueryArgs) -> Option<Where> {

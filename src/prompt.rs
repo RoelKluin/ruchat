@@ -42,19 +42,19 @@ impl Default for StdCapture {
 pub struct PromptArgs {
     /// Prompt to use.
     #[arg(short, long)]
-    pub(crate) prompt: Option<String>,
+    prompt: Option<String>,
 
     /// Text files to use as input, separated by commas.
     #[arg(short = 'i', long)]
-    pub(crate) files: Option<String>,
+    files: Option<String>,
 
     /// Command to read input from, defaults to 'cat'.
     #[arg(short = 'c', long, default_value = "cat")]
-    pub(crate) command: String,
+    command: String,
 
     /// Arguments to pass to the command.
     #[arg(short = 'a', long, num_args = 0..)]
-    pub(crate) args: Vec<String>,
+    args: Vec<String>,
 
     /// Capture standard output, standard error, or both.
     #[arg(short = 's', long, default_value = "both")]
@@ -62,10 +62,10 @@ pub struct PromptArgs {
 
     /// Allowed exit codes for the command, separated by commas.
     #[arg(short = 'e', long, default_value = "0")]
-    pub(crate) allowed_exit_codes: String,
+    allowed_exit_codes: String,
 
     /// Specify the prompt using a positional argument.
-    pub(crate) positional_prompt: Option<String>,
+    positional_prompt: Option<String>,
 }
 
 fn andify_list<S: AsRef<str>>(what: &str, items: &[S], q: &str) -> String {

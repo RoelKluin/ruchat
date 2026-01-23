@@ -2,34 +2,21 @@ pub(crate) mod ask;
 pub(crate) mod chat;
 pub(crate) mod func;
 pub(crate) mod model;
-pub(crate) mod pipe;
 pub(crate) mod server;
-use crate::error::{Result, RuChatError};
-use crate::ollama::model::get_name;
-use crate::options::get_options;
+use crate::error::Result;
+use crate::ollama::model::ModelArgs;
 use clap::Parser;
 use ollama_rs::generation::completion::request::GenerationRequest;
 use ollama_rs::{Ollama, models::ModelOptions};
 use server::ServerArgs;
 
-const DEFAULT_MODEL: &str = "qwen2.5vl:latest";
-
 #[derive(Parser, Debug, Clone, Default, PartialEq)]
 pub struct OllamaArgs {
-    /// Model to (down)load and use.
-    #[arg(short, long)]
-    pub(crate) model: Option<String>,
-
-    /// Path to a JSON file to amend default generation options, or a string
-    /// representing the options in JSON format.
-    #[arg(short, long)]
-    pub(crate) options: Option<String>,
-
-    /// Specify the model using a positional argument.
-    pub(crate) positional_model: Option<String>,
-
     #[command(flatten)]
     server_args: ServerArgs,
+
+    #[command(flatten)]
+    model_args: ModelArgs,
 }
 
 impl OllamaArgs {
@@ -50,54 +37,17 @@ impl OllamaArgs {
     }
 
     pub async fn get_model(&self, ollama: &Ollama, default: &str) -> Result<String> {
-        // Determine the initial model name
-        match self.model.as_deref().or(self.positional_model.as_deref()) {
-            Some(name) if !name.is_empty() => get_name(ollama, name).await,
-            None if !default.is_empty() => get_name(ollama, default).await,
-            None => Ok(DEFAULT_MODEL.to_string()),
-            _ => Err(RuChatError::InvalidModelName(
-                "Model name cannot be empty".to_string(),
-            )),
-        }
+        self.model_args.get_model(ollama, default).await
     }
     pub async fn get_options(&self) -> Result<ModelOptions> {
-        get_options(self.options.as_deref()).await
+        self.model_args.get_options().await
     }
     pub async fn build_generation_request(
         &self,
         model: String,
         prompt: String,
     ) -> Result<GenerationRequest<'_>> {
-        let options = self.get_options().await?;
-        Ok(GenerationRequest::new(model, prompt).options(options))
+        self.model_args.build_generation_request(model, prompt).await
     }
 }
 
-pub async fn get_model_name(ollama: &Ollama, name: &str) -> Result<String> {
-    if name.is_empty()
-        || !name
-            .chars()
-            .all(|c| c.is_alphanumeric() || c == ':' || c == '-' || c == '.' || c == '/')
-    {
-        return Err(RuChatError::InvalidModelName(name.to_string()));
-    }
-    let model_list = ollama
-        .list_local_models()
-        .await
-        .map_err(|_| RuChatError::ModelNotFound(name.to_string()))?;
-    let model = model_list.iter().find(|m| {
-        if name.contains(":") {
-            m.name == name
-        } else {
-            m.name.starts_with(name)
-        }
-    });
-
-    match model {
-        Some(model) => Ok(model.name.clone()),
-        None => {
-            ollama.pull_model(name.to_string(), false).await?;
-            Box::pin(get_model_name(ollama, name)).await
-        }
-    }
-}

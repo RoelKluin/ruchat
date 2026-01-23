@@ -4,7 +4,7 @@ use crate::chroma::delete::{ChromaDeleteArgs, chroma_delete};
 use crate::chroma::ls::{ChromaLsArgs, chroma_ls};
 use crate::chroma::query::{QueryArgs, query};
 use crate::chroma::similarity::{SimilarityArgs, similarity_search};
-use crate::embed::{EmbedArgs, embed};
+use crate::embed::EmbedPromptArgs;
 use crate::ollama::OllamaArgs;
 use crate::ollama::ask::AskArgs;
 use crate::ollama::chat::{ChatArgs, chat};
@@ -48,7 +48,7 @@ impl Args {
             Commands::Pull(args) => pull(args).await,
             Commands::Func(args) => func(args).await,
             Commands::FuncStruct(args) => func_struct(args).await,
-            Commands::Embed(args) => embed(args).await,
+            Commands::Embed(args) => args.embed().await,
             Commands::Query(args) => query(args).await,
             Commands::Similarity(args) => similarity_search(args).await,
             Commands::ChromaLs(args) => chroma_ls(args).await,
@@ -82,7 +82,7 @@ pub enum Commands {
     /// Run a function using a language model with structured input.
     FuncStruct(OllamaArgs),
     /// Use embedding model to create embeddings in Chroma.
-    Embed(EmbedArgs),
+    Embed(EmbedPromptArgs),
     /// Query Chroma database.
     Query(QueryArgs),
     /// Find similar embeddings in Chroma database.

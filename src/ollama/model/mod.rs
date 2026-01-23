@@ -2,9 +2,51 @@ pub(crate) mod ls;
 pub(crate) mod pull;
 pub(crate) mod rm;
 use crate::error::{Result, RuChatError};
-use ollama_rs::Ollama;
+use crate::options::get_options;
+use clap::Parser;
+use ollama_rs::{Ollama, models::ModelOptions};
+use ollama_rs::generation::completion::request::GenerationRequest;
 
-pub async fn get_name(ollama: &Ollama, name: &str) -> Result<String> {
+#[derive(Parser, Debug, Clone, Default, PartialEq)]
+pub struct ModelArgs {
+    /// Model to (down)load and use.
+    #[arg(short, long)]
+    model: String,
+
+    /// Path to a JSON file to amend default generation options, or a string
+    /// representing the options in JSON format.
+    #[arg(short, long)]
+    options: Option<String>,
+}
+
+impl ModelArgs {
+    pub async fn get_model(&self, ollama: &Ollama, default: &str) -> Result<String> {
+        // Determine the initial model name
+        if self.model.is_empty() {
+            if !default.is_empty() {
+                get_model_name(ollama, default).await
+            } else {
+                Ok("qwen2.5vl:latest".to_string())
+            }
+        } else {
+            get_model_name(ollama, &self.model).await
+        }
+    }
+    pub async fn get_options(&self) -> Result<ModelOptions> {
+        get_options(self.options.as_deref()).await
+    }
+    pub async fn build_generation_request(
+        &self,
+        model: String,
+        prompt: String,
+    ) -> Result<GenerationRequest<'_>> {
+        let options = self.get_options().await?;
+        Ok(GenerationRequest::new(model, prompt).options(options))
+    }
+
+}
+
+async fn get_model_name(ollama: &Ollama, name: &str) -> Result<String> {
     if name.is_empty()
         || !name
             .chars()
@@ -28,7 +70,7 @@ pub async fn get_name(ollama: &Ollama, name: &str) -> Result<String> {
         Some(model) => Ok(model.name.clone()),
         None => {
             ollama.pull_model(name.to_string(), false).await?;
-            Box::pin(get_name(ollama, name)).await
+            Box::pin(get_model_name(ollama, name)).await
         }
     }
 }
