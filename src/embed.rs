@@ -10,7 +10,7 @@ use md5;
 use crate::ollama::OllamaArgs;
 
 #[derive(Parser, Debug, Clone, PartialEq)]
-pub struct EmbedPromptArgs {
+pub(super) struct EmbedPromptArgs {
     prompt: String,
 
     #[command(flatten)]
@@ -18,7 +18,7 @@ pub struct EmbedPromptArgs {
 }
 
 impl EmbedPromptArgs {
-    pub(crate) async fn embed(self) -> Result<(), RuChatError> {
+    pub(super) async fn embed(self) -> Result<(), RuChatError> {
         EmbedArgs::embed(self.prompt, self.embed_args).await
     }
 }
@@ -29,7 +29,7 @@ impl EmbedPromptArgs {
 /// operation in a Chroma database, including model details, prompt,
 /// and database connection information.
 #[derive(Parser, Debug, Clone, PartialEq)]
-pub struct EmbedArgs {
+pub(super) struct EmbedArgs {
     /// Chroma update metadata, comma separated key:value pairs.
     #[arg(short, long, value_name = "KEY:VALUE", value_parser = parse_key_val::<String, String>)]
     update_metadata: Option<String>,
@@ -68,7 +68,7 @@ impl EmbedArgs {
     /// # Returns
     ///
     /// A `Result` indicating success or failure.
-    pub(crate) async fn embed(prompt: String, args: EmbedArgs) -> Result<(), RuChatError> {
+    pub(super) async fn embed(prompt: String, args: EmbedArgs) -> Result<(), RuChatError> {
         let ollama = args.ollama_args.init()?;
         let model_name = args
             .ollama_args

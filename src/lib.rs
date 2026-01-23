@@ -1,18 +1,18 @@
-pub mod agent;
+pub(crate) mod agent;
 pub(crate) mod arg_utils;
-pub mod args;
-pub mod chroma;
+pub(crate) mod args;
+pub(crate) mod chroma;
 pub(crate) mod config;
-pub mod embed;
-pub mod error;
+pub(crate) mod embed;
+pub(crate) mod error;
 pub(crate) mod io;
-pub mod ollama;
+pub(crate) mod ollama;
 pub(crate) mod options;
 pub(crate) mod prompt;
 
 use args::Args;
 use clap::Parser;
-use error::RuChatError;
+use error::Result;
 
 /// Runs the RuChat application.
 ///
@@ -28,7 +28,7 @@ use error::RuChatError;
 ///
 /// This function will return an error if the command-line arguments cannot be
 /// parsed or if handling the request fails.
-pub async fn run() -> Result<(), RuChatError> {
+pub async fn run() -> Result<()> {
     env_logger::init();
     let args = Args::parse();
     args.handle_request().await

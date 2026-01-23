@@ -39,7 +39,7 @@ impl Default for StdCapture {
 }
 
 #[derive(Parser, Debug, Clone, Default, PartialEq)]
-pub struct PromptArgs {
+pub(super) struct PromptArgs {
     /// Prompt to use.
     #[arg(short, long)]
     prompt: Option<String>,

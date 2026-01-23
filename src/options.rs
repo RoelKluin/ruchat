@@ -35,7 +35,7 @@ async fn read_options_file(options: &str) -> Result<Value> {
 /// # Returns
 ///
 /// A `Result` containing the `ModelOptions` or a `RuChatError`.
-pub(crate) async fn get_options(options: Option<&str>) -> Result<ModelOptions> {
+pub(super) async fn get_options(options: Option<&str>) -> Result<ModelOptions> {
     if let Some(options_path) = options {
         let mut defaults = serde_json::to_value(ModelOptions::default())?;
 

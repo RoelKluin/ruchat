@@ -24,7 +24,7 @@ struct Question {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct ConversationTree {
+pub(super) struct ConversationTree {
     questions: HashMap<usize, Question>,
     answers: HashMap<usize, Answer>,
     current_question_ids: Vec<usize>,

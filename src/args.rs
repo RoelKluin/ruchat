@@ -19,18 +19,18 @@ use clap::{Parser, Subcommand};
 /// for the RuChat application. It uses the `clap` crate to parse and
 /// handle command-line input.
 #[derive(Parser, Debug, PartialEq)]
-pub struct Args {
+pub(super) struct Args {
     /// The subcommand to execute.
     #[command(subcommand)]
-    pub command: Option<Commands>,
+    command: Option<Commands>,
 
     /// Toggle verbose mode.
     #[arg(short, long, default_value = "false")]
-    pub(crate) verbose: bool,
+    verbose: bool,
 }
 
 impl Args {
-    pub(crate) async fn handle_request(self) -> Result<()> {
+    pub(super) async fn handle_request(self) -> Result<()> {
         let default = Commands::Pipe(AskArgs::default());
         if self.verbose {
             let command_line = std::env::args().collect::<Vec<String>>().join(" ");
@@ -61,7 +61,7 @@ impl Args {
 /// by the RuChat application. Each variant corresponds to a specific
 /// operation or functionality.
 #[derive(Subcommand, Debug, Clone, PartialEq)]
-pub enum Commands {
+pub(super) enum Commands {
     /// Query language model using a prompt, you may include file context.
     Ask(AskArgs),
     /// Pipe markdown to language model separated by three hyphens/dashes, asterisks, or underscores.

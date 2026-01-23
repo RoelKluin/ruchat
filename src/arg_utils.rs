@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::error::Error;
 
-pub fn parse_key_val<T, U>(s: &str) -> Result<(T, U), Box<dyn Error + Send + Sync + 'static>>
+pub(super) fn parse_key_val<T, U>(s: &str) -> Result<(T, U), Box<dyn Error + Send + Sync + 'static>>
 where
     T: std::str::FromStr,
     T::Err: Error + Send + Sync + 'static,
