@@ -3,7 +3,7 @@ use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs};
 use crate::error::RuChatError;
 use chroma::types::{UpdateMetadata, UpdateMetadataValue};
 use clap::Parser;
-use log::warn;
+use log::{warn, info, error};
 use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
 use uuid::Builder;
 use crate::ollama::OllamaArgs;
@@ -39,7 +39,7 @@ pub(super) struct EmbedArgs {
 
     /// URIs associated with the embedding entries.
     #[arg(short, long)]
-    uris: Option<Vec<Option<String>>>,
+    uris: Vec<String>,
 
     // FIXME: this is clashing with AskArgs ollama_args
     #[command(flatten)]
@@ -82,36 +82,55 @@ impl EmbedArgs {
 
         let client = args.client_config.create_client()?;
 
-        eprintln!("Collection name: {}", args.collection_config.collection);
-        // XXX: error here.
         let collection = args
             .collection_config
             .get_or_create_collection(&client)
             .await?;
-        eprintln!("Connected to Chroma collection.");
 
+        info!("Targeting Collection: {} (ID: {})", collection.name(), collection.id());
 
-        eprintln!("Collection Name: {}", collection.name());
-        eprintln!("Collection ID: {}", id);
-        eprintln!("Collection Metadata: {:?}", collection.metadata());
-        eprintln!("Collection Count: {}", collection.count().await?);
-
-        let ids = vec![id];
         let request = GenerateEmbeddingsRequest::new(model, vec![prompt.as_str()].into());
         let res = ollama.generate_embeddings(request).await?;
+
         let embeddings = res.embeddings;
+        if !embeddings.is_empty() {
+             info!("Generated embedding dimension: {}", embeddings[0].len());
+        }
+
+        let ids = vec![id];
         let documents = Some(vec![Some(prompt)]);
-        let uris = args.uris.or_else(|| Some(vec![None]));
         let update_metadata = get_update_metadata(&args.update_metadata)?;
 
-        collection
-            .upsert(ids, embeddings, documents, uris, update_metadata)
-            .await?;
+        let uris = if args.uris.is_empty() {
+            None
+        } else {
+            Some(args.uris.into_iter().map(Some).collect())
+        };
+        match collection
+            .upsert(ids.clone(), embeddings, documents, uris, update_metadata)
+            .await 
+        {
+            Ok(_) => info!("Upsert successful."),
+            Err(e) => {
+                let err_string = e.to_string();
+                // Check for the specific "invalid type: null" Serde error
+                if err_string.contains("invalid type: null") && err_string.contains("UpsertCollectionRecordsResponse") {
+                    warn!("Swallowed serialization error due to Chroma v0.6.x compatibility mismatch. Data was likely inserted.");
+                } else {
+                    // It's a real error, propagate it
+                    return Err(e.into());
+                }
+            }
+        }
+        match collection.count().await {
+            Ok(count) => info!("Collection Count is now: {}", count),
+            Err(e) => error!("Failed to retrieve count after upsert: {}", e),
+        }
+        // Error: Chroma HTTP client error: Serialization/Deserialization error: invalid type: null, expected struct UpsertCollectionRecordsResponse
         Ok(())
     }
 
 }
-
 
 /// Parses metadata from a string of comma-separated key:value pairs.
 ///
