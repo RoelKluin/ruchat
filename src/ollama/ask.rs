@@ -63,27 +63,22 @@ impl AskArgs {
     ///
     /// # Parameters
     ///
-    /// - `interactive`: Whether to prompt interactively for input.
+    /// - `end_marker`: The marker indicating the end of user or stdin input.
     ///
     /// # Returns
     ///
     /// A `Result` indicating success or failure.
-    pub(crate) async fn ask(&self, interactive: bool) -> Result<()> {
+    pub(crate) async fn ask(&self, end_marker: &str) -> Result<()> {
         let mut cio = Io::new();
         let mut prompt = match self.prompt_args.get_prompt() {
             Ok(p) => p,
             Err(RuChatError::NoPromptProvided) => {
                 let mut input = String::new();
-                if interactive {
+                if end_marker == "" { // indicates user mode
                     cio.write_line("Enter your question (empty line to finish):").await?;
                 }
                 while let Ok(line) = cio.read_line().await {
-                    let stop = if interactive {
-                        line.is_empty()
-                    } else {
-                        line == "---"
-                    };
-                    if stop {
+                    if line == end_marker {
                         break;
                     }
                     input += line.as_str();

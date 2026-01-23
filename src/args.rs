@@ -39,8 +39,8 @@ impl Args {
             println!("Command line: {}", command_line);
         }
         match self.command.unwrap_or(default) {
-            Commands::Ask(args) => args.ask(true).await,
-            Commands::Pipe(args) => args.ask(false).await,
+            Commands::Ask(args) => args.ask("").await,
+            Commands::Pipe(args) => args.ask("---").await,
             Commands::Chat(args) => chat(args).await,
             Commands::Ls(args) => args.list().await,
             Commands::Rm(args) => remove(args).await,
