@@ -82,6 +82,10 @@ pub enum RuChatError {
     #[error("Invalid cursor position {0}: {1}, {2}")]
     InvalidCursorPosition(String, usize, usize),
 
+    /// Error from the Chroma HTTP client.
+    #[error("Chroma HTTP client error: {0}")]
+    ChromaHttpClientError(#[from] chroma::client::ChromaHttpClientError),
+
     /// Error when the active team index is out of bounds.
     #[error("Active team index out of bounds")]
     ActiveTeamIndexOutOfBounds,

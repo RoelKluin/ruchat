@@ -3,7 +3,10 @@ use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs};
 use crate::RuChatError;
 use crate::ollama::OllamaArgs;
 use anyhow::Result;
-use chromadb::collection::QueryOptions;
+use chroma::types::{
+    BooleanOperator, CompositeExpression, DocumentExpression, DocumentOperator, IncludeList,
+    MetadataComparison, MetadataExpression, MetadataValue, PrimitiveOperator, Where,
+};
 use clap::Parser;
 use log::warn;
 use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
@@ -22,17 +25,16 @@ pub(crate) struct SimilarityArgs {
 
     /// Number of embeddings to return.
     #[arg(short, long, default_value = "1")]
-    count: usize,
+    count: u32,
 
     /// Number of similar embeddings to return.
-    #[arg(short, long, default_value = "5")]
-    similarity_count: usize,
+    #[arg(short, long, default_value_t = 5)]
+    similarity_count: u32,
 
     /// Chroma database metadata, comma separated key:value pairs.
     #[arg(short, long)]
     metadata: Option<String>,
 
-    // FIXME: this is clashing with AskArgs ollama_args
     #[command(flatten)]
     ollama_args: OllamaArgs,
 

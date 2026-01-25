@@ -3,10 +3,14 @@ use crate::RuChatError;
 use crate::io::Io;
 use crate::ollama::OllamaArgs;
 use anyhow::Result;
-use chromadb::collection::GetOptions;
+use chroma::types::{
+    BooleanOperator, CompositeExpression, DocumentExpression, DocumentOperator, IncludeList,
+    MetadataComparison, MetadataExpression, MetadataValue, PrimitiveOperator, Where,
+};
 use clap::Parser;
 use serde_json::json;
 use tokio_stream::StreamExt;
+use crate::embed::EmbedArgs;
 
 /// Command-line arguments for querying a Chroma database.
 ///
@@ -25,7 +29,7 @@ pub(crate) struct QueryArgs {
 
     /// The number of results to return.
     #[arg(short, long, default_value_t = 1)]
-    count: usize,
+    count: u32,
 
     /// Chroma database metadata, comma separated key:value pairs.
     #[arg(short, long)]
@@ -39,9 +43,39 @@ pub(crate) struct QueryArgs {
 
     #[command(flatten)]
     ollama: OllamaArgs,
+
+    #[command(flatten)]
+    embed_args: EmbedArgs,
 }
 
 impl QueryArgs {
+    pub(crate) async fn query_chroma(&self) -> Result<Vec<Vec<f32>>, RuChatError> {
+        let client = self.client_config.create_client()?;
+        // Perform the query
+        let collection = self
+            .collection_config
+            .get_or_create_collection(&client)
+            .await?;
+
+        let query_embeddings: Vec<Vec<f32>> = vec![];
+        let n_results: Option<u32> = Some(self.count);
+        let where_metadata: Option<Where> = self.get_where_metadata();
+        let ids: Option<Vec<String>> = None;
+        let include: Option<IncludeList> = Some(IncludeList::default_get());
+
+        let result = collection
+            .query(query_embeddings, n_results, where_metadata, ids, include)
+            .await?;
+
+        match result.embeddings {
+            Some(embeddings) => Ok(embeddings
+                .into_iter()
+                .map(|e| e.into_iter().flatten().flatten().collect())
+                .collect()),
+            None => Ok(vec![]),
+        }
+    }
+
     /// Performs a query on a Chroma database and generates a response.
     ///
     /// This function connects to a Chroma database using the provided
@@ -61,28 +95,19 @@ impl QueryArgs {
         // An empty IDs vec will return all embeddings.
         println!("Creating Chroma client...");
 
-        let client = self.client.create_client().await?;
+        let client = self.client.create_client()?;
         let collection = self.collection.get_collection(&client, "default").await?;
         let metadata = self.metadata.as_deref().map(|md| md.into());
 
-        // Create a filter object to filter by document content.
-        let where_document = json!({
-            "$contains": self.query.as_str()
-        });
-        eprintln!("Where document filter: {:?}", where_document);
+        let ids: Option<Vec<String>> = None;
+        let where_metadata = self.get_where_metadata();
+        let limit = Some(self.count);
+        let offset = None;
+        let include = Some(IncludeList::default_get());
+        let get_result = collection
+            .get(ids, where_metadata, limit, offset, include)
+            .await?;
 
-        // Get embeddings from a collection with filters and limit set to 1.
-        // An empty IDs vec will return all embeddings.
-        let get_query = GetOptions {
-            ids: vec![],
-            where_metadata: metadata,
-            limit: Some(self.count),
-            offset: None,
-            where_document: Some(where_document),
-            include: Some(vec!["documents".into(), "embeddings".into()]),
-        };
-
-        let get_result = collection.get(get_query).await?;
         let res: Vec<_> = get_result
             .embeddings
             .map(|embeddings| embeddings.into_iter().flatten().collect())
@@ -92,12 +117,13 @@ impl QueryArgs {
             "Using this data: {:?}, respond to this prompt: {}",
             res, self.prompt
         );
-        eprintln!("Final prompt: {}", prompt);
 
         let mut cio = Io::new();
-        let (ollama, models) = self.ollama.init("").await?;
-        let model = models.first().unwrap().to_string();
-        let request = self.ollama.build_generation_request(model, prompt).await?;
+        let (ollama, model) = self.ollama_args.init("").await?;
+        let request = self
+            .ollama_args
+            .build_generation_request(model, prompt)
+            .await?;
         let mut stream = ollama.generate_stream(request).await?;
         while let Some(res) = stream.next().await {
             let responses = res?;

@@ -31,25 +31,15 @@ pub(crate) struct ChromaLsArgs {
 /// A `Result` indicating success or failure.
 pub(crate) async fn chroma_ls(args: ChromaLsArgs) -> Result<(), RuChatError> {
     // Instantiate a ChromaClient to connect to the Chroma database
-    let client = args.client.create_client().await?;
-    if args.collection.name().is_empty() {
-        // List all collections in the database
-        let collections = client.list_collections().await?;
-        for collection in collections {
-            eprintln!("Collection Name: {}", collection.name());
-            eprintln!("Collection ID: {}", collection.id());
-            eprintln!("Collection Metadata: {:?}", collection.metadata());
-            eprintln!("Collection Count: {}", collection.count().await?);
-            eprintln!("-----------------------------");
-        }
-    } else {
-        // Instantiate a ChromaCollection to perform operations on a collection
-        let collection = args.collection.get_collection(&client, "").await?;
+    let client = args.client.create_client()?;
 
-        eprintln!("Collection Name: {}", collection.name());
-        eprintln!("Collection ID: {}", collection.id());
-        eprintln!("Collection Metadata: {:?}", collection.metadata());
-        eprintln!("Collection Count: {}", collection.count().await?);
-    }
+    // Instantiate a ChromaCollection to perform operations on a collection
+    let collection = args.collection.get_or_create_collection(&client).await?;
+
+    eprintln!("Collection Name: {}", collection.name());
+    eprintln!("Collection ID: {}", collection.id());
+    eprintln!("Collection Metadata: {:?}", collection.metadata());
+    eprintln!("Collection Count: {}", collection.count().await?);
+
     Ok(())
 }

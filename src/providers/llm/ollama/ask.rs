@@ -3,8 +3,9 @@ use crate::{Result, RuChatError};
 use crate::io::Io;
 use crate::ollama::OllamaArgs;
 use clap::Parser;
-use ollama_rs::{generation::completion::request::GenerationRequest, models::ModelOptions, Ollama};
+use ollama_rs::{Ollama, generation::completion::request::GenerationRequest, models::ModelOptions};
 use tokio_stream::StreamExt;
+use crate::prompt::PromptArgs;
 
 const DEFAULT_MODEL: &str = "qwen2.5vl:latest";
 
@@ -74,10 +75,8 @@ impl AskArgs {
             Ok(p) => p,
             Err(RuChatError::NoPromptProvided) => {
                 let mut input = String::new();
-                if end_marker.is_empty() {
-                    // indicates user mode
-                    cio.write_line("Enter your question (empty line to finish):")
-                        .await?;
+                if end_marker.is_empty() { // indicates user mode
+                    cio.write_line("Enter your question (empty line to finish):").await?;
                 }
                 while let Ok(line) = cio.read_line().await {
                     if line == end_marker {
@@ -88,7 +87,7 @@ impl AskArgs {
                     input += line.as_str();
                 }
                 input
-            }
+            },
             Err(e) => return Err(e),
         };
         if self.output_format != "text" {
@@ -96,8 +95,7 @@ impl AskArgs {
             prompt.push_str(&self.output_format);
             prompt.push_str(" output format.\n");
         }
-        let (ollama, models) = self.ollama_args.init("").await?;
-        let model = models.first().unwrap().to_string();
+        let (ollama, model) = self.ollama_args.init("").await?;
         let request = self
             .ollama_args
             .build_generation_request(model, prompt)
