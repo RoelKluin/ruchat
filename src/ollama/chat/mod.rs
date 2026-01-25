@@ -3,23 +3,23 @@ mod conversation_tree;
 mod event_result;
 mod history;
 mod pos;
-use crate::error::{RuChatError, Result};
-use crate::ollama::OllamaArgs;
+use crate::error::{Result, RuChatError};
 use crate::ollama::chat::event_result::EventResult;
+use crate::ollama::OllamaArgs;
 use bufcursor::BufCursor;
 use clap::{ArgAction, Parser};
 use conversation_tree::ConversationTree;
 use crossterm::{
-    ExecutableCommand,
     cursor::{Hide, MoveTo, Show},
     event::{self, DisableMouseCapture, EnableMouseCapture},
     terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
+    ExecutableCommand,
 };
-use ollama_rs::generation::chat::{ChatMessage, request::ChatMessageRequest};
+use ollama_rs::generation::chat::{request::ChatMessageRequest, ChatMessage};
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 use tokio::task;
-use tokio::time::{Duration, sleep, timeout};
+use tokio::time::{sleep, timeout, Duration};
 use tokio_stream::StreamExt;
 
 /// Command-line arguments for interactive chat sessions with a model.
@@ -72,7 +72,8 @@ impl ChatArgs {
 
         //let running = Arc::new(Mutex::new(true))
         let mut stdout = io::stdout();
-        let (ollama, model) = self.ollama_args.init("").await?;
+        let (ollama, models) = self.ollama_args.init("").await?;
+        let model = models[0].clone();
         let mut bufcursor = BufCursor::new()?;
         let debug_level = self.debug;
         if debug_level & 0x2 != 0 {
@@ -127,7 +128,8 @@ impl ChatArgs {
                 Ok(EventResult::Quit) => break,
                 Ok(EventResult::Submit) => {
                     let request = get_chat_message_request(model.clone(), bufcursor.read());
-                    let question_id = match chat_history.lock().unwrap().question(bufcursor.drain()) {
+                    let question_id = match chat_history.lock().unwrap().question(bufcursor.drain())
+                    {
                         Ok(id) => id,
                         Err(e) => {
                             display_err(debug_level > 0, &mut stdout, "Error (qid)", x, y, e);
@@ -176,12 +178,13 @@ impl ChatArgs {
                             }
                             Ok(Err(e)) => {
                                 let mut chat_hist = chat_hist_clone.lock().unwrap();
-                                let _ =
-                                    chat_hist.add_answer(question_id, vec![format!("Error: {}", e)]);
+                                let _ = chat_hist
+                                    .add_answer(question_id, vec![format!("Error: {}", e)]);
                             }
                             Err(_) => {
                                 let mut chat_hist = chat_hist_clone.lock().unwrap();
-                                let _ = chat_hist.add_answer(question_id, vec!["Timeout".to_string()]);
+                                let _ =
+                                    chat_hist.add_answer(question_id, vec!["Timeout".to_string()]);
                             }
                         }
                         // Stop the spinner
@@ -197,7 +200,14 @@ impl ChatArgs {
                             );
                         }
                         if let Err(e) = stdout.execute(Clear(ClearType::CurrentLine)) {
-                            display_err(debug_level > 0, &mut stdout, "Error: Clear line: ", x, y, e);
+                            display_err(
+                                debug_level > 0,
+                                &mut stdout,
+                                "Error: Clear line: ",
+                                x,
+                                y,
+                                e,
+                            );
                         }
                     });
 
@@ -281,7 +291,7 @@ fn redraw_screen(
 
     let it = chat_history.get_current_question_ids().iter().rev();
     let cp = bufcursor.get_cursor(); // Cursor position editing the question
-    // the last line is a status line. The second to last line is the last line of the question
+                                     // the last line is a status line. The second to last line is the last line of the question
     text_view.push("Ask your question (Alt+Enter to send, Esc to quit):".to_string());
 
     // Clear the screen
@@ -437,10 +447,7 @@ fn redraw_line(stdout: &mut io::Stdout, bufcursor: &mut BufCursor) -> Result<()>
     Ok(())
 }
 
-fn redraw_from_cursor_down(
-    stdout: &mut io::Stdout,
-    bufcursor: &mut BufCursor,
-) -> Result<()> {
+fn redraw_from_cursor_down(stdout: &mut io::Stdout, bufcursor: &mut BufCursor) -> Result<()> {
     let cp = bufcursor.get_cursor();
     let mut text_view: Vec<String> = bufcursor.view_buffer();
     text_view.push("Ask your question (Alt+Enter to send, Esc to quit):".to_string());
@@ -475,10 +482,7 @@ fn redraw_from_cursor_down(
     Ok(())
 }
 
-fn redraw_from_cursor_up(
-    stdout: &mut io::Stdout,
-    bufcursor: &mut BufCursor,
-) -> Result<()> {
+fn redraw_from_cursor_up(stdout: &mut io::Stdout, bufcursor: &mut BufCursor) -> Result<()> {
     let cp = bufcursor.get_cursor();
     let mut text_view: Vec<String> = bufcursor.view_buffer();
     text_view.truncate(cp.1);

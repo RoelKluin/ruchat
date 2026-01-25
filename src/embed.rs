@@ -1,12 +1,14 @@
 use crate::arg_utils::parse_key_val;
+use crate::chroma::get_metadata;
 use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs};
 use crate::error::RuChatError;
-use chroma::types::{UpdateMetadata, UpdateMetadataValue};
+use crate::ollama::OllamaArgs;
+use chromadb::collection::{ChromaCollection, CollectionEntries};
+use chromadb::embeddings::EmbeddingFunction;
 use clap::Parser;
-use log::{warn, info, error};
+use log::{error, info, warn};
 use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
 use uuid::Builder;
-use crate::ollama::OllamaArgs;
 
 #[derive(Parser, Debug, Clone, PartialEq)]
 pub(super) struct EmbedPromptArgs {
@@ -18,7 +20,7 @@ pub(super) struct EmbedPromptArgs {
 
 impl EmbedPromptArgs {
     pub(super) async fn embed(self) -> Result<(), RuChatError> {
-        EmbedArgs::embed(self.prompt, self.embed_args).await
+        self.embed_args.embed(self.prompt).await
     }
 }
 
@@ -62,103 +64,69 @@ impl EmbedArgs {
     /// # Parameters
     ///
     /// - `ollama`: The Ollama client for generating embeddings.
-    /// - `args`: The command-line arguments for the embedding operation.
-    ///
     /// # Returns
     ///
     /// A `Result` indicating success or failure.
-    pub(super) async fn embed(prompt: String, args: EmbedArgs) -> Result<(), RuChatError> {
-        let (ollama, model) = args.ollama_args.init("all-minilm:l6-v2").await?;
+    pub(super) async fn embed(&self, prompt: String) -> Result<(), RuChatError> {
+        let (ollama, models) = self.ollama_args.init("all-minilm:l6-v2").await?;
+        let model = models.last().unwrap().to_string();
         if model != "all-minilm:l6-v2" && !model.contains("embed") {
             warn!("Model {model} might not be an embeddings model");
         }
 
-        let id = match args.id {
+        let id = match &self.id {
             Some(id) => id.to_string(),
-            None => prompt.lines().next().ok_or(RuChatError::EmptyPrompt)?.to_string(),
+            None => prompt
+                .lines()
+                .next()
+                .ok_or(RuChatError::EmptyPrompt)?
+                .to_string(),
         };
         let digest = md5::compute(format!("{model}:{id}"));
-        let id = Builder::from_md5_bytes(digest.0).into_uuid().hyphenated().to_string();
+        let id = Builder::from_md5_bytes(digest.0)
+            .into_uuid()
+            .hyphenated()
+            .to_string();
 
-        let client = args.client_config.create_client()?;
+        let client = self.client_config.create_client().await?;
 
-        let collection = args
+        let collection = self
             .collection_config
             .get_or_create_collection(&client)
             .await?;
 
-        info!("Targeting Collection: {} (ID: {})", collection.name(), collection.id());
+        info!(
+            "Targeting Collection: {} (ID: {})",
+            collection.name(),
+            collection.id()
+        );
 
         let request = GenerateEmbeddingsRequest::new(model, vec![prompt.as_str()].into());
         let res = ollama.generate_embeddings(request).await?;
 
         let embeddings = res.embeddings;
         if !embeddings.is_empty() {
-             info!("Generated embedding dimension: {}", embeddings[0].len());
+            info!("Generated embedding dimension: {}", embeddings[0].len());
         }
 
-        let ids = vec![id];
-        let documents = Some(vec![Some(prompt)]);
-        let update_metadata = get_update_metadata(&args.update_metadata)?;
-
-        let uris = if args.uris.is_empty() {
-            None
-        } else {
-            Some(args.uris.into_iter().map(Some).collect())
+        let ids = vec![id.as_str()];
+        let documents = None; //Some(vec![prompt.as_str()]);
+        let update_metadata = get_metadata(&self.update_metadata)?;
+        let collection_entries = CollectionEntries {
+            ids,
+            metadatas: update_metadata.map(|md| vec![md]),
+            documents,
+            embeddings: Some(embeddings),
         };
-        match collection
-            .upsert(ids.clone(), embeddings, documents, uris, update_metadata)
-            .await 
-        {
-            Ok(_) => info!("Upsert successful."),
-            Err(e) => {
-                let err_string = e.to_string();
-                // Check for the specific "invalid type: null" Serde error
-                if err_string.contains("invalid type: null") && err_string.contains("UpsertCollectionRecordsResponse") {
-                    warn!("Swallowed serialization error due to Chroma v0.6.x compatibility mismatch. Data was likely inserted.");
-                } else {
-                    // It's a real error, propagate it
-                    return Err(e.into());
-                }
-            }
-        }
-        match collection.count().await {
-            Ok(count) => info!("Collection Count is now: {}", count),
-            Err(e) => error!("Failed to retrieve count after upsert: {}", e),
-        }
-        // Error: Chroma HTTP client error: Serialization/Deserialization error: invalid type: null, expected struct UpsertCollectionRecordsResponse
+        // The function to use to compute the embeddings. If None, embeddings must be provided.
+        let embedding_function: Option<Box<dyn EmbeddingFunction>> = None;
+
+        let result = collection
+            .upsert(collection_entries, embedding_function)
+            .await?;
+        info!("Upserted {}", result);
         Ok(())
     }
-
-}
-
-/// Parses metadata from a string of comma-separated key:value pairs.
-///
-/// # Parameters
-///
-/// - `arg_metadata`: An optional string containing metadata.
-///
-/// # Returns
-///
-/// A `Result` containing an optional map of metadata or a `RuChatError`.
-fn get_update_metadata(
-    arg_metadata: &Option<String>,
-) -> Result<Option<Vec<Option<UpdateMetadata>>>, RuChatError> {
-    if arg_metadata.is_none() {
-        return Ok(None);
-    }
-    let mut metadata = UpdateMetadata::new();
-    if let Some(md) = arg_metadata {
-        for s in md.split(',') {
-            match s.split_once(':') {
-                Some((k, v)) => {
-                    _ = metadata.insert(k.to_string(), UpdateMetadataValue::Str(v.to_string()))
-                }
-                None => return Err(RuChatError::InvalidMetadata(s.to_string())),
-            }
-        }
-    }
-    Ok(Some(vec![Some(metadata)]))
 }
 
 #[cfg(test)]

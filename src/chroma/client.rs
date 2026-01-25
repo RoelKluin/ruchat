@@ -1,6 +1,7 @@
 use anyhow::Result;
-use chroma::client::{ChromaAuthMethod, ChromaHttpClientOptions, ChromaRetryOptions};
-use chroma::ChromaHttpClient;
+use chromadb::client::{ChromaAuthMethod, ChromaClientOptions, ChromaTokenHeader};
+use chromadb::collection::ChromaCollection;
+use chromadb::ChromaClient;
 use clap::Parser;
 use http::{HeaderName, HeaderValue};
 use std::time::Duration;
@@ -34,30 +35,24 @@ impl ChromaClientConfigArgs {
     /// # Returns
     ///
     /// A `Result` containing the `ChromaClient` or an error.
-    pub fn create_client(&self) -> Result<ChromaHttpClient> {
+    pub async fn create_client(&self) -> Result<ChromaClient> {
         if let Some(token) = self.chroma_token.as_ref() {
             let endpoint = self.chroma_server.parse()?;
-            let value = HeaderValue::from_str(token.as_str())?;
-            let header = HeaderName::from_static("x_chroma_token");
-            let auth_method = ChromaAuthMethod::HeaderAuth { header, value };
-            let retry_options = ChromaRetryOptions {
-                max_retries: self.max_retries,
-                min_delay: Duration::from_millis(self.min_delay),
-                max_delay: Duration::from_secs(self.max_delay),
-                jitter: self.jitter,
-            };
-            let client = ChromaHttpClientOptions {
-                endpoint,
-                auth_method,
-                retry_options,
-                tenant_id: self.tenant_id.clone(),
-                database_name: self.chroma_database.clone(),
-            };
-            eprintln!("7");
-            Ok(ChromaHttpClient::new(client))
+            ChromaClient::new(ChromaClientOptions {
+                url: Some(endpoint),
+                database: self
+                    .chroma_database
+                    .clone()
+                    .unwrap_or("default".to_string()),
+                auth: ChromaAuthMethod::TokenAuth {
+                    token: token.to_string(),
+                    header: ChromaTokenHeader::Authorization,
+                },
+            })
+            .await
         } else {
             // Defaults to http://localhost:8000
-            Ok(ChromaHttpClient::new(Default::default()))
+            ChromaClient::new(Default::default()).await
         }
     }
 }

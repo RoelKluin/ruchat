@@ -10,7 +10,7 @@ use ollama_rs::Ollama;
 
 pub(super) use ask::*;
 pub(super) use chat::*;
-pub(super) use func::{func};
+pub(super) use func::func;
 pub(super) use model::ModelArgs;
 pub(crate) use server::ServerArgs;
 
@@ -33,8 +33,8 @@ impl OllamaArgs {
     ///
     /// A `Result` indicating success or failure.
     pub(super) async fn rm(&self) -> Result<()> {
-        let (ollama, model) = self.init("").await?;
-        ollama.delete_model(model).await?;
+        let (ollama, models) = self.init("").await?;
+        ollama.delete_model(models[0].clone()).await?;
         Ok(())
     }
     /// Subcommand to pull a model from the main Ollama server.
@@ -46,17 +46,22 @@ impl OllamaArgs {
     ///
     /// A `Result` indicating success or failure.
     pub(super) async fn pull(&self) -> Result<()> {
-        let (ollama, model) = self.init("").await?;
-        ollama.pull_model(model, false).await?;
+        let (ollama, models) = self.init("").await?;
+        ollama.pull_model(models[0].clone(), false).await?;
         Ok(())
     }
     pub fn init_server(&self) -> Result<Ollama> {
         self.server_args.init()
     }
     /// see [ServerArgs::init]
-    pub async fn init(&self, default: &str) -> Result<(Ollama, String)> {
+    pub async fn init(&self, default: &str) -> Result<(Ollama, Vec<String>)> {
         let ollama = self.init_server()?;
-        self.model_args.get_model(&ollama, default).await.map(|model| (ollama, model))
+        let mut models = Vec::new();
+        for nr in 0..self.model_args.get_nr_of_models() {
+            let model = self.model_args.get_model(&ollama, nr, default).await?;
+            models.push(model);
+        }
+        Ok((ollama, models))
     }
     /// see [ModelArgs::build_generation_request]
     pub async fn build_generation_request(
@@ -64,7 +69,8 @@ impl OllamaArgs {
         model: String,
         prompt: String,
     ) -> Result<GenerationRequest<'_>> {
-        self.model_args.build_generation_request(model, prompt).await
+        self.model_args
+            .build_generation_request(model, prompt)
+            .await
     }
 }
-

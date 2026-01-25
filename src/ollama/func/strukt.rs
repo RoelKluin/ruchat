@@ -74,7 +74,8 @@ async fn get_available_space(
 pub(crate) async fn func_struct(args: OllamaArgs) -> Result<()> {
     // browserless requires an BROWSERLESS_TOKEN=... environment variable
     let history = vec![];
-    let (ollama, model) = args.init("").await?;
+    let (ollama, models) = args.init("").await?;
+    let model = models.first().unwrap().to_string();
 
     let format = FormatType::StructuredJson(Box::new(JsonStructure::new::<Weather>()));
 

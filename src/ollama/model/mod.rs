@@ -1,14 +1,14 @@
 use crate::error::{Result, RuChatError};
 use crate::options::get_options;
 use clap::Parser;
-use ollama_rs::{Ollama, models::ModelOptions};
 use ollama_rs::generation::completion::request::GenerationRequest;
+use ollama_rs::{models::ModelOptions, Ollama};
 
 #[derive(Parser, Debug, Clone, Default, PartialEq)]
 pub(crate) struct ModelArgs {
     /// Model to (down)load and use.
     #[arg(short, long)]
-    model: String,
+    model: Vec<String>,
 
     /// Path to a JSON file to amend default generation options, or a string
     /// representing the options in JSON format.
@@ -17,16 +17,25 @@ pub(crate) struct ModelArgs {
 }
 
 impl ModelArgs {
-    pub(crate) async fn get_model(&self, ollama: &Ollama, default: &str) -> Result<String> {
-        let model = match self.model.as_str() {
-            "" => default,
-            m => m,
+    pub(super) async fn get_model(
+        &self,
+        ollama: &Ollama,
+        nr: usize,
+        default: &str,
+    ) -> Result<String> {
+        let model = match self.model.get(nr).map(|s| s.as_str()) {
+            Some("") => default,
+            Some(m) => m,
+            None => return Err(RuChatError::NoModelSpecified),
         };
         if model.is_empty() {
             Err(RuChatError::NoModelSpecified)
         } else {
             get_model_name(ollama, model).await
         }
+    }
+    pub(super) fn get_nr_of_models(&self) -> usize {
+        self.model.len()
     }
     pub(crate) async fn get_options(&self) -> Result<ModelOptions> {
         get_options(self.options.as_deref()).await
@@ -39,7 +48,6 @@ impl ModelArgs {
         let options = self.get_options().await?;
         Ok(GenerationRequest::new(model, prompt).options(options))
     }
-
 }
 
 async fn get_model_name(ollama: &Ollama, name: &str) -> Result<String> {

@@ -1,15 +1,15 @@
-use crate::error::Result;
 use crate::agent::manager::{Manager, ManagerArgs};
-use crate::chroma::delete::{ChromaDeleteArgs, chroma_delete};
-use crate::chroma::ls::{ChromaLsArgs, chroma_ls};
+use crate::chroma::delete::{chroma_delete, ChromaDeleteArgs};
+use crate::chroma::ls::{chroma_ls, ChromaLsArgs};
 use crate::chroma::query::QueryArgs;
-use crate::chroma::similarity::{SimilarityArgs, similarity_search};
+use crate::chroma::similarity::SimilarityArgs;
 use crate::embed::EmbedPromptArgs;
-use crate::ollama::OllamaArgs;
-use crate::ollama::AskArgs;
-use crate::ollama::ChatArgs;
+use crate::error::Result;
 use crate::ollama::func;
 use crate::ollama::func::func_struct;
+use crate::ollama::AskArgs;
+use crate::ollama::ChatArgs;
+use crate::ollama::OllamaArgs;
 use crate::ollama::ServerArgs;
 use clap::{Parser, Subcommand};
 
@@ -47,7 +47,7 @@ impl Args {
             Commands::FuncStruct(args) => func_struct(args).await,
             Commands::Embed(args) => args.embed().await,
             Commands::Query(args) => args.query().await,
-            Commands::Similarity(args) => similarity_search(args).await,
+            Commands::Similarity(args) => args.similarity_search().await,
             Commands::ChromaLs(args) => chroma_ls(args).await,
             Commands::ChromaDelete(args) => chroma_delete(args).await,
             Commands::Manager(args) => Manager::execute_command(args).await,

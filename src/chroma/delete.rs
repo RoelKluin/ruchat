@@ -11,7 +11,7 @@ pub struct ChromaDeleteArgs {
 }
 
 pub async fn chroma_delete(args: ChromaDeleteArgs) -> Result<(), RuChatError> {
-    let client = args.client_config.create_client()?;
+    let client = args.client_config.create_client().await?;
 
     client.delete_collection(&args.collection).await?;
     println!("Deleted collection: {}", args.collection);

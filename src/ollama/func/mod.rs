@@ -35,7 +35,8 @@ pub(crate) use strukt::func_struct;
 /// A `Result` indicating success or failure.
 pub(crate) async fn func(args: OllamaArgs) -> Result<()> {
     let history = vec![];
-    let (ollama, model) = args.init("").await?;
+    let (ollama, models) = args.init("").await?;
+    let model = models.first().unwrap().to_string();
     let mut coordinator = Coordinator::new(ollama, model, history)
         .options(ModelOptions::default().num_ctx(16384))
         .add_tool(Calculator {})
