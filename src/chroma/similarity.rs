@@ -53,12 +53,6 @@ impl SimilarityArgs {
     ///
     /// A `Result` indicating success or failure.
     pub(crate) async fn similarity_search(&self) -> Result<(), RuChatError> {
-        let (ollama, models) = self.ollama_args.init("all-minilm:l6-v2").await?;
-        let model = models.first().unwrap().as_str();
-        if model != "all-minilm:l6-v2" && !model.contains("embed") {
-            warn!("Model {model} might not be an embeddings model");
-        }
-
         let client = self.client_config.create_client().await?;
 
         // Instantiate a ChromaCollection to perform operations on a collection
@@ -67,6 +61,11 @@ impl SimilarityArgs {
             .get_or_create_collection(&client)
             .await?;
 
+        let (ollama, models) = self.ollama_args.init("all-minilm:l6-v2").await?;
+        let model = models.first().unwrap().as_str();
+        if model != "all-minilm:l6-v2" && !model.contains("embed") {
+            warn!("Model {model} might not be an embeddings model");
+        }
         let request =
             GenerateEmbeddingsRequest::new(model.to_string(), vec![self.query.as_str()].into());
         let res = ollama.generate_embeddings(request).await?;
@@ -76,7 +75,7 @@ impl SimilarityArgs {
         let query_texts = None; //Some(vec![self.query.as_str()]);
         let where_metadata = get_metadata(&self.metadata)?.map(|m| Value::Object(m));
         let where_document = None;
-        let include = Some(vec!["metadatas", "documents", "distances"]);
+        let include = Some(vec!["distances"]);
         let query_options = QueryOptions {
             query_embeddings,
             query_texts,

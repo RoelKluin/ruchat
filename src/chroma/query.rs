@@ -87,7 +87,6 @@ impl QueryArgs {
         };
 
         let get_result = collection.get(get_query).await?;
-        eprintln!("Get result raw: {:?}", get_result);
         let res: Vec<_> = get_result
             .embeddings
             .map(|embeddings| embeddings.into_iter().flatten().collect())
