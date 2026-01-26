@@ -222,51 +222,55 @@ git ls-files | grep -v '^ruchat$' | while read -r f; do
     for extension in "${!ext[@]}"; do
         if [[ -z "${f#*"$extension"}" ]]; then
             lang="${ext[$extension]}"
-            while IFS=$'\r' read -r var ex_cmd kind; do
-                var="${var//[[:space:]]/}"  # Trim var (names shouldn't have spaces anyway)
-                kind="${kind##[[:space:]]}"
-                kind="${kind##kind:}"
-                [[ -z "${kind/*[[:space:]]*/}" ]] && tag_fields="${kind#*[[:space:]]}" || tag_fields=""
-                kind="${kind%%[[:space:]]*}"
-                if [[ "$ex_cmd" =~ ^/.*/$ ]]; then
-                    ex_cmd="${ex_cmd:1:-1}"
-                    ex_type="regex"
-                else
-                    ex_type="line"
-                fi
-                if [[ -n "$kind" && -n "$var" ]]; then
-                    rust_kind="${tags[$lang:${kind}]:-${kind}}"  # Fallback to kind if no tag
-                    jq_args=("-cn" "--arg" "kind" "$rust_kind" "--arg" "name" "$var" "--arg" "$ex_type" "$ex_cmd" "--arg" "language" "$lang" "--arg" "file" "$f")
-                    # Build tags as jq object string
-                    tags_json='{}'
-                    if [[ -n "$tag_fields" ]]; then
-                        # Split tags by space/tab
-                        IFS=$' \t' read -r -a tag_array <<< "$tag_fields"
-                        for tag_field in "${tag_array[@]}"; do
-                            IFS=':' read -r tag_key tag_value <<< "$tag_field"
-                            tag_key="${tag_key//[[:space:]]/}"  # Trim
-                            tag_value="${tag_value//[[:space:]]/}"
-                            [[ -z "$tag_value" || -z "$tag_key" ]] && continue
-                            # Add to tags_json with jq
-                            tags_json=$(jq -n "$tags_json" | jq --arg k "$tag_key" --arg v "$tag_value" '.[$k] = $v')
-                        done
+            for m in $(
+                while IFS=$'\r' read -r var ex_cmd kind; do
+                    var="${var//[[:space:]]/}"  # Trim var (names shouldn't have spaces anyway)
+                    kind="${kind##[[:space:]]}"
+                    kind="${kind##kind:}"
+                    [[ -z "${kind/*[[:space:]]*/}" ]] && tag_fields="${kind#*[[:space:]]}" || tag_fields=""
+                    kind="${kind%%[[:space:]]*}"
+                    if [[ "$ex_cmd" =~ ^/.*/$ ]]; then
+                        ex_cmd="${ex_cmd:1:-1}"
+                        ex_type="regex"
+                    else
+                        ex_type="line"
                     fi
-                    jq_filter="{language: \$language, kind: \$kind, name: \$name, file: \$file, $ex_type: \$$ex_type"
-                    if [[ "$tags_json" != "{}" ]]; then
-                        jq_args+=("--argjson" "tags_json" "$tags_json")
-                        jq_filter+=", tags: $tags_json"
+                    if [[ -n "$kind" && -n "$var" ]]; then
+                        rust_kind="${tags[$lang:${kind}]:-${kind}}"  # Fallback to kind if no tag
+                        jq_args=("-cn" "--arg" "file" "$f" "--arg" "kind" "$rust_kind" "--arg" "name" "$var" "--arg" "type" "$ex_type" "--arg" "value" "$ex_cmd" "--arg" "language" "$lang")
+                        # Build tags as jq object string
+                        tags_json='{}'
+                        if [[ -n "$tag_fields" ]]; then
+                            # Split tags by space/tab
+                            IFS=$' \t' read -r -a tag_array <<< "$tag_fields"
+                            for tag_field in "${tag_array[@]}"; do
+                                IFS=':' read -r tag_key tag_value <<< "$tag_field"
+                                tag_key="${tag_key//[[:space:]]/}"  # Trim
+                                tag_value="${tag_value//[[:space:]]/}"
+                                [[ -z "$tag_value" || -z "$tag_key" ]] && continue
+                                # Add to tags_json with jq
+                                tags_json=$(jq -n "$tags_json" | jq --arg k "$tag_key" --arg v "$tag_value" '.[$k] = $v')
+                            done
+                        fi
+                        jq_filter="{language: \$language, kind: \$kind, name: \$name, file: \$file, type: \$type, value: \$value"
+                        if [[ "$tags_json" != "{}" ]]; then
+                            jq_args+=("--argjson" "tags_json" "$tags_json")
+                            jq_filter+=", tags: $tags_json"
+                        fi
+                        jq_filter+="}"
+                        # Output a JSON fragment for this entry
+                        jq -n "${jq_args[@]}" "$jq_filter"
                     fi
-                    jq_filter+="}"
-                    # Output a JSON fragment for this entry
-                    metadata+="$(jq -n "${jq_args[@]}" "$jq_filter")"
-                fi
-            done < <(sed -n -r "s~^($S+)\t${f}\t((\/.*\\$\/|[0-9]+)+)(;\"((\t$S+)*))?$~\1\r\2\r\5~p" tags)
+                done < <(sed -n -r "s~^($S+)\t${f}\t((\/.*\\$\/|[0-9]+)+)(;\"((\t$S+)*))?$~\1\r\2\r\5~p" tags) |
+                    jq -s 'reduce .[] as $item ({}; .file[$item.file][$item.kind][$item.name] = {type: $item.type, value: $item.value, language: $item.language})'); do
+                metadata+="$m"
+            done
         fi
     done
     embed_args=("--collection" "repo_src:$model" "--model" "$model")
-    [[ -n "$metadata" ]] && embed_args+=("--metadata" "{\n${metadata}\n}") || echo -e "No metadata for $f (Lang: $lang)?" 1>&2
+    [[ -n "$metadata" ]] && embed_args+=("--metadata" "${metadata}") || echo -e "No metadata for $f (Lang: $lang)?" 1>&2
 
-    ./ruchat embed "${embed_args[@]}" "Contents of file $f:\n\`\`\`\n$(cat "$f")\n\`\`\`" || echo -e "Error in metadata for $f?\n{\n${metadata}\n}" 1>&2
+    ./ruchat embed "${embed_args[@]}" "Contents of file $f:\n\`\`\`\n$(cat "$f")\n\`\`\`" || echo -e "Error in metadata for $f?\n${metadata}" 1>&2
 done
 
 # Embed git commit messages for the src directory
