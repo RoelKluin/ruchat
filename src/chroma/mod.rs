@@ -6,12 +6,36 @@ pub(crate) mod query;
 pub(crate) mod similarity;
 
 use crate::error::RuChatError;
-use anyhow::Result;
-use serde_json::map::Map;
-use serde_json::value::Value;
+use anyhow::{Context, Result};
+use serde_json::{map::Map, Value};
+use std::fs;
+use std::path::Path;
+
 
 pub use client::ChromaClientConfigArgs;
 pub use collection::ChromaCollectionConfigArgs;
+
+// Chroma does accept nested metadata in the client — it serializes to JSON and stores it.
+//
+// But filtering (where clause) is still very limited:
+//
+//     Only works reliably on top-level scalar fields ($eq, $ne, $gt, $in, $nin, etc.)
+//     Nested access via dot notation ("user.name": {"$eq": "Alice"}) — sometimes supported,
+//     but inconsistent across versions and backends (especially DuckDB vs ClickHouse vs local)
+//     Arrays: $in / $nin on top-level arrays sometimes works, but deep/nested array filtering
+//     is weak or broken in many versions
+//     Deeply nested objects → often forces you to denormalize or flatten keys (user.address.city)
+//
+// So while you can store arbitrary nested JSON metadata, you should design it knowing that complex
+// filtering may not be possible without flattening.
+//
+// If your use-case is only storage + retrieval by id,
+// or you filter only on top-level keys → full nesting is fine.
+//
+// If you need rich where filters → prefer flat structure or key.subkey style strings.
+//
+// Let me know if you want to add basic validation (e.g. reject too-deep nesting,
+// reject non-JSON-serializable types, size limits, etc.).
 
 /// Parses metadata from a string of comma-separated key:value pairs.
 ///
@@ -23,19 +47,50 @@ pub use collection::ChromaCollectionConfigArgs;
 ///
 /// A `Result` containing an optional map of metadata or a `RuChatError`.
 pub(crate) fn get_metadata(
-    arg_metadata: &Option<String>,
+    metadata: &Option<String>,
 ) -> Result<Option<Map<String, Value>>, RuChatError> {
-    if arg_metadata.is_none() {
-        return Ok(None);
-    }
-    let mut metadata = Map::new();
-    if let Some(md) = arg_metadata {
-        for s in md.split(',') {
-            match s.split_once(':') {
-                Some((k, v)) => _ = metadata.insert(k.to_string(), Value::String(v.to_string())),
-                None => return Err(RuChatError::InvalidMetadata(s.to_string())),
-            }
+    let input = match metadata.as_deref() {
+        None | Some("") => return Ok(None),
+        Some(s) => s.trim(),
+    };
+
+    // Helper to normalize Value → Option<Map<String, Value>>
+    fn normalize(v: Value) -> Result<Option<Map<String, Value>>, RuChatError> {
+        match v {
+            Value::Object(map) => Ok(Some(map)),
+            Value::Null => Ok(None),
+            other => Err(RuChatError::InvalidMetadata(format!(
+                "Metadata root must be JSON object {{ ... }} or null, got {other}"
+            ))),
         }
     }
-    Ok(Some(metadata))
+
+    // ────────────────────────────────────────────────
+    // Case 1: inline JSON string
+    // ────────────────────────────────────────────────
+    if let Ok(v) = serde_json::from_str::<Value>(input) {
+        return normalize(v);
+    }
+
+    // ────────────────────────────────────────────────
+    // Case 2: file path pointing to JSON
+    // ────────────────────────────────────────────────
+    let path = Path::new(input);
+    if path.exists() && path.is_file() {
+        let content = fs::read_to_string(path)
+            .with_context(|| format!("Cannot read metadata file: {}", input))?;
+
+        let v: Value = serde_json::from_str(&content)
+            .context("File exists but is not valid JSON")?;
+
+        return normalize(v);
+    }
+
+    // ────────────────────────────────────────────────
+    // Neither inline JSON nor valid JSON file
+    // ────────────────────────────────────────────────
+    Err(RuChatError::InvalidMetadata(
+        "Value is neither valid inline JSON nor a path to an existing valid JSON file".into(),
+    ))
 }
+
