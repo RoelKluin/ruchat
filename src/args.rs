@@ -3,6 +3,7 @@ use crate::chroma::delete::{chroma_delete, ChromaDeleteArgs};
 use crate::chroma::ls::{chroma_ls, ChromaLsArgs};
 use crate::chroma::query::QueryArgs;
 use crate::chroma::similarity::SimilarityArgs;
+use crate::chroma::MetadataArgs;
 use crate::embed::EmbedPromptArgs;
 use crate::error::Result;
 use crate::ollama::func;
@@ -50,6 +51,7 @@ impl Args {
             Commands::Similarity(args) => args.similarity_search().await,
             Commands::ChromaLs(args) => chroma_ls(args).await,
             Commands::ChromaDelete(args) => chroma_delete(args).await,
+            Commands::ChromaMetadata(args) => args.get_metadata().await,
             Commands::Manager(args) => Manager::execute_command(args).await,
         }
     }
@@ -88,6 +90,8 @@ pub(super) enum Commands {
     ChromaLs(ChromaLsArgs),
     /// Delete Chroma database collections or entries.
     ChromaDelete(ChromaDeleteArgs),
+    /// Retrieve the metadata of a Chroma database collection.
+    ChromaMetadata(MetadataArgs),
     /// Manage agents.
     Manager(ManagerArgs),
 }

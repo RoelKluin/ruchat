@@ -25,4 +25,8 @@ impl ChromaCollectionConfigArgs {
             .await?;
         Ok(collection)
     }
+    pub async fn get_collection(&self, client: &ChromaClient) -> Result<ChromaCollection> {
+        let collection: ChromaCollection = client.get_collection(self.collection.as_str()).await?;
+        Ok(collection)
+    }
 }

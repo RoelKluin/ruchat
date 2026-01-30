@@ -2,6 +2,7 @@ mod client;
 mod collection;
 pub(crate) mod delete;
 pub(crate) mod ls;
+mod metadata;
 pub(crate) mod query;
 pub(crate) mod similarity;
 
@@ -11,9 +12,9 @@ use serde_json::{map::Map, Value};
 use std::fs;
 use std::path::Path;
 
-
-pub use client::ChromaClientConfigArgs;
-pub use collection::ChromaCollectionConfigArgs;
+pub(crate) use client::ChromaClientConfigArgs;
+pub(crate) use collection::ChromaCollectionConfigArgs;
+pub(crate) use metadata::MetadataArgs;
 
 // Chroma does accept nested metadata in the client — it serializes to JSON and stores it.
 //
@@ -80,8 +81,8 @@ pub(crate) fn get_metadata(
         let content = fs::read_to_string(path)
             .with_context(|| format!("Cannot read metadata file: {}", input))?;
 
-        let v: Value = serde_json::from_str(&content)
-            .context("File exists but is not valid JSON")?;
+        let v: Value =
+            serde_json::from_str(&content).context("File exists but is not valid JSON")?;
 
         return normalize(v);
     }
@@ -93,4 +94,3 @@ pub(crate) fn get_metadata(
         "Value is neither valid inline JSON nor a path to an existing valid JSON file".into(),
     ))
 }
-
