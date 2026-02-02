@@ -51,11 +51,21 @@ done < <(ctags --list-kinds-full -R src | sed -n -E "s~^($S+)$s+([a-zA-Z])$s+($S
 model="all-minilm:l6-v2"
 
 git ls-files | grep -v '^ruchat$' | while read -r f; do
-    metadata_json="[]"
+    metadata_json="{}"
 
     for extension in "${!ext[@]}"; do
         if [[ $f == *"$extension" ]]; then
             lang="${ext[$extension]}"
+            metadata_json=$(if ! jq -n \
+                --arg f "$f" \
+                --arg lang "$lang" \
+                '{
+                    file: $f,
+                    language: $lang
+                }'; then
+                echo "Error building base metadata JSON for $f" >&2
+            fi)
+            [ -z "$metadata_json" ] && continue
 
             # Process each matching line from tags file
             while IFS=$'\r' read -r var ex_cmd kind; do
@@ -72,9 +82,18 @@ git ls-files | grep -v '^ruchat$' | while read -r f; do
                 }
 
                 lang_kind="${tags[$lang:${kind}]:-$kind}"
+                metadata_json="$(if ! jq -n \
+                    --argjson prev "$metadata_json" \
+                    --arg kindKey "${var}.kind" \
+                    --arg kind "$lang_kind" \
+                    '$prev + {
+                        ($kindKey): $kind
+                    }'; then
+                    echo "Error adding kind to metadata JSON for $f" >&2
+                fi)"
+                [ -z "$metadata_json" ] && continue
 
                 # Build tags object
-                tags_json="{}"
                 if [[ -n "$tag_fields" ]]; then
                     IFS=$' \t' read -ra tag_array <<< "$tag_fields"
                     for tag_field in "${tag_array[@]}"; do
@@ -82,7 +101,14 @@ git ls-files | grep -v '^ruchat$' | while read -r f; do
                         tkey="${tkey//[[:space:]]/}"
                         tval="${tval//[[:space:]]/}"
                         [[ -z $tkey || -z $tval ]] && continue
-                        tags_json=$(jq -n --argjson prev "$tags_json" --arg k "$tkey" --arg v "$tval" '$prev + {($k): $v}')
+                        metadata_json=$(if ! jq -n \
+                            --argjson prev "$metadata_json" \
+                            --arg k "${var}.$tkey" \
+                            --arg v "$tval" \
+                            '$prev + {($k): $v}'; then
+                            echo "Error adding tag $tkey to metadata JSON for $f" >&2
+                        fi)
+                        [ -z "$metadata_json" ] && continue
                     done
                 fi
                 start=""
@@ -133,35 +159,24 @@ git ls-files | grep -v '^ruchat$' | while read -r f; do
                     echo "Warning: Could not determine start line for $var in $f with ex_cmd: $ex_cmd" >&2
                     continue
                 fi
+                #    --argjson tags "$tags_json" \
+                #        tags:     $tags
+                #    --arg lang    "$lang" \
+                #        language: $lang,
 
                 # Build one metadata object per item
-                item_json=$(if ! jq -n \
-                    --arg file    "$f" \
-                    --arg lang    "$lang" \
-                    --arg kind    "$lang_kind" \
-                    --arg name    "$var" \
+                metadata_json=$(if ! jq -n \
+                    --argjson prev "$metadata_json" \
+                    --arg var     "$var" \
                     --arg start   "$start" \
                     --arg end     "$end" \
-                    --argjson tags "$tags_json" \
                     '{
-                        file:     $file,
-                        language: $lang,
-                        kind:     $kind,
-                        name:     $name,
-                        start:    ($start | tonumber),
-                        end:      ($end | tonumber),
-                        tags:     $tags
-                    }'; then
-                    echo "Error building item JSON for $var in $f" >&2
-                fi)
-                [ -z "$item_json" ] && continue
-
-                # Append to array
-                metadata_json=$(if ! jq -n --argjson arr "$metadata_json" --argjson item "$item_json" '$arr + [$item]'; then
-                    echo "Error appending item JSON for $var in $f" >&2
+                        ($var + ".start"): ($start | tonumber),
+                        ($var + ".end"):   ($end   | tonumber)
+                    } + $prev'; then
+                    echo "Error adding line numbers to metadata JSON for $f" >&2
                 fi)
                 [ -z "$metadata_json" ] && continue
-
             done < <(sed -n -E "s~^($S+)\t$f\t((/.*\\\$/|[0-9]+)+)(;\"((\t$S+)*))?$~\1\r\2\r\5~p" tags)
         fi
     done
