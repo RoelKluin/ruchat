@@ -3,13 +3,12 @@ use crate::chroma::get_metadata;
 use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs};
 use crate::error::RuChatError;
 use crate::ollama::OllamaArgs;
-use chromadb::collection::{ChromaCollection, CollectionEntries};
+use chromadb::collection::CollectionEntries;
 use chromadb::embeddings::EmbeddingFunction;
 use clap::Parser;
-use log::{error, info, warn};
+use log::{info, warn};
 use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
 use uuid::Builder;
-use serde_json::Value;
 
 #[derive(Parser, Debug, Clone, PartialEq)]
 pub(super) struct EmbedPromptArgs {

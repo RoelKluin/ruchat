@@ -40,8 +40,8 @@ mod tests {
     use super::*;
     use crate::args::Commands;
     use crate::ollama::ask::AskArgs;
-    use crate::prompt::PromptArgs;
     use crate::ollama::OllamaArgs;
+    use crate::prompt::PromptArgs;
     use args::Args;
 
     #[tokio::test]

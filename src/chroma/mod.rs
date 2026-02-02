@@ -66,16 +66,12 @@ pub(crate) fn get_metadata(
         }
     }
 
-    // ────────────────────────────────────────────────
     // Case 1: inline JSON string
-    // ────────────────────────────────────────────────
     if let Ok(v) = serde_json::from_str::<Value>(input) {
         return normalize(v);
     }
 
-    // ────────────────────────────────────────────────
     // Case 2: file path pointing to JSON
-    // ────────────────────────────────────────────────
     let path = Path::new(input);
     if path.exists() && path.is_file() {
         let content = fs::read_to_string(path)
@@ -87,9 +83,7 @@ pub(crate) fn get_metadata(
         return normalize(v);
     }
 
-    // ────────────────────────────────────────────────
     // Neither inline JSON nor valid JSON file
-    // ────────────────────────────────────────────────
     Err(RuChatError::InvalidMetadata(
         "Value is neither valid inline JSON nor a path to an existing valid JSON file".into(),
     ))

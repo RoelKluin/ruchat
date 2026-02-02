@@ -8,7 +8,7 @@ use clap::Parser;
 use ollama_rs::generation::completion::request::GenerationRequest;
 use ollama_rs::Ollama;
 
-pub(super) use ask::AskArgs;
+pub(super) use ask::{generate_oneshot, AskArgs};
 pub(super) use chat::ChatArgs;
 pub(super) use func::func;
 pub(super) use model::ModelArgs;
