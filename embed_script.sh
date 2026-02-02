@@ -47,10 +47,23 @@ done < <(ctags --list-kinds-full -R src | sed -n -E "s~^($S+)$s+([a-zA-Z])$s+($S
 #TOML:k key
 #TOML:t table
 
+if [ -n "$1" ]; then
+  files=("$@")
+else
+  declare -a files
+  while read -r f; do
+      for extension in "${!ext[@]}"; do
+          if [[ $f == *"$extension" ]]; then
+              files+=("$f")
+              break
+          fi
+      done
+  done < <(git ls-files | grep -v '^ruchat$')
+fi
+
 
 model="all-minilm:l6-v2"
-
-git ls-files | grep -v '^ruchat$' | while read -r f; do
+for f in "${files[@]}"; do
     metadata_json="{}"
 
     for extension in "${!ext[@]}"; do
@@ -183,14 +196,14 @@ git ls-files | grep -v '^ruchat$' | while read -r f; do
 
     # Now embed_args
     embed_args=("--collection" "repo_src-${model//:/_}" "--model" "$model")
-
+    echo "Embedding file $f with metadata" >&2
     if jq -e 'length > 0' <<< "$metadata_json" >/dev/null; then
         embed_args+=("--metadata" "$(jq -c . <<< "$metadata_json")")
     else
         echo "No metadata extracted for $f (lang: $lang)" >&2
     fi
 
-    ./ruchat embed "${embed_args[@]}" "Contents of file $f:\n\`\`\`\n$(cat "$f")\n\`\`\`" || echo -e "Error in metadata for $f?\n" "${embed_args[@]}" 1>&2
+    ./ruchat embed "${embed_args[@]}" "$f contents:\n\`\`\`${lang}\n$(cat "$f")\n\`\`\`" || echo -e "Error in metadata for $f?\n" "${embed_args[@]}" 1>&2
 done
 
 # Embed git commit messages for the src directory

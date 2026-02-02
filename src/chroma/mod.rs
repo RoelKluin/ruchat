@@ -16,33 +16,14 @@ pub(crate) use client::ChromaClientConfigArgs;
 pub(crate) use collection::ChromaCollectionConfigArgs;
 pub(crate) use metadata::MetadataArgs;
 
-// Chroma does accept nested metadata in the client — it serializes to JSON and stores it.
-//
+// Chroma metadata is serialized to JSON and stored.
 // But filtering (where clause) is still very limited:
-//
-//     Only works reliably on top-level scalar fields ($eq, $ne, $gt, $in, $nin, etc.)
-//     Nested access via dot notation ("user.name": {"$eq": "Alice"}) — sometimes supported,
-//     but inconsistent across versions and backends (especially DuckDB vs ClickHouse vs local)
-//     Arrays: $in / $nin on top-level arrays sometimes works, but deep/nested array filtering
-//     is weak or broken in many versions
-//     Deeply nested objects → often forces you to denormalize or flatten keys (user.address.city)
-//
-// So while you can store arbitrary nested JSON metadata, you should design it knowing that complex
-// filtering may not be possible without flattening.
-//
-// If your use-case is only storage + retrieval by id,
-// or you filter only on top-level keys → full nesting is fine.
-//
-// If you need rich where filters → prefer flat structure or key.subkey style strings.
-//
-// Let me know if you want to add basic validation (e.g. reject too-deep nesting,
-// reject non-JSON-serializable types, size limits, etc.).
+//     Only works reliably on top-level scalar fields
 
-/// Parses metadata from a string of comma-separated key:value pairs.
 ///
 /// # Parameters
 ///
-/// - `arg_metadata`: An optional string containing metadata.
+/// - `metadata`: An optional string containing metadata.
 ///
 /// # Returns
 ///
