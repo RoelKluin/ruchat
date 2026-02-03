@@ -2,10 +2,10 @@
 declare -A ext
 #declare -A comment
 
-while IFS=$'\t' read -r lang ext comment_re; do
+while read -r lang extension comment_re; do
     [[ "${lang:0:1}" == "#" ]] && continue
-    [[ -z "$ext" || -z "$lang" ]] && continue
-    ext["$ext"]="$lang"
+    [[ -z "$extension" || -z "$lang" ]] && continue
+    ext["$extension"]="$lang"
     #comment["$lang"]="$comment_re"
 done < <(cat etc/language_specifics.txt)
 
@@ -54,12 +54,7 @@ if [ -n "$1" ]; then
 else
   declare -a files
   while read -r f; do
-      for extension in "${!ext[@]}"; do
-          if [[ $f == *"$extension" ]]; then
-              files+=("$f")
-              break
-          fi
-      done
+    [[ -n "${ext[".${f##*.}"]}" ]] && files+=("$f")
   done < <(git ls-files | grep -v '^ruchat$')
 fi
 
@@ -206,8 +201,8 @@ for f in "${files[@]}"; do
 
     # Now embed_args
     embed_args=("--collection" "repo_src-${model//:/_}" "--model" "$model")
-    echo "Embedding file $f with metadata" >&2
     if jq -e 'length > 0' <<< "$metadata_json" >/dev/null; then
+        echo "Embedding file $f with metadata" >&2
         embed_args+=("--metadata" "$(jq -c . <<< "$metadata_json")")
     else
         echo "No metadata extracted for $f (lang: $lang)" >&2
