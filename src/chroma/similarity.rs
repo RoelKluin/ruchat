@@ -1,4 +1,4 @@
-use crate::chroma::get_metadata;
+use crate::chroma::parse_metadata;
 use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs};
 use crate::error::RuChatError;
 use crate::ollama::OllamaArgs;
@@ -70,7 +70,7 @@ impl SimilarityArgs {
         let n_results = Some(self.similarity_count);
         let query_embeddings = Some(res.embeddings);
         let query_texts = None; //Some(vec![self.query.as_str()]);
-        let where_metadata = get_metadata(&self.metadata)?.map(|m| Value::Object(m));
+        let where_metadata = parse_metadata(&self.metadata)?.map(|m| Value::Object(m));
         let where_document = None;
         let include = Some(vec!["distances"]);
         let query_options = QueryOptions {

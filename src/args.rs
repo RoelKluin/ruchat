@@ -1,4 +1,5 @@
 use crate::agent::manager::{Manager, ManagerArgs};
+use crate::chroma::create::ChromaCreateArgs;
 use crate::chroma::delete::{chroma_delete, ChromaDeleteArgs};
 use crate::chroma::ls::{chroma_ls, ChromaLsArgs};
 use crate::chroma::query::QueryArgs;
@@ -49,6 +50,7 @@ impl Args {
             Commands::Embed(args) => args.embed().await,
             Commands::Query(args) => args.query().await,
             Commands::Similarity(args) => args.similarity_search().await,
+            Commands::ChromaCreate(args) => args.create().await,
             Commands::ChromaLs(args) => chroma_ls(args).await,
             Commands::ChromaDelete(args) => chroma_delete(args).await,
             Commands::ChromaMetadata(args) => args.get_metadata().await,
@@ -86,6 +88,8 @@ pub(super) enum Commands {
     Query(QueryArgs),
     /// Find similar embeddings in Chroma database.
     Similarity(SimilarityArgs),
+    /// Create Chroma database collections.
+    ChromaCreate(ChromaCreateArgs),
     /// List Chroma database collections.
     ChromaLs(ChromaLsArgs),
     /// Delete Chroma database collections or entries.

@@ -1,5 +1,6 @@
 mod client;
 mod collection;
+pub(crate) mod create;
 pub(crate) mod delete;
 pub(crate) mod ls;
 mod metadata;
@@ -14,6 +15,7 @@ use std::path::Path;
 
 pub(crate) use client::ChromaClientConfigArgs;
 pub(crate) use collection::ChromaCollectionConfigArgs;
+pub(crate) use create::ChromaCreateArgs;
 pub(crate) use metadata::MetadataArgs;
 
 // Chroma metadata is serialized to JSON and stored.
@@ -28,7 +30,7 @@ pub(crate) use metadata::MetadataArgs;
 /// # Returns
 ///
 /// A `Result` containing an optional map of metadata or a `RuChatError`.
-pub(crate) fn get_metadata(
+pub(crate) fn parse_metadata(
     metadata: &Option<String>,
 ) -> Result<Option<Map<String, Value>>, RuChatError> {
     let input = match metadata.as_deref() {

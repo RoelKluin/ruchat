@@ -1,5 +1,4 @@
-use crate::arg_utils::parse_key_val;
-use crate::chroma::get_metadata;
+use crate::chroma::parse_metadata;
 use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs};
 use crate::error::RuChatError;
 use crate::ollama::OllamaArgs;
@@ -8,6 +7,7 @@ use chromadb::embeddings::EmbeddingFunction;
 use clap::Parser;
 use log::{info, warn};
 use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
+use serde_json::{Map, Value};
 use uuid::Builder;
 
 #[derive(Parser, Debug, Clone, PartialEq)]
@@ -32,18 +32,13 @@ impl EmbedPromptArgs {
 #[derive(Parser, Debug, Clone, PartialEq)]
 pub(super) struct EmbedArgs {
     /// Chroma update metadata, comma separated key:value pairs.
-    #[arg(short, long, value_name = "KEY:VALUE", value_parser = parse_key_val::<String, String>)]
-    update_metadata: Option<String>,
+    #[arg(short, long)]
+    metadata: Option<String>,
 
     /// ID associated with the embedding entry.
     #[arg(short, long)]
     id: Option<String>,
 
-    /// URIs associated with the embedding entries.
-    #[arg(short, long)]
-    uris: Vec<String>,
-
-    // FIXME: this is clashing with AskArgs ollama_args
     #[command(flatten)]
     ollama_args: OllamaArgs,
 
@@ -89,10 +84,12 @@ impl EmbedArgs {
             .to_string();
 
         let client = self.client_config.create_client().await?;
+        let mut collection_metadata: Map<String, Value> = Map::new();
+        collection_metadata.insert("model".to_string(), Value::String(model.clone()));
 
         let collection = self
             .collection_config
-            .get_or_create_collection(&client, None)
+            .get_or_create_collection(&client, Some(collection_metadata))
             .await?;
 
         info!(
@@ -111,10 +108,10 @@ impl EmbedArgs {
 
         let ids = vec![id.as_str()];
         let documents = None; //Some(vec![prompt.as_str()]);
-        let update_metadata = get_metadata(&self.update_metadata)?;
+        let metadata = parse_metadata(&self.metadata)?;
         let collection_entries = CollectionEntries {
             ids,
-            metadatas: update_metadata.map(|md| vec![md]),
+            metadatas: metadata.map(|md| vec![md]),
             documents,
             embeddings: Some(embeddings),
         };
@@ -136,7 +133,7 @@ mod tests {
     #[test]
     fn test_get_metadata_valid() {
         let metadata_str = Some("key1:value1,key2:value2".to_string());
-        let result = get_metadata(&metadata_str);
+        let result = parse_metadata(&metadata_str);
         assert!(result.is_ok());
         let metadata = result.unwrap().unwrap();
         assert_eq!(metadata["key1"], "value1".into());
@@ -146,7 +143,7 @@ mod tests {
     #[test]
     fn test_get_metadata_invalid() {
         let metadata_str = Some("key1value1".to_string());
-        let result = get_metadata(&metadata_str);
+        let result = parse_metadata(&metadata_str);
         assert!(result.is_err());
     }
 }
