@@ -1,10 +1,7 @@
 use anyhow::Result;
 use chromadb::client::{ChromaAuthMethod, ChromaClientOptions, ChromaTokenHeader};
-use chromadb::collection::ChromaCollection;
 use chromadb::ChromaClient;
 use clap::Parser;
-use http::{HeaderName, HeaderValue};
-use std::time::Duration;
 
 #[derive(Parser, Debug, Clone, PartialEq)]
 pub struct ChromaClientConfigArgs {
@@ -12,18 +9,8 @@ pub struct ChromaClientConfigArgs {
     pub chroma_server: String,
     #[arg(short = 't', long)]
     pub chroma_token: Option<String>,
-    #[arg(long, default_value_t = 3)]
-    pub max_retries: usize,
-    #[arg(long, default_value_t = 100)]
-    pub min_delay: u64,
-    #[arg(long, default_value_t = 10)]
-    pub max_delay: u64,
-    #[arg(long, default_value_t = true)]
-    pub jitter: bool,
-    #[arg(long, default_value = "default_tenant")]
-    pub tenant_id: Option<String>,
     #[arg(short = 'd', long, default_value = "default")]
-    pub chroma_database: Option<String>,
+    pub chroma_database: String,
 }
 impl ChromaClientConfigArgs {
     /// Access a running Chroma server to store and retrieve data for embeddings.
@@ -40,10 +27,7 @@ impl ChromaClientConfigArgs {
             let endpoint = self.chroma_server.parse()?;
             ChromaClient::new(ChromaClientOptions {
                 url: Some(endpoint),
-                database: self
-                    .chroma_database
-                    .clone()
-                    .unwrap_or("default".to_string()),
+                database: self.chroma_database.clone(),
                 auth: ChromaAuthMethod::TokenAuth {
                     token: token.to_string(),
                     header: ChromaTokenHeader::Authorization,
