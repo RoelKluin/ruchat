@@ -7,19 +7,16 @@ use clap::Parser;
 pub(crate) struct MetadataArgs {
     /// Chroma client configuration
     #[clap(flatten)]
-    chroma_client_config: ChromaClientConfigArgs,
+    client: ChromaClientConfigArgs,
     /// Chroma collection configuration
     #[clap(flatten)]
-    chroma_collection_config: ChromaCollectionConfigArgs,
+    collection: ChromaCollectionConfigArgs,
 }
 
 impl MetadataArgs {
     pub(crate) async fn get_metadata(&self) -> Result<()> {
-        let client = self.chroma_client_config.create_client().await?;
-        let collection = self
-            .chroma_collection_config
-            .get_collection(&client)
-            .await?;
+        let client = self.client.create_client().await?;
+        let collection = self.collection.get_collection(&client, "default").await?;
 
         if let Some(map) = collection.metadata() {
             println!("{}", serde_json::to_string_pretty(&map)?);

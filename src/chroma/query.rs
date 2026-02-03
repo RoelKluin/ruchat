@@ -33,13 +33,13 @@ pub struct QueryArgs {
     metadata: Option<String>,
 
     #[command(flatten)]
-    collection_config: ChromaCollectionConfigArgs,
+    collection: ChromaCollectionConfigArgs,
 
     #[command(flatten)]
-    client_config: ChromaClientConfigArgs,
+    client: ChromaClientConfigArgs,
 
     #[command(flatten)]
-    ollama_args: OllamaArgs,
+    ollama: OllamaArgs,
 }
 
 impl QueryArgs {
@@ -62,8 +62,8 @@ impl QueryArgs {
         // An empty IDs vec will return all embeddings.
         println!("Creating Chroma client...");
 
-        let client = self.client_config.create_client().await?;
-        let collection = self.collection_config.get_collection(&client).await?;
+        let client = self.client.create_client().await?;
+        let collection = self.collection.get_collection(&client, "default").await?;
         let metadata = self.metadata.as_deref().map(|md| md.into());
 
         // Create a filter object to filter by document content.
@@ -96,12 +96,9 @@ impl QueryArgs {
         eprintln!("Final prompt: {}", prompt);
 
         let mut cio = Io::new();
-        let (ollama, models) = self.ollama_args.init("").await?;
+        let (ollama, models) = self.ollama.init("").await?;
         let model = models.first().unwrap().to_string();
-        let request = self
-            .ollama_args
-            .build_generation_request(model, prompt)
-            .await?;
+        let request = self.ollama.build_generation_request(model, prompt).await?;
         let mut stream = ollama.generate_stream(request).await?;
         while let Some(res) = stream.next().await {
             let responses = res?;

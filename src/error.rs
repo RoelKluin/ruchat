@@ -114,6 +114,10 @@ pub enum RuChatError {
     /// Error when no prompt is provided.
     #[error("No prompt provided")]
     NoPromptProvided,
+
+    /// Error when no collection is specified.
+    #[error("No collection specified. See `ruchat chroma-ls` for available collections.")]
+    NoCollectionSpecified,
 }
 
 pub type Result<T> = std::result::Result<T, RuChatError>;

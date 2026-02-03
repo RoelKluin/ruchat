@@ -3,7 +3,7 @@ use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs};
 use crate::error::RuChatError;
 use crate::ollama::OllamaArgs;
 use anyhow::Result;
-use chromadb::collection::{ChromaCollection, GetOptions, GetResult, QueryOptions, QueryResult};
+use chromadb::collection::QueryOptions;
 use clap::Parser;
 use log::warn;
 use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
@@ -15,32 +15,32 @@ use serde_json::Value;
 /// search in a Chroma database, including query parameters and database
 /// connection information.
 #[derive(Parser, Debug, Clone, PartialEq)]
-pub struct SimilarityArgs {
+pub(crate) struct SimilarityArgs {
     /// Query string to search for similar embeddings.
     #[arg(short, long)]
-    pub(crate) query: String,
+    query: String,
 
     /// Number of embeddings to return.
     #[arg(short, long, default_value = "1")]
-    pub(crate) count: usize,
+    count: usize,
 
     /// Number of similar embeddings to return.
     #[arg(short, long, default_value = "5")]
-    pub(crate) similarity_count: usize,
+    similarity_count: usize,
 
     /// Chroma database metadata, comma separated key:value pairs.
     #[arg(short, long)]
-    pub(crate) metadata: Option<String>,
+    metadata: Option<String>,
 
     // FIXME: this is clashing with AskArgs ollama_args
     #[command(flatten)]
     ollama_args: OllamaArgs,
 
     #[command(flatten)]
-    pub client_config: ChromaClientConfigArgs,
+    client: ChromaClientConfigArgs,
 
     #[command(flatten)]
-    pub collection_config: ChromaCollectionConfigArgs,
+    collection: ChromaCollectionConfigArgs,
 }
 
 impl SimilarityArgs {
@@ -53,10 +53,10 @@ impl SimilarityArgs {
     ///
     /// A `Result` indicating success or failure.
     pub(crate) async fn similarity_search(&self) -> Result<(), RuChatError> {
-        let client = self.client_config.create_client().await?;
+        let client = self.client.create_client().await?;
 
         // Instantiate a ChromaCollection to perform operations on a collection
-        let collection = self.collection_config.get_collection(&client).await?;
+        let collection = self.collection.get_collection(&client, "default").await?;
 
         let (ollama, models) = self.ollama_args.init("all-minilm:l6-v2").await?;
         let model = models.first().unwrap().as_str();
