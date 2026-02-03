@@ -41,11 +41,6 @@ impl ChromaCollectionConfigArgs {
         let collection: ChromaCollection = client.get_collection(collection_name).await?;
         Ok(collection)
     }
-    pub(crate) fn set_default_name(&mut self, name: &str) {
-        if self.collection.is_empty() {
-            self.collection = name.to_string();
-        }
-    }
     pub(crate) fn name(&self) -> &str {
         self.collection.as_str()
     }
