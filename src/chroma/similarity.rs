@@ -56,10 +56,7 @@ impl SimilarityArgs {
         let client = self.client_config.create_client().await?;
 
         // Instantiate a ChromaCollection to perform operations on a collection
-        let collection = self
-            .collection_config
-            .get_or_create_collection(&client)
-            .await?;
+        let collection = self.collection_config.get_collection(&client).await?;
 
         let (ollama, models) = self.ollama_args.init("all-minilm:l6-v2").await?;
         let model = models.first().unwrap().as_str();

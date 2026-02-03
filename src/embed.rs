@@ -92,7 +92,7 @@ impl EmbedArgs {
 
         let collection = self
             .collection_config
-            .get_or_create_collection(&client)
+            .get_or_create_collection(&client, None)
             .await?;
 
         info!(

@@ -63,10 +63,7 @@ impl QueryArgs {
         println!("Creating Chroma client...");
 
         let client = self.client_config.create_client().await?;
-        let collection = self
-            .collection_config
-            .get_or_create_collection(&client)
-            .await?;
+        let collection = self.collection_config.get_collection(&client).await?;
         let metadata = self.metadata.as_deref().map(|md| md.into());
 
         // Create a filter object to filter by document content.
