@@ -1,11 +1,13 @@
 #!/bin/bash
 declare -A ext
+#declare -A comment
 
-while read ext lang; do
-    [[ "${ext:0:1}" == "#" ]] && continue
+while IFS=$'\t' read -r lang ext comment_re; do
+    [[ "${lang:0:1}" == "#" ]] && continue
     [[ -z "$ext" || -z "$lang" ]] && continue
     ext["$ext"]="$lang"
-done < <(cat etc/file_extensions.txt)
+    #comment["$lang"]="$comment_re"
+done < <(cat etc/language_specifics.txt)
 
 git ls-files | grep -v '^ruchat$' | xargs ctags
 declare -A tags
@@ -132,12 +134,11 @@ for f in "${files[@]}"; do
                     ex_cmd="/^$(echo "${ex_cmd:2:-2}" | sed -r 's/([][*^$])/\\\1/g')$/"
                     start="$(sed -n "${ex_cmd}{=;q}" "$f")"
                     end="$start"
-                    # FIXME: improver per lang/kind handling here:
+                    # FIXME: improve per lang/kind handling here:
                     if [[ "$lang:$lang_kind" =~ ^Rust:(function|method|implementation|macro|module|struct|enum)$ ]] || \
                             [[ "$lang:$lang_kind" =~ ^Sh:(function|script|heredoc)$ ]] || \
                             [[ "$lang:$lang_kind" =~ ^TOML:(arraytable|table|key)$ ]] || \
                             [[ "$lang:$lang_kind" == "Markdown:(chapter|section|subsection|subsubsection|l4subsection|l5subsection|footnote|hashtag)" ]]; then
-                        # For these kinds, try to find the closing brace
                         # For these kinds, try to find the closing brace
                         ex_end_cmd=$(echo "$ex_cmd" | sed -E -n 's~(/\^[ \t]*).*$~\1[^[:space:]].*$/~p')
                         if [[ -n "$ex_end_cmd" ]]; then
@@ -167,15 +168,24 @@ for f in "${files[@]}"; do
                         done
                     fi
                 fi
+                # grep -Ev "^[^:]+:\d+:\s+${comment[$lang]}"
+                call_sites="$(rg --no-heading -n '(^|\W)FileReadError(\W|$)' | cut -d: -f1,2 | 
+                    grep -v "^$f:$start$" | tr '\n' ',' | sed 's/,$//')"
+                metadata_json=$(if ! jq -n \
+                    --argjson prev "$metadata_json" \
+                    --arg var     "$var" \
+                    --arg call    "$call_sites" \
+                    '$prev + {
+                        ($var + ".call_site"): $call
+                    }'; then
+                    echo "Error adding call site to metadata JSON for $f" >&2
+                fi)
+                [ -z "$metadata_json" ] && continue
                 
                 if [[ -z "$start" ]]; then
                     echo "Warning: Could not determine start line for $var in $f with ex_cmd: $ex_cmd" >&2
                     continue
                 fi
-                #    --argjson tags "$tags_json" \
-                #        tags:     $tags
-                #    --arg lang    "$lang" \
-                #        language: $lang,
 
                 # Build one metadata object per item
                 metadata_json=$(if ! jq -n \
