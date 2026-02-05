@@ -2,6 +2,7 @@ mod client;
 mod collection;
 pub(crate) mod create;
 pub(crate) mod delete;
+mod get_options;
 pub(crate) mod ls;
 mod metadata;
 pub(crate) mod query;
@@ -16,6 +17,7 @@ use std::path::Path;
 pub(crate) use client::ChromaClientConfigArgs;
 pub(crate) use collection::ChromaCollectionConfigArgs;
 pub(crate) use create::ChromaCreateArgs;
+pub(super) use get_options::ChromaGetOptions;
 pub(crate) use metadata::MetadataArgs;
 
 // Chroma metadata is serialized to JSON and stored.

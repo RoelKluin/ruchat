@@ -7,7 +7,6 @@ use chromadb::embeddings::EmbeddingFunction;
 use clap::Parser;
 use log::{info, warn};
 use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
-use serde_json::{Map, Value};
 use uuid::Builder;
 
 #[derive(Parser, Debug, Clone, PartialEq)]
@@ -84,13 +83,7 @@ impl EmbedArgs {
             .to_string();
 
         let client = self.client_config.create_client().await?;
-        let mut collection_metadata: Map<String, Value> = Map::new();
-        collection_metadata.insert("model".to_string(), Value::String(model.clone()));
-
-        let collection = self
-            .collection_config
-            .get_or_create_collection(&client, Some(collection_metadata))
-            .await?;
+        let collection = self.collection_config.get_collection(&client, "").await?;
 
         info!(
             "Targeting Collection: {} (ID: {})",

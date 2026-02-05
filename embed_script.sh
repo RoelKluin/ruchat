@@ -49,9 +49,14 @@ done < <(ctags --list-kinds-full -R src | sed -n -E "s~^($S+)$s+([a-zA-Z])$s+($S
 #TOML:k key
 #TOML:t table
 
+model="all-minilm:l6-v2"
+collection="repo_src-${model//:/_}"
+
 if [ -n "$1" ]; then
   files=("$@")
 else
+  ./ruchat chroma-delete --collection "$collection" 2>/dev/null || true
+  ./ruchat chroma-create --collection "$collection" --metadata "{\"model\": \"$model\"}" || exit 1
   declare -a files
   while read -r f; do
     [[ -n "${ext[".${f##*.}"]}" ]] && files+=("$f")
@@ -59,26 +64,26 @@ else
 fi
 
 
-model="all-minilm:l6-v2"
 for f in "${files[@]}"; do
     metadata_json="{}"
 
     for extension in "${!ext[@]}"; do
         if [[ $f == *"$extension" ]]; then
             lang="${ext[$extension]}"
-            metadata_json=$(if ! jq -n \
+            metadata_json="$(if ! jq -n \
+                    --argjson prev "$metadata_json" \
                 --arg f "$f" \
                 --arg lang "$lang" \
-                '{
+                '$prev + {
                     file: $f,
                     language: $lang
                 }'; then
                 echo "Error building base metadata JSON for $f" >&2
-            fi)
+            fi)"
             [ -z "$metadata_json" ] && continue
 
             # Process each matching line from tags file
-            while IFS=$'\r' read -r var ex_cmd kind; do
+            while IFS='\r' read -r var ex_cmd kind; do
                 # Trim & normalize
                 var="${var//[[:space:]]/}"
                 [[ -z "$var" ]] && continue
@@ -111,13 +116,13 @@ for f in "${files[@]}"; do
                         tkey="${tkey//[[:space:]]/}"
                         tval="${tval//[[:space:]]/}"
                         [[ -z $tkey || -z $tval ]] && continue
-                        metadata_json=$(if ! jq -n \
+                        metadata_json="$(if ! jq -n \
                             --argjson prev "$metadata_json" \
                             --arg k "${var}.$tkey" \
                             --arg v "$tval" \
                             '$prev + {($k): $v}'; then
                             echo "Error adding tag $tkey to metadata JSON for $f" >&2
-                        fi)
+                        fi)"
                         [ -z "$metadata_json" ] && continue
                     done
                 fi
@@ -126,7 +131,7 @@ for f in "${files[@]}"; do
                 # Determine type & clean value
                 if [[ $ex_cmd =~ ^/.*/$ ]]; then
                     # XXX: still Uncertain about these: '.?|' certain about excluding '+{}()\\'
-                    ex_cmd="/^$(echo "${ex_cmd:2:-2}" | sed -r 's/([][*^$])/\\\1/g')$/"
+                    ex_cmd="/^$(echo "${ex_cmd:2:-2}" | sed -r 's/([][*^$\/])/\\\1/g')$/"
                     start="$(sed -n "${ex_cmd}{=;q}" "$f")"
                     end="$start"
                     # FIXME: improve per lang/kind handling here:
@@ -164,17 +169,17 @@ for f in "${files[@]}"; do
                     fi
                 fi
                 # grep -Ev "^[^:]+:\d+:\s+${comment[$lang]}"
-                call_sites="$(rg --no-heading -n '(^|\W)FileReadError(\W|$)' | cut -d: -f1,2 | 
+                references="$(rg --no-heading -n '(^|\W)FileReadError(\W|$)' | cut -d: -f1,2 | 
                     grep -v "^$f:$start$" | tr '\n' ',' | sed 's/,$//')"
-                metadata_json=$(if ! jq -n \
+                metadata_json="$(if ! jq -n \
                     --argjson prev "$metadata_json" \
                     --arg var     "$var" \
-                    --arg call    "$call_sites" \
+                    --arg call    "$references" \
                     '$prev + {
-                        ($var + ".call_site"): $call
+                        ($var + ".references"): $call
                     }'; then
                     echo "Error adding call site to metadata JSON for $f" >&2
-                fi)
+                fi)"
                 [ -z "$metadata_json" ] && continue
                 
                 if [[ -z "$start" ]]; then
@@ -183,26 +188,26 @@ for f in "${files[@]}"; do
                 fi
 
                 # Build one metadata object per item
-                metadata_json=$(if ! jq -n \
+                metadata_json="$(if ! jq -n \
                     --argjson prev "$metadata_json" \
                     --arg var     "$var" \
                     --arg start   "$start" \
                     --arg end     "$end" \
-                    '{
+                    '$prev + {
                         ($var + ".start"): ($start | tonumber),
                         ($var + ".end"):   ($end   | tonumber)
-                    } + $prev'; then
+                    }'; then
                     echo "Error adding line numbers to metadata JSON for $f" >&2
-                fi)
+                fi)"
                 [ -z "$metadata_json" ] && continue
             done < <(sed -n -E "s~^($S+)\t$f\t((/.*\\\$/|[0-9]+)+)(;\"((\t$S+)*))?$~\1\r\2\r\5~p" tags)
         fi
     done
 
     # Now embed_args
-    embed_args=("--collection" "repo_src-${model//:/_}" "--model" "$model")
+    embed_args=("--collection" "$collection" "--model" "$model")
     if jq -e 'length > 0' <<< "$metadata_json" >/dev/null; then
-        echo "Embedding file $f with metadata" >&2
+        echo "Embedding file $f with metadata $metadata_json" >&2
         embed_args+=("--metadata" "$(jq -c . <<< "$metadata_json")")
     else
         echo "No metadata extracted for $f (lang: $lang)" >&2
