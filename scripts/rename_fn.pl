@@ -1,4 +1,16 @@
 #!/usr/bin/env perl
+
+# Summary - when the Perl script is likely to break
+# Context	                 Blind text replace safe?	Typical failure mode
+# Normal function calls	     Yes	                    -
+# Method calls (self.old())	 Yes (with lookahead)	    -
+# macro_rules! body	         Usually	                Dynamic construction (paste!, etc.)
+# Proc-macro implementation	 No	                        Name in variables, Ident, quote! tokens
+# Proc-macro generated code	 Sometimes	                Name constructed at expand time
+# Macro invocation argument	 Sometimes	                Name computed inside macro
+# use crate::...::old_name;	 Yes	                    - (if followed by ( in lookahead version)
+# Strings / comments (opt)	 Controlled by flag	        Unintended renames if over-applied
+
 use strict;
 use warnings;
 use Getopt::Long;
@@ -16,17 +28,28 @@ GetOptions(
 
 die "Missing --old or --new\n" unless $opt_old && $opt_new;
 
+if ($opt_old !~ /^[A-Za-z_][A-Za-z0-9_]*$/) {
+    die "Old function name '$opt_old' contains special characters. Aborting.\n";
+}
+if ($opt_new !~ /^[A-Za-z_][A-Za-z0-9_]*$/) {
+    die "New function name '$opt_new' contains special characters. Aborting.\n";
+}
+
 # Find files with function definition
-my $def_pattern = "fn\\s+\\Q$opt_old\\E\\s*\\(";
+my $def_pattern = "fn\\s+$opt_old\\s*\\(";
 my $rg_cmd = "rg --type rust -l '$def_pattern'";
 my $output = qx($rg_cmd);
 my @def_files = grep { $_ } split /\n/, $output;
+print STDERR "Found function '$opt_old' in files: " . join(", ", @def_files) . "\n";
 
-if (@def_files > 1 && !defined $opt_file) {
+if (@def_files > 1 and not defined $opt_file) {
     die "Ambiguous function '$opt_old' found in multiple files: " . join(", ", @def_files) . "\nPlease specify --file <path>\n";
 }
 
 if (defined $opt_file) {
+    if (not -f $opt_file) {
+        die "Specified file '$opt_file' does not exist.\n";
+    }
     my $found = 0;
     foreach my $f (@def_files) {
         if ($f eq $opt_file) {
@@ -41,7 +64,7 @@ if (defined $opt_file) {
 my @rs_files;
 find(sub {
     push @rs_files, $File::Find::name if /\.rs$/ && -f;
-}, '.');
+}, 'src/');
 
 # For each .rs file, perform the rename
 foreach my $file (@rs_files) {
