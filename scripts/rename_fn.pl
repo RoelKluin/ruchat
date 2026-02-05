@@ -216,12 +216,26 @@ foreach my $file (@rs_files) {
                 next;
             }
         } elsif ($type eq 'char' || $type eq 'byte_char') {
+            # If we have already consumed content ($pos > $start)
+            # and the current char is NOT a closing quote, this is a lifetime.
+            if ($pos > $start && $char ne "'") {
+                # Close the previous segment as a 'lifetime' (or distinct code span)
+                push @spans, {type => 'lifetime', start => $start, end => $pos};
+
+                # Switch state back to code
+                $type = 'code';
+                $start = $pos;
+
+                # Restart the loop for this SAME character so it gets parsed as code
+                redo;
+            }
+
             if ($char eq '\\') {
-                $pos += 2;
+                $pos += 2; # Skip escape (e.g., \n or \')
                 next;
             } elsif ($char eq "'") {
                 $pos++;
-                push @spans, {type => 'char', start => $start, end => $pos};
+                push @spans, {type => $type, start => $start, end => $pos};
                 $type = 'code';
                 $start = $pos;
                 next;
@@ -260,10 +274,22 @@ foreach my $file (@rs_files) {
             if (defined $opt_file) {
                 # Method rename mode: only replace method-style calls + the definition itself
                 # 1. The definition (fn old_name( )
-                $text =~ s/\bfn\s+\Q$opt_old\E\b\s*/fn $opt_new /g if $opt_file eq $file;
-
+                $text =~ s{
+                        \b                                      # word boundary before fn
+                        ( pub (?: \s* \( [^)]* \) )? \s+ )?     # optional pub / pub(crate) / pub(super)
+                        ( async \s+ )?                          # optional async
+                        fn \s+
+                        \Q$opt_old\E \b                         # the function name we're renaming
+                        \s*                                     # optional whitespace
+                        (?: < [^>]* > \s* )?                    # optional <'a, 'b, T> generics/lifetimes (non-greedy-ish)
+                        \(                                      # start of parameter list - this is our anchor
+                    }{$1$2fn $opt_new(}gx if $file eq $opt_file;
                 # 2. Method calls: .old_name(   or ::old_name(
-                $text =~ s/([.:]\s*)\Q$opt_old\E(?=\s*\()/$1$opt_new/g;
+                $text =~ s{
+                    (\s* [.:] \s*)          # . or :: possibly with ws
+                    \b \Q$opt_old\E \b
+                    (?=\s*\()               # followed by (
+                }{$1$opt_new}gx;
                 print STDERR "Renamed method '$opt_old' to '$opt_new' in $file\n" if $text =~ /\b$opt_new\b/;
 
                 # Optional: also catch Self::old_name or Type::old_name more precisely
@@ -271,10 +297,22 @@ foreach my $file (@rs_files) {
             } else {
                 # Free function mode: replace bare old_name( calls + definition
                 # 1. Definition
-                $text =~ s/\bfn\s+\Q$opt_old\E\b\s*/fn $opt_new /g;
-
+                $text =~ s{
+                        \b                                      # word boundary before fn
+                        ( pub (?: \s* \( [^)]* \) )? \s+ )?     # optional pub / pub(crate) / pub(super)
+                        ( async \s+ )?                          # optional async
+                        fn \s+
+                        \Q$opt_old\E \b                         # the function name we're renaming
+                        \s*                                     # optional whitespace
+                        (?: < [^>]* > \s* )?                    # optional <'a, 'b, T> generics/lifetimes (non-greedy-ish)
+                        \(                                      # start of parameter list - this is our anchor
+                    }{$1$2fn $opt_new(}gx;
                 # 2. Bare calls (not after . or ::)
-                $text =~ s/(?<![.:]\s*)\Q$opt_old\E(?=\s*\()/$opt_new/g;
+                $text =~ s{
+                    (?<![.:]\s*)          # NOT preceded by . or :: (with optional ws)
+                    \b\Q$opt_old\E\b
+                    (?=\s*\()
+                }{$opt_new}gx;
             }
         } elsif ($span->{type} eq 'comment' && $opt_comments) {
             $text =~ s/\b\Q$opt_old\E\b/$opt_new/g;
