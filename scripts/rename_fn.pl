@@ -18,12 +18,14 @@ use File::Find;
 use File::Basename;
 my $dirname = dirname(__FILE__);
 
-my ($opt_old, $opt_new, $opt_file, $opt_comments);
+my ($opt_old, $opt_new, $opt_file, $opt_comments, $source_dir);
+$source_dir = 'src/';  # default to current directory
 GetOptions(
     "old=s" => \$opt_old,
     "new=s" => \$opt_new,
     "file=s" => \$opt_file,
     "comments" => \$opt_comments,
+    "source-dir=s" => \$source_dir,
 ) or die "Usage: $0 --old <old_name> --new <new_name> [--file <file_path>] [--comments]\n";
 
 die "Missing --old or --new\n" unless $opt_old && $opt_new;
@@ -34,37 +36,43 @@ if ($opt_old !~ /^[A-Za-z_][A-Za-z0-9_]*$/) {
 if ($opt_new !~ /^[A-Za-z_][A-Za-z0-9_]*$/) {
     die "New function name '$opt_new' contains special characters. Aborting.\n";
 }
+if (defined $source_dir && !-d $source_dir) {
+    die "Source directory '$source_dir' does not exist.\n";
+}
 
 # Find files with function definition
-my $def_pattern = "fn\\s+$opt_old\\s*\\(";
-my $rg_cmd = "rg --type rust -l '$def_pattern'";
+my $def_pattern = '^\s*(?:pub(?:\s*\([^)]+\))?\s+)?(?:async\s+)?fn\s+'.$opt_old.'\s*\(';
+my $rg_cmd = 'rg --type rust -l "'.$def_pattern.'"';
 my $output = qx($rg_cmd);
 my @def_files = grep { $_ } split /\n/, $output;
 print STDERR "Found function '$opt_old' in files: " . join(", ", @def_files) . "\n";
+my @files_to_process;
 
 if (@def_files > 1 and not defined $opt_file) {
     die "Ambiguous function '$opt_old' found in multiple files: " . join(", ", @def_files) . "\nPlease specify --file <path>\n";
 }
 
 if (defined $opt_file) {
-    if (not -f $opt_file) {
-        die "Specified file '$opt_file' does not exist.\n";
-    }
-    my $found = 0;
-    foreach my $f (@def_files) {
-        if ($f eq $opt_file) {
-            $found = 1;
-            last;
-        }
-    }
-    die "Function '$opt_old' not defined in '$opt_file'\n" unless $found;
+    die "Specified file '$opt_file' does not exist.\n" unless -f $opt_file;
+    my $cmd = "rg --type rust -l '$def_pattern' -- $opt_file";
+    my $res = qx{$cmd};
+    die "Definition of '$opt_old' not found in $opt_file\n" unless $res =~ /\S/;
+    @def_files = ($opt_file);
 }
 
-# Find all .rs files
+my $found_def = 0;
+foreach my $f (@def_files) {
+    my $cmd = qq{rg --type rust -l -F -- 'fn $opt_old' '$f'};
+    my $res = qx{$cmd};
+    if ($res =~ /\S/) {
+        $found_def = 1;
+        last;
+    }
+}
+die "No definition of '$opt_old' found in target file(s). Aborting.\n" unless $found_def;
+
 my @rs_files;
-find(sub {
-    push @rs_files, $File::Find::name if /\.rs$/ && -f;
-}, 'src/');
+find(sub { push @rs_files, $File::Find::name if /\.rs$/ && -f;}, 'src/');
 
 # For each .rs file, perform the rename
 foreach my $file (@rs_files) {
@@ -249,7 +257,25 @@ foreach my $file (@rs_files) {
     foreach my $span (@spans) {
         my $text = substr($content, $span->{start}, $span->{end} - $span->{start});
         if ($span->{type} eq 'code') {
-            $text =~ s/(\b\Q$opt_old\E)(?=\s*\()/$opt_new/g;
+            if (defined $opt_file) {
+                # Method rename mode: only replace method-style calls + the definition itself
+                # 1. The definition (fn old_name( )
+                $text =~ s/\bfn\s+\Q$opt_old\E\b\s*/fn $opt_new /g if $opt_file eq $file;
+
+                # 2. Method calls: .old_name(   or ::old_name(
+                $text =~ s/([.:]\s*)\Q$opt_old\E(?=\s*\()/$1$opt_new/g;
+                print STDERR "Renamed method '$opt_old' to '$opt_new' in $file\n" if $text =~ /\b$opt_new\b/;
+
+                # Optional: also catch Self::old_name or Type::old_name more precisely
+                # (but the above usually catches most)
+            } else {
+                # Free function mode: replace bare old_name( calls + definition
+                # 1. Definition
+                $text =~ s/\bfn\s+\Q$opt_old\E\b\s*/fn $opt_new /g;
+
+                # 2. Bare calls (not after . or ::)
+                $text =~ s/(?<![.:]\s*)\Q$opt_old\E(?=\s*\()/$opt_new/g;
+            }
         } elsif ($span->{type} eq 'comment' && $opt_comments) {
             $text =~ s/\b\Q$opt_old\E\b/$opt_new/g;
         }
