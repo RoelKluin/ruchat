@@ -6,7 +6,7 @@ use tokio::io::AsyncWriteExt;
 ///
 /// This struct provides methods for reading from standard input and
 /// writing to standard output asynchronously.
-pub(super) struct Io {
+pub(crate) struct Io {
     stdin: std::io::Stdin,
     stdout: tokio::io::Stdout,
     stderr: tokio::io::Stderr,

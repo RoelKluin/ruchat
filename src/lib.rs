@@ -1,17 +1,19 @@
-mod agent;
 mod chroma;
 mod cli;
+mod core;
 mod embed;
-mod io;
 mod ollama;
 mod prompt;
+mod tui;
 mod utils;
 
 use args::Args;
 use clap::Parser;
 pub(crate) use cli::{args, options, serde};
+pub(crate) use core::{agent, chat::tree};
 use error::Result;
 pub(crate) use ollama::generate_oneshot;
+pub(crate) use tui::io;
 pub(crate) use utils::error;
 
 /// Runs the RuChat application.

@@ -1,14 +1,13 @@
 mod bufcursor;
-mod conversation_tree;
 mod event_result;
 mod history;
 mod pos;
+use crate::core::chat::tree::ConversationTree;
 use crate::error::{Result, RuChatError};
 use crate::ollama::chat::event_result::EventResult;
 use crate::ollama::OllamaArgs;
 use bufcursor::BufCursor;
 use clap::{ArgAction, Parser};
-use conversation_tree::ConversationTree;
 use crossterm::{
     cursor::{Hide, MoveTo, Show},
     event::{self, DisableMouseCapture, EnableMouseCapture},
@@ -91,7 +90,6 @@ impl ChatArgs {
         stdout.execute(EnterAlternateScreen)?;
         stdout.execute(EnableMouseCapture)?;
 
-        let history = Arc::new(Mutex::new(vec![]));
         let mut clear_option = Some(ClearType::All);
         loop {
             // Clear the screen
@@ -128,17 +126,27 @@ impl ChatArgs {
                 Ok(EventResult::Quit) => break,
                 Ok(EventResult::Submit) => {
                     let request = get_chat_message_request(model.clone(), bufcursor.read());
-                    let question_id = match chat_history.lock().unwrap().question(bufcursor.drain())
-                    {
-                        Ok(id) => id,
-                        Err(e) => {
-                            display_err(debug_level > 0, &mut stdout, "Error (qid)", x, y, e);
-                            continue;
-                        }
-                    };
+                    let mut history = chat_history.lock().unwrap();
+                    let question_id = history.add_question(bufcursor.drain());
 
                     let chat_hist_clone = chat_history.clone();
-                    let hist = history.clone();
+                    let chat_messages: Vec<ChatMessage> = history
+                        .get_current_question_ids()
+                        .iter()
+                        .rev()
+                        .flat_map(|&question_id| {
+                            let answer_id = history.get_current_answer_id(question_id);
+                            if let Some((question, answer)) = history.get_qa(question_id, answer_id)
+                            {
+                                std::iter::once(ChatMessage::user(question.join("\n"))).chain(
+                                    std::iter::once(ChatMessage::assistant(answer.join("\n"))),
+                                )
+                            } else {
+                                panic!("No answer found for question_id {question_id} and answer_id {answer_id}");
+                            }
+                        })
+                        .collect();
+                    let hist: Arc<std::sync::Mutex<_>> = Arc::new(Mutex::new(chat_messages));
                     let ol = ollama.clone();
 
                     // Start the spinner in a separate task
@@ -289,7 +297,7 @@ fn redraw_screen(
     // Add the current question to the text view
     let mut text_view: Vec<String> = bufcursor.view_buffer();
 
-    let it = chat_history.get_current_question_ids().iter().rev();
+    let it = chat_history.get_current_question_ids();
     let cp = bufcursor.get_cursor(); // Cursor position editing the question
                                      // the last line is a status line. The second to last line is the last line of the question
     text_view.push("Ask your question (Alt+Enter to send, Esc to quit):".to_string());
@@ -298,7 +306,7 @@ fn redraw_screen(
     stdout.execute(Clear(ClearType::All))?;
     stdout.execute(MoveTo(0, 0))?;
 
-    for &question_id in it {
+    for &question_id in it.iter().rev() {
         let answer_id = chat_history.get_current_answer_id(question_id);
         if let Some((mut question, mut response)) = chat_history.get_qa(question_id, answer_id) {
             response.push(chat_history.get_answer_nr_of_total(answer_id) + "[Redo][Del]");

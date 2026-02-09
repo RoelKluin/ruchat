@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use crate::error::RuChatError;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 struct Answer {
@@ -24,7 +24,7 @@ struct Question {
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct ConversationTree {
+pub(crate) struct ConversationTree {
     questions: HashMap<usize, Question>,
     answers: HashMap<usize, Answer>,
     current_question_ids: Vec<usize>,
@@ -43,6 +43,9 @@ impl ConversationTree {
             next_question_id: 0,
             next_answer_id: 0,
         }
+    }
+    pub(crate) fn get_current_question_ids(&self) -> Vec<usize> {
+        self.current_question_ids.clone()
     }
 
     pub(crate) fn add_question(&mut self, question_text: Vec<String>) -> usize {
@@ -84,7 +87,10 @@ impl ConversationTree {
         question_id: usize,
         new_question_text: Vec<String>,
     ) -> Result<usize, RuChatError> {
-        let question = self.questions.get_mut(&question_id).ok_or(RuChatError::QuestionNotFound)?;
+        let question = self
+            .questions
+            .get_mut(&question_id)
+            .ok_or(RuChatError::QuestionNotFound)?;
 
         let new_question_id = self.next_question_id;
         let new_answer_id = self.next_answer_id;
@@ -114,7 +120,10 @@ impl ConversationTree {
         self.answers.insert(new_answer_id, new_answer);
 
         if let Some(parent_qid) = self.find_parent(question_id) {
-            let parent_question = self.questions.get_mut(&parent_qid).ok_or(RuChatError::QuestionNotFound)?;
+            let parent_question = self
+                .questions
+                .get_mut(&parent_qid)
+                .ok_or(RuChatError::QuestionNotFound)?;
             parent_question.children_question_ids.push(new_question_id);
         }
         self.current_question_ids[self.at_question] = new_question_id;
@@ -122,19 +131,35 @@ impl ConversationTree {
         Ok(new_question_id)
     }
 
-
-    pub(crate) fn answer(&mut self, question_id: usize, answer_text: Vec<String>) -> Result<(), RuChatError> {
-        let question = self.questions.get_mut(&question_id).ok_or(RuChatError::QuestionNotFound)?;
+    pub(crate) fn answer(
+        &mut self,
+        question_id: usize,
+        answer_text: Vec<String>,
+    ) -> Result<(), RuChatError> {
+        let question = self
+            .questions
+            .get_mut(&question_id)
+            .ok_or(RuChatError::QuestionNotFound)?;
         let answer_id = question.current_answer_id;
-        let answer = self.answers.get_mut(&answer_id).ok_or(RuChatError::AnswerNotFound)?;
+        let answer = self
+            .answers
+            .get_mut(&answer_id)
+            .ok_or(RuChatError::AnswerNotFound)?;
         answer.text = answer_text;
         answer.response_counter += 1;
         self.next_answer_id += 1;
         Ok(())
     }
 
-    pub(crate) fn add_answer(&mut self, question_id: usize, new_answer_text: Vec<String>) -> Result<(), RuChatError> {
-        let question = self.questions.get_mut(&question_id).ok_or(RuChatError::QuestionNotFound)?;
+    pub(crate) fn add_answer(
+        &mut self,
+        question_id: usize,
+        new_answer_text: Vec<String>,
+    ) -> Result<(), RuChatError> {
+        let question = self
+            .questions
+            .get_mut(&question_id)
+            .ok_or(RuChatError::QuestionNotFound)?;
         let new_answer_id = self.next_answer_id;
 
         let new_answer = Answer {
@@ -219,7 +244,9 @@ impl ConversationTree {
     }
 
     pub(crate) fn find_parent(&self, question_id: usize) -> Option<usize> {
-        self.questions.get(&question_id).and_then(|q| q.parent_question_id)
+        self.questions
+            .get(&question_id)
+            .and_then(|q| q.parent_question_id)
     }
 
     pub(crate) fn get_qa(
