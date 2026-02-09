@@ -1,8 +1,8 @@
-use crate::agent::Team;
 use crate::agent::worker::Agent;
-use crate::config::{load_manager, save_manager}; // We will add these
-use crate::ollama::ServerArgs;
+use crate::agent::Team;
 use crate::error::{Result, RuChatError};
+use crate::ollama::ServerArgs;
+use crate::serde::{load_manager, save_manager}; // We will add these
 use clap::{Parser, Subcommand};
 use ollama_rs::Ollama;
 use serde::{Deserialize, Serialize};

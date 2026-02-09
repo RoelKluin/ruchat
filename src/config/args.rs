@@ -21,7 +21,7 @@ use clap::{Parser, Subcommand};
 /// for the RuChat application. It uses the `clap` crate to parse and
 /// handle command-line input.
 #[derive(Parser, Debug, PartialEq)]
-pub(super) struct Args {
+pub(crate) struct Args {
     /// The subcommand to execute.
     #[command(subcommand)]
     command: Option<Commands>,
@@ -32,7 +32,7 @@ pub(super) struct Args {
 }
 
 impl Args {
-    pub(super) async fn handle_request(self) -> Result<()> {
+    pub(crate) async fn handle_request(self) -> Result<()> {
         let default = Commands::Pipe(AskArgs::default());
         if self.verbose {
             let command_line = std::env::args().collect::<Vec<String>>().join(" ");

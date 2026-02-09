@@ -4,14 +4,14 @@ use serde_json::Value;
 use std::path::Path;
 use tokio::fs;
 
-pub(super) async fn read_config_file(config_path: &str) -> Result<Value, RuChatError> {
+pub(crate) async fn read_config_file(config_path: &str) -> Result<Value, RuChatError> {
     let content = fs::read_to_string(config_path).await?;
     let content = serde_json::from_str(&content)?;
     Ok(content)
 }
 
 // New
-pub(super) async fn load_manager(path: &str) -> Result<Manager, RuChatError> {
+pub(crate) async fn load_manager(path: &str) -> Result<Manager, RuChatError> {
     if !Path::new(path).exists() {
         return Ok(Manager::default());
     }
@@ -20,7 +20,7 @@ pub(super) async fn load_manager(path: &str) -> Result<Manager, RuChatError> {
     Ok(manager)
 }
 
-pub(super) async fn save_manager(path: &str, manager: &Manager) -> Result<(), RuChatError> {
+pub(crate) async fn save_manager(path: &str, manager: &Manager) -> Result<(), RuChatError> {
     let content = serde_json::to_string_pretty(manager)?;
     fs::write(path, content).await?;
     Ok(())
