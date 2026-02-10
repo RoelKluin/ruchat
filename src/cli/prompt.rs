@@ -1,9 +1,9 @@
-use clap::Parser;
 use crate::error::{Result, RuChatError};
-use std::fs;
-use std::process::Command;
+use clap::Parser;
 use clap::ValueEnum;
 use std::collections::HashSet;
+use std::fs;
+use std::process::Command;
 
 #[derive(ValueEnum, Clone, Debug, PartialEq, Default)]
 enum StdCapture {
@@ -24,7 +24,7 @@ impl StdCapture {
 }
 
 #[derive(Parser, Debug, Clone, Default, PartialEq)]
-pub(super) struct PromptArgs {
+pub(crate) struct PromptArgs {
     /// Prompt to use.
     #[arg(short, long)]
     prompt: Option<String>,
@@ -58,10 +58,16 @@ fn andify_list<S: AsRef<str>>(what: &str, items: &[S], q: &str) -> String {
         0 => String::new(),
         1 => format!("{what} {q}{}{q}", items[0].as_ref()),
         _ => {
-            let all_but_last = items[..items.len() - 1].iter().map(|s| s.as_ref()).collect::<Vec<_>>();
+            let all_but_last = items[..items.len() - 1]
+                .iter()
+                .map(|s| s.as_ref())
+                .collect::<Vec<_>>();
             let last = items[items.len() - 1].as_ref();
             let concat = format!("{q}, {q}");
-            format!("{what}s {q}{}{q} and {q}{last}{q}", all_but_last.join(concat.as_str()))
+            format!(
+                "{what}s {q}{}{q} and {q}{last}{q}",
+                all_but_last.join(concat.as_str())
+            )
         }
     }
 }
@@ -69,10 +75,11 @@ fn andify_list<S: AsRef<str>>(what: &str, items: &[S], q: &str) -> String {
 impl PromptArgs {
     fn promptless(&self, files: &str) -> Result<String> {
         let allowed_exit_codes: HashSet<i32> = HashSet::from_iter(
-            self.allowed_exit_codes.split(',')
+            self.allowed_exit_codes
+                .split(',')
                 .map(|code| code.trim().parse::<i32>())
                 .collect::<std::result::Result<Vec<_>, _>>()
-                .map_err(|e| RuChatError::InvalidExitCodeFormat(format!("{e}")))?
+                .map_err(|e| RuChatError::InvalidExitCodeFormat(format!("{e}")))?,
         );
         let v = files.split(',').map(str::trim).collect::<Vec<_>>();
         let files_str = andify_list("the file", &v, "`");
@@ -88,10 +95,18 @@ impl PromptArgs {
                     combined_content.push_str("\n```\n");
                 }
                 Ok(combined_content)
-            },
+            }
             ref cmd => {
-                let args = self.args.iter().map(String::as_str).collect::<Vec<_>>().join(" ");
-                let mut combined_content = format!("The `{cmd} {args}` {} for {files_str}:\n", self.capture.as_str());
+                let args = self
+                    .args
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let mut combined_content = format!(
+                    "The `{cmd} {args}` {} for {files_str}:\n",
+                    self.capture.as_str()
+                );
 
                 let mut command = Command::new(cmd);
                 let mut errors = Vec::new();
@@ -109,13 +124,17 @@ impl PromptArgs {
                         }
                     }
                     if (self.capture == StdCapture::Stderr || self.capture == StdCapture::Both)
-                        && !output.stderr.is_empty() {
-                            combined_content.push_str("Stderr:\n```\n");
-                            combined_content.push_str(&String::from_utf8_lossy(&output.stderr));
-                            combined_content.push_str("\n```\n");
-                        }
+                        && !output.stderr.is_empty()
+                    {
+                        combined_content.push_str("Stderr:\n```\n");
+                        combined_content.push_str(&String::from_utf8_lossy(&output.stderr));
+                        combined_content.push_str("\n```\n");
+                    }
                     if allowed_exit_codes.contains(&status.code().unwrap_or(-1)) {
-                        combined_content.push_str(&format!("`{cmd} {args} {file}` exited with status code {}.\n", status.code().unwrap_or(-1)));
+                        combined_content.push_str(&format!(
+                            "`{cmd} {args} {file}` exited with status code {}.\n",
+                            status.code().unwrap_or(-1)
+                        ));
                     } else {
                         errors.push(RuChatError::CommandExitError(
                             cmd.to_string(),
@@ -126,28 +145,40 @@ impl PromptArgs {
                 if !errors.is_empty() {
                     Err(RuChatError::MultipleCommandExitErrors(andify_list(
                         "the command",
-                        &errors.iter().map(|e| match e {
-                            RuChatError::CommandExitError(cmd, code) => format!("`{cmd}` exited with code {code}"),
-                            _ => "Unknown error".to_string(),
-                        }).collect::<Vec<_>>(),
-                        "`"
+                        &errors
+                            .iter()
+                            .map(|e| match e {
+                                RuChatError::CommandExitError(cmd, code) => {
+                                    format!("`{cmd}` exited with code {code}")
+                                }
+                                _ => "Unknown error".to_string(),
+                            })
+                            .collect::<Vec<_>>(),
+                        "`",
                     )))
                 } else {
                     Ok(combined_content)
                 }
             }
-
         }
     }
 
-    pub(super) fn get_prompt(&self) -> Result<String> {
-        if self.prompt.is_some() && self.positional_prompt.is_some() && self.prompt != self.positional_prompt {
+    pub(crate) fn get_prompt(&self) -> Result<String> {
+        if self.prompt.is_some()
+            && self.positional_prompt.is_some()
+            && self.prompt != self.positional_prompt
+        {
             Err(RuChatError::ConflictingPrompts)
         } else {
             match self.prompt.as_ref().or(self.positional_prompt.as_ref()) {
                 Some(p) if self.files.is_none() => Ok(p.to_string()),
-                Some(p) => self.promptless(self.files.as_ref().unwrap()).map(|s| format!("{p}\n{s}")),
-                None => self.files.as_ref().map_or(Err(RuChatError::NoPromptProvided), |f| self.promptless(f))
+                Some(p) => self
+                    .promptless(self.files.as_ref().unwrap())
+                    .map(|s| format!("{p}\n{s}")),
+                None => self
+                    .files
+                    .as_ref()
+                    .map_or(Err(RuChatError::NoPromptProvided), |f| self.promptless(f)),
             }
         }
     }

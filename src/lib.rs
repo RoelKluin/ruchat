@@ -1,15 +1,15 @@
 mod cli;
 mod core;
-mod prompt;
 mod providers;
 mod tui;
 mod utils;
+
+pub use error::{Result, RuChatError};
 
 use args::Args;
 use clap::Parser;
 pub(crate) use cli::{args, options, serde};
 pub(crate) use core::{agent, chat::tree};
-use error::Result;
 pub(crate) use providers::llm::ollama;
 pub(crate) use providers::vector::chroma;
 pub(crate) use tui::io;

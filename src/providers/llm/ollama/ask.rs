@@ -1,7 +1,7 @@
+use crate::cli::prompt::PromptArgs;
 use crate::error::{Result, RuChatError};
 use crate::io::Io;
 use crate::ollama::OllamaArgs;
-use crate::prompt::PromptArgs;
 use clap::Parser;
 use ollama_rs::{generation::completion::request::GenerationRequest, models::ModelOptions, Ollama};
 use tokio_stream::StreamExt;
