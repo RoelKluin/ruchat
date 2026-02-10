@@ -2,8 +2,8 @@ mod chroma;
 mod cli;
 mod core;
 mod embed;
-mod ollama;
 mod prompt;
+mod providers;
 mod tui;
 mod utils;
 
@@ -12,7 +12,7 @@ use clap::Parser;
 pub(crate) use cli::{args, options, serde};
 pub(crate) use core::{agent, chat::tree};
 use error::Result;
-pub(crate) use ollama::generate_oneshot;
+pub(crate) use providers::llm::ollama;
 pub(crate) use tui::io;
 pub(crate) use utils::error;
 
