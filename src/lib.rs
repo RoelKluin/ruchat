@@ -1,4 +1,3 @@
-mod chroma;
 mod cli;
 mod core;
 mod embed;
@@ -13,6 +12,7 @@ pub(crate) use cli::{args, options, serde};
 pub(crate) use core::{agent, chat::tree};
 use error::Result;
 pub(crate) use providers::llm::ollama;
+pub(crate) use providers::vector::chroma;
 pub(crate) use tui::io;
 pub(crate) use utils::error;
 
