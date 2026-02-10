@@ -58,6 +58,33 @@ impl ChatArgs {
         terminal::disable_raw_mode()?;
         Ok(())
     }
+    fn prepare_chat_message_request(
+        &self,
+        bufcursor: &mut BufCursor,
+        chat_history: Arc<Mutex<ConversationTree>>,
+    ) -> Result<(usize, Vec<ChatMessage>, Arc<Mutex<ConversationTree>>)> {
+        let mut history = chat_history.lock().unwrap();
+        let question_id = history.add_question(bufcursor.drain());
+
+        let chat_messages = history
+            .get_current_question_ids()
+            .iter()
+            .rev()
+            .flat_map(|&qid| {
+                let aid = history.get_current_answer_id(qid);
+                match history.get_qa(qid, aid) {
+                    Some((question, answer)) => {
+                        vec![
+                            Ok(ChatMessage::user(question.join("\n"))),
+                            Ok(ChatMessage::assistant(answer.join("\n"))),
+                        ]
+                    }
+                    None => vec![Err(RuChatError::HistoryError(qid, aid))],
+                }
+            })
+            .collect::<Result<Vec<ChatMessage>>>()?;
+        Ok((question_id, chat_messages, chat_history.clone()))
+    }
     /// Runs the chat session in raw mode.
     ///
     /// This function sets up the chat session in raw mode, allowing the user
@@ -126,26 +153,9 @@ impl ChatArgs {
                 Ok(EventResult::Quit) => break,
                 Ok(EventResult::Submit) => {
                     let request = get_chat_message_request(model.clone(), bufcursor.read());
-                    let mut history = chat_history.lock().unwrap();
-                    let question_id = history.add_question(bufcursor.drain());
+                    let (question_id, chat_messages, chat_hist_clone) =
+                        self.prepare_chat_message_request(&mut bufcursor, chat_history.clone())?;
 
-                    let chat_hist_clone = chat_history.clone();
-                    let chat_messages: Vec<ChatMessage> = history
-                        .get_current_question_ids()
-                        .iter()
-                        .rev()
-                        .flat_map(|&question_id| {
-                            let answer_id = history.get_current_answer_id(question_id);
-                            if let Some((question, answer)) = history.get_qa(question_id, answer_id)
-                            {
-                                std::iter::once(ChatMessage::user(question.join("\n"))).chain(
-                                    std::iter::once(ChatMessage::assistant(answer.join("\n"))),
-                                )
-                            } else {
-                                panic!("No answer found for question_id {question_id} and answer_id {answer_id}");
-                            }
-                        })
-                        .collect();
                     let hist: Arc<std::sync::Mutex<_>> = Arc::new(Mutex::new(chat_messages));
                     let ol = ollama.clone();
 

@@ -37,12 +37,10 @@ impl MetadataArgs {
                     println!("-----------------------------");
                 }
             }
+        } else if let Some(map) = collection.metadata() {
+            println!("{}", serde_json::to_string_pretty(&map)?);
         } else {
-            if let Some(map) = collection.metadata() {
-                println!("{}", serde_json::to_string_pretty(&map)?);
-            } else {
-                println!("No metadata found for the collection.");
-            }
+            println!("No metadata found for the collection.");
         }
         Ok(())
     }

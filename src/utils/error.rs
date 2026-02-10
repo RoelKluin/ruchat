@@ -118,6 +118,10 @@ pub enum RuChatError {
     /// Error when no collection is specified.
     #[error("No collection specified. See `ruchat chroma-ls` for available collections.")]
     NoCollectionSpecified,
+
+    /// Error when a collection is not found.
+    #[error("No answer found for question_id {0} and answer_id {1}")]
+    HistoryError(usize, usize),
 }
 
 pub type Result<T> = std::result::Result<T, RuChatError>;

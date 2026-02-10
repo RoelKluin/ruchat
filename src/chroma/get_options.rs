@@ -28,28 +28,25 @@ pub struct ChromaGetOptions {
 
 impl ChromaGetOptions {
     pub fn to_chroma_get_options(&self) -> Result<Option<GetOptions>> {
-        let where_metadata = match parse_metadata(&self.where_metadata)? {
-            Some(map) => Some(Value::Object(map)),
-            None => None,
-        };
-        let where_document = match &self.where_document {
-            Some(doc_str) => Some(Value::String(doc_str.clone())),
-            None => None,
-        };
-        let include = if self.include.is_empty() {
-            None
-        } else {
-            Some(self.include.clone())
-        };
         if self.ids.is_empty()
-            && where_metadata.is_none()
-            && where_document.is_none()
-            && include.is_none()
+            && self.where_metadata.is_none()
+            && self.where_document.is_none()
+            && self.include.is_empty()
             && self.limit.is_none()
             && self.offset.is_none()
         {
             return Ok(None);
         }
+        let where_metadata = parse_metadata(&self.where_metadata)?.map(Value::Object);
+        let where_document = self
+            .where_document
+            .as_ref()
+            .map(|doc_str| Value::String(doc_str.clone()));
+        let include = if self.include.is_empty() {
+            None
+        } else {
+            Some(self.include.clone())
+        };
         Ok(Some(GetOptions {
             ids: self.ids.clone(),
             where_metadata,
