@@ -10,7 +10,7 @@ use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
 use uuid::Builder;
 
 #[derive(Parser, Debug, Clone, PartialEq)]
-pub(super) struct EmbedPromptArgs {
+pub(crate) struct EmbedPromptArgs {
     prompt: String,
 
     #[command(flatten)]
@@ -18,7 +18,7 @@ pub(super) struct EmbedPromptArgs {
 }
 
 impl EmbedPromptArgs {
-    pub(super) async fn embed(self) -> Result<(), RuChatError> {
+    pub(crate) async fn embed(self) -> Result<(), RuChatError> {
         self.embed_args.embed(self.prompt).await
     }
 }
@@ -29,7 +29,7 @@ impl EmbedPromptArgs {
 /// operation in a Chroma database, including model details, prompt,
 /// and database connection information.
 #[derive(Parser, Debug, Clone, PartialEq)]
-pub(super) struct EmbedArgs {
+pub(crate) struct EmbedArgs {
     /// Chroma update metadata, comma separated key:value pairs.
     #[arg(short, long)]
     metadata: Option<String>,
@@ -61,7 +61,7 @@ impl EmbedArgs {
     /// # Returns
     ///
     /// A `Result` indicating success or failure.
-    pub(super) async fn embed(&self, prompt: String) -> Result<(), RuChatError> {
+    pub(crate) async fn embed(&self, prompt: String) -> Result<(), RuChatError> {
         let (ollama, models) = self.ollama_args.init("all-minilm:l6-v2").await?;
         let model = models.last().unwrap().to_string();
         if model != "all-minilm:l6-v2" && !model.contains("embed") {

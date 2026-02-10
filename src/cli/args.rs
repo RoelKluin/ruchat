@@ -5,7 +5,7 @@ use crate::chroma::ls::{chroma_ls, ChromaLsArgs};
 use crate::chroma::query::QueryArgs;
 use crate::chroma::similarity::SimilarityArgs;
 use crate::chroma::MetadataArgs;
-use crate::embed::EmbedPromptArgs;
+use crate::core::embed::EmbedPromptArgs;
 use crate::error::Result;
 use crate::ollama::ask::AskArgs;
 use crate::ollama::chat::ChatArgs;

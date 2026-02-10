@@ -1,5 +1,5 @@
 use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs};
-use crate::embed::EmbedArgs;
+use crate::core::embed::EmbedArgs;
 use crate::error::RuChatError;
 use crate::io::Io;
 use crate::ollama::OllamaArgs;

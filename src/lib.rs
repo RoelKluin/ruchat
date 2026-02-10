@@ -1,6 +1,5 @@
 mod cli;
 mod core;
-mod embed;
 mod prompt;
 mod providers;
 mod tui;
