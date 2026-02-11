@@ -9,7 +9,7 @@ while read -r lang extension comment_re; do
     #comment["$lang"]="$comment_re"
 done < <(cat etc/language_specifics.txt)
 
-git ls-files | grep -v '^ruchat$' | xargs ctags
+git ls-files | grep -v '^ruchat$' | ctags -L -
 declare -A tags
 s="[:space:]"
 S="[^$s]"
@@ -60,7 +60,7 @@ else
   declare -a files
   while read -r f; do
     [[ -n "${ext[".${f##*.}"]}" ]] && files+=("$f")
-  done < <(git ls-files | grep -v '^ruchat$')
+  done < <(git ls-files | grep -v '^ruchat$' | tac)
 fi
 
 
@@ -70,8 +70,8 @@ for f in "${files[@]}"; do
     for extension in "${!ext[@]}"; do
         if [[ $f == *"$extension" ]]; then
             lang="${ext[$extension]}"
-            metadata_json="$(if ! jq -n \
-                    --argjson prev "$metadata_json" \
+            new_json="$(if ! jq -n \
+                --argjson prev "$metadata_json" \
                 --arg f "$f" \
                 --arg lang "$lang" \
                 '$prev + {
@@ -80,10 +80,11 @@ for f in "${files[@]}"; do
                 }'; then
                 echo "Error building base metadata JSON for $f" >&2
             fi)"
-            [ -z "$metadata_json" ] && continue
+            [ -n "$new_json" ] && metadata_json="$new_json"
 
             # Process each matching line from tags file
-            while IFS='\r' read -r var ex_cmd kind; do
+            while IFS=$'\a' read -r var ex_cmd kind; do
+                echo "Processing tag: var='$var', ex_cmd='$ex_cmd', kind='$kind' for file '$f'" >&2
                 # Trim & normalize
                 var="${var//[[:space:]]/}"
                 [[ -z "$var" ]] && continue
@@ -97,7 +98,7 @@ for f in "${files[@]}"; do
                 }
 
                 lang_kind="${tags[$lang:${kind}]:-$kind}"
-                metadata_json="$(if ! jq -n \
+                new_json="$(if ! jq -n \
                     --argjson prev "$metadata_json" \
                     --arg kindKey "${var}.kind" \
                     --arg kind "$lang_kind" \
@@ -106,7 +107,7 @@ for f in "${files[@]}"; do
                     }'; then
                     echo "Error adding kind to metadata JSON for $f" >&2
                 fi)"
-                [ -z "$metadata_json" ] && continue
+                [ -n "$new_json" ] && metadata_json="$new_json"
 
                 # Build tags object
                 if [[ -n "$tag_fields" ]]; then
@@ -116,33 +117,35 @@ for f in "${files[@]}"; do
                         tkey="${tkey//[[:space:]]/}"
                         tval="${tval//[[:space:]]/}"
                         [[ -z $tkey || -z $tval ]] && continue
-                        metadata_json="$(if ! jq -n \
+                        new_json="$(if ! jq -n \
                             --argjson prev "$metadata_json" \
                             --arg k "${var}.$tkey" \
                             --arg v "$tval" \
                             '$prev + {($k): $v}'; then
                             echo "Error adding tag $tkey to metadata JSON for $f" >&2
                         fi)"
-                        [ -z "$metadata_json" ] && continue
+                        [ -n "$new_json" ] && metadata_json="$new_json"
                     done
                 fi
                 start=""
                 end=""
                 # Determine type & clean value
-                if [[ $ex_cmd =~ ^/.*/$ ]]; then
+                if [[ $ex_cmd =~ ^\/.*\/$ ]]; then
                     # XXX: still Uncertain about these: '.?|' certain about excluding '+{}()\\'
-                    ex_cmd="/^$(echo "${ex_cmd:2:-2}" | sed -r 's/([][*^$\/])/\\\1/g')$/"
-                    start="$(sed -n "${ex_cmd}{=;q}" "$f")"
+                    # ex_cmd="/^$(echo "${ex_cmd:2:-2}" | sed -r 's/([][*^$\/&])/\\\1/g')$/"
+                    sed_re=$(printf '%s\n' "$ex_cmd" | sed -E 's#^([/?])(.*)\1;?$#/\2/#')
+                    echo "Searching for pattern '$sed_re' in file '$f' to determine line number for tag '$var'" >&2
+                    start="$(sed -n "${sed_re}{=;q}" "$f")"
                     end="$start"
                     # FIXME: improve per lang/kind handling here:
-                    if [[ "$lang:$lang_kind" =~ ^Rust:(function|method|implementation|macro|module|struct|enum)$ ]] || \
-                            [[ "$lang:$lang_kind" =~ ^Sh:(function|script|heredoc)$ ]] || \
+                    if [[ "$lang:$lang_kind" =~ ^Rust:([f]unction|method|implementation|macro|module|struct|enum)$ ]] || \
+                            [[ "$lang:$lang_kind" =~ ^Sh:([f]unction|script|heredoc)$ ]] || \
                             [[ "$lang:$lang_kind" =~ ^TOML:(arraytable|table|key)$ ]] || \
                             [[ "$lang:$lang_kind" == "Markdown:(chapter|section|subsection|subsubsection|l4subsection|l5subsection|footnote|hashtag)" ]]; then
                         # For these kinds, try to find the closing brace
                         ex_end_cmd=$(echo "$ex_cmd" | sed -E -n 's~(/\^[ \t]*).*$~\1[^[:space:]].*$/~p')
                         if [[ -n "$ex_end_cmd" ]]; then
-                            end=$(sed -n "${ex_cmd},${ex_end_cmd}{${ex_cmd}b;${ex_end_cmd}{=;q}}" "$f")
+                            end=$(sed -n "${sed_re},${ex_end_cmd}{${sed_re}b;${ex_end_cmd}{=;q}}" "$f")
                             [[ -z "$end" ]] && end="$start"
                         fi
                     fi
@@ -150,8 +153,8 @@ for f in "${files[@]}"; do
                     start="$ex_cmd"
                     end="$start"
                     # FIXME: improve per lang/kind handling here:
-                    if [[ "$lang:$lang_kind" =~ ^Rust:(function|method|implementation|macro|module|struct|enum)$ ]] || \
-                            [[ "$lang:$lang_kind" =~ ^Sh:function$ ]]; then
+                    if [[ "$lang:$lang_kind" =~ ^Rust:([f]unction|method|implementation|macro|module|struct|enum)$ ]] || \
+                            [[ "$lang:$lang_kind" =~ ^Sh:[f]unction$ ]]; then
                         # For these kinds, try to find the closing brace
                         total_lines=$(wc -l < "$f")
                         brace_count=0
@@ -169,9 +172,9 @@ for f in "${files[@]}"; do
                     fi
                 fi
                 # grep -Ev "^[^:]+:\d+:\s+${comment[$lang]}"
-                references="$(rg --no-heading -n '(^|\W)FileReadError(\W|$)' | cut -d: -f1,2 | 
+                references="$(rg --color=never --no-heading -n "(^|\W)${var}(\W|$)" | cut -d: -f1,2 | 
                     grep -v "^$f:$start$" | tr '\n' ',' | sed 's/,$//')"
-                metadata_json="$(if ! jq -n \
+                new_json="$(if ! jq -n \
                     --argjson prev "$metadata_json" \
                     --arg var     "$var" \
                     --arg call    "$references" \
@@ -180,7 +183,7 @@ for f in "${files[@]}"; do
                     }'; then
                     echo "Error adding call site to metadata JSON for $f" >&2
                 fi)"
-                [ -z "$metadata_json" ] && continue
+                [ -n "$new_json" ] && metadata_json="$new_json"
                 
                 if [[ -z "$start" ]]; then
                     echo "Warning: Could not determine start line for $var in $f with ex_cmd: $ex_cmd" >&2
@@ -188,7 +191,7 @@ for f in "${files[@]}"; do
                 fi
 
                 # Build one metadata object per item
-                metadata_json="$(if ! jq -n \
+                new_json="$(if ! jq -n \
                     --argjson prev "$metadata_json" \
                     --arg var     "$var" \
                     --arg start   "$start" \
@@ -199,8 +202,8 @@ for f in "${files[@]}"; do
                     }'; then
                     echo "Error adding line numbers to metadata JSON for $f" >&2
                 fi)"
-                [ -z "$metadata_json" ] && continue
-            done < <(sed -n -E "s~^($S+)\t$f\t((/.*\\\$/|[0-9]+)+)(;\"((\t$S+)*))?$~\1\r\2\r\5~p" tags)
+                [ -n "$new_json" ] && metadata_json="$new_json"
+            done < <(sed -n -E "s#^([^\t]+)\t$f\t((/.*/|[0-9]+)+)(;\"((\t[^\t]+)*))?$$#\1\a\2\a\5#p" tags)
         fi
     done
 
