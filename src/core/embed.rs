@@ -6,6 +6,7 @@ use chromadb::collection::CollectionEntries;
 use chromadb::embeddings::EmbeddingFunction;
 use clap::Parser;
 use log::{info, warn};
+use md5::{Digest, Md5};
 use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
 use uuid::Builder;
 
@@ -76,8 +77,9 @@ impl EmbedArgs {
                 .ok_or(RuChatError::EmptyPrompt)?
                 .to_string(),
         };
-        let digest = md5::compute(format!("{model}:{id}"));
-        let id = Builder::from_md5_bytes(digest.0)
+        let hasher = Md5::new_with_prefix(format!("{model}:{id}"));
+        let digest = hasher.finalize();
+        let id = Builder::from_md5_bytes(digest.into())
             .into_uuid()
             .hyphenated()
             .to_string();

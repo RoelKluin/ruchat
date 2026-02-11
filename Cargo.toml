@@ -8,22 +8,22 @@ repository = "https://github.com/RoelKluin/ruchat"
 version = "0.1.2"
 
 [dependencies]
-anyhow = "1.0.100"
-async-trait = "0.1.89"
-chromadb = "2.3.0"
-clap = { version = "4.5.54", features = ["derive"] }
-crossterm = "0.29.0"
-env_logger = "0.11.8"
-fs2 = "0.4.3"
-http = "1.4.0"
-log = "0.4.29"
-md5 = "0.8.0"
-ollama-rs = { version = "0.3.3", features = ["stream", "headers", "tool-implementations", "macros", "modelfile"] }
-reqwest = "0.13.1"
-schemars = "1.2.0"
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.149"
-thiserror = "2.0.17"
-tokio = { version = "1.49.0", features = ["full"] }
-tokio-stream = "0.1.18"
-uuid = "1.19.0"
+anyhow = "^1.0.100"
+async-trait = "^0.1.89"
+chromadb = "^2.3.0"
+clap = { version = "^4.5.54", features = ["derive"] }
+crossterm = "^0.29.0"
+env_logger = "^0.11.8"
+fs2 = "^0.4.3"
+http = "^1.4.0"
+log = "^0.4.29"
+md-5 = "^0.10.6"
+ollama-rs = { version = "^0.3.3", features = ["stream", "headers", "tool-implementations", "macros", "modelfile"] }
+reqwest = "^0.13.1"
+schemars = "^1.2.0"
+serde = { version = "^1.0.228", features = ["derive"] }
+serde_json = "^1.0.149"
+thiserror = "^2.0.17"
+tokio = { version = "^1.49.0", features = ["full"] }
+tokio-stream = "^0.1.18"
+uuid = "^1.19.0"
