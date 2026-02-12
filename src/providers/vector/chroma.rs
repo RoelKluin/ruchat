@@ -2,6 +2,7 @@ mod client;
 mod collection;
 pub(crate) mod create;
 pub(crate) mod delete;
+pub(crate) mod get;
 mod get_options;
 pub(crate) mod ls;
 mod metadata;

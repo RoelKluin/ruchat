@@ -1,18 +1,19 @@
 use crate::agent::manager::{Manager, ManagerArgs};
 use crate::chroma::create::ChromaCreateArgs;
 use crate::chroma::delete::{chroma_delete, ChromaDeleteArgs};
+use crate::chroma::get::GetArgs;
 use crate::chroma::ls::{chroma_ls, ChromaLsArgs};
 use crate::chroma::query::QueryArgs;
 use crate::chroma::similarity::SimilarityArgs;
 use crate::chroma::MetadataArgs;
 use crate::core::embed::EmbedPromptArgs;
-use crate::Result;
 use crate::ollama::ask::AskArgs;
 use crate::ollama::chat::ChatArgs;
 use crate::ollama::func::func;
 use crate::ollama::func::func_struct;
 use crate::ollama::OllamaArgs;
 use crate::ollama::ServerArgs;
+use crate::Result;
 use clap::{Parser, Subcommand};
 
 /// Main command line interface for RuChat.
@@ -49,6 +50,7 @@ impl Args {
             Commands::FuncStruct(args) => func_struct(args).await,
             Commands::Embed(args) => args.embed().await,
             Commands::Query(args) => args.query().await,
+            Commands::Get(args) => args.get().await,
             Commands::Similarity(args) => args.similarity_search().await,
             Commands::ChromaCreate(args) => args.create().await,
             Commands::ChromaLs(args) => chroma_ls(args).await,
@@ -86,6 +88,8 @@ pub(crate) enum Commands {
     Embed(EmbedPromptArgs),
     /// Query Chroma database.
     Query(QueryArgs),
+    /// Get from Chroma database.
+    Get(GetArgs),
     /// Find similar embeddings in Chroma database.
     Similarity(SimilarityArgs),
     /// Create Chroma database collections.
