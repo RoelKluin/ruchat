@@ -1,5 +1,5 @@
-use crate::agent::worker::Agent;
 use crate::agent::Team;
+use crate::agent::worker::Agent;
 use crate::error::{Result, RuChatError};
 use crate::ollama::ServerArgs;
 use crate::serde::{load_manager, save_manager}; // We will add these

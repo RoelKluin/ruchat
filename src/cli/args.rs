@@ -1,18 +1,18 @@
 use crate::agent::manager::{Manager, ManagerArgs};
+use crate::chroma::MetadataArgs;
 use crate::chroma::create::ChromaCreateArgs;
-use crate::chroma::delete::{chroma_delete, ChromaDeleteArgs};
-use crate::chroma::ls::{chroma_ls, ChromaLsArgs};
+use crate::chroma::delete::{ChromaDeleteArgs, chroma_delete};
+use crate::chroma::ls::{ChromaLsArgs, chroma_ls};
 use crate::chroma::query::QueryArgs;
 use crate::chroma::similarity::SimilarityArgs;
-use crate::chroma::MetadataArgs;
 use crate::core::embed::EmbedPromptArgs;
 use crate::error::Result;
+use crate::ollama::OllamaArgs;
+use crate::ollama::ServerArgs;
 use crate::ollama::ask::AskArgs;
 use crate::ollama::chat::ChatArgs;
 use crate::ollama::func::func;
 use crate::ollama::func::func_struct;
-use crate::ollama::OllamaArgs;
-use crate::ollama::ServerArgs;
 use clap::{Parser, Subcommand};
 
 /// Main command line interface for RuChat.

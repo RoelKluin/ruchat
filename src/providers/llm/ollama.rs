@@ -5,8 +5,8 @@ mod model;
 pub(super) mod server;
 use crate::error::Result;
 use clap::Parser;
-use ollama_rs::generation::completion::request::GenerationRequest;
 use ollama_rs::Ollama;
+use ollama_rs::generation::completion::request::GenerationRequest;
 
 pub(super) use model::ModelArgs;
 pub(crate) use server::ServerArgs;

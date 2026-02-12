@@ -2,7 +2,7 @@ use crate::error::{Result, RuChatError};
 use crate::options::get_options;
 use clap::Parser;
 use ollama_rs::generation::completion::request::GenerationRequest;
-use ollama_rs::{models::ModelOptions, Ollama};
+use ollama_rs::{Ollama, models::ModelOptions};
 
 #[derive(Parser, Debug, Clone, Default, PartialEq)]
 pub(crate) struct ModelArgs {

@@ -1,6 +1,6 @@
 use crate::error::{Result, RuChatError};
-use chromadb::collection::ChromaCollection;
 use chromadb::ChromaClient;
+use chromadb::collection::ChromaCollection;
 use clap::Parser;
 use serde_json::{Map, Value};
 

@@ -14,11 +14,9 @@ fn run_cargo_test() -> String {
 /// main function for RuChat
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    ruchat::run().await
-        .map_err(|e| {
-            eprintln!("Application error: {}", e);
-            e
-        })?;
+    ruchat::run().await.map_err(|e| {
+        eprintln!("Application error: {}", e);
+        e
+    })?;
     Ok(())
-
 }

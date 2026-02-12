@@ -3,7 +3,7 @@ use crate::error::{Result, RuChatError};
 use crate::io::Io;
 use crate::ollama::OllamaArgs;
 use clap::Parser;
-use ollama_rs::{generation::completion::request::GenerationRequest, models::ModelOptions, Ollama};
+use ollama_rs::{Ollama, generation::completion::request::GenerationRequest, models::ModelOptions};
 use tokio_stream::StreamExt;
 
 const DEFAULT_MODEL: &str = "qwen2.5vl:latest";

@@ -4,21 +4,21 @@ mod history;
 mod pos;
 use crate::core::chat::tree::ConversationTree;
 use crate::error::{Result, RuChatError};
-use crate::ollama::chat::event_result::EventResult;
 use crate::ollama::OllamaArgs;
+use crate::ollama::chat::event_result::EventResult;
 use bufcursor::BufCursor;
 use clap::{ArgAction, Parser};
 use crossterm::{
+    ExecutableCommand,
     cursor::{Hide, MoveTo, Show},
     event::{self, DisableMouseCapture, EnableMouseCapture},
     terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
-    ExecutableCommand,
 };
-use ollama_rs::generation::chat::{request::ChatMessageRequest, ChatMessage};
+use ollama_rs::generation::chat::{ChatMessage, request::ChatMessageRequest};
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 use tokio::task;
-use tokio::time::{sleep, timeout, Duration};
+use tokio::time::{Duration, sleep, timeout};
 use tokio_stream::StreamExt;
 
 /// Command-line arguments for interactive chat sessions with a model.
@@ -309,7 +309,7 @@ fn redraw_screen(
 
     let it = chat_history.get_current_question_ids();
     let cp = bufcursor.get_cursor(); // Cursor position editing the question
-                                     // the last line is a status line. The second to last line is the last line of the question
+    // the last line is a status line. The second to last line is the last line of the question
     text_view.push("Ask your question (Alt+Enter to send, Esc to quit):".to_string());
 
     // Clear the screen

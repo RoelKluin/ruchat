@@ -10,7 +10,7 @@ pub(crate) mod similarity;
 
 use crate::error::RuChatError;
 use anyhow::{Context, Result};
-use serde_json::{map::Map, Value};
+use serde_json::{Value, map::Map};
 use std::fs;
 use std::path::Path;
 

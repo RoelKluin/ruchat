@@ -1,6 +1,6 @@
 use anyhow::Result;
-use chromadb::client::{ChromaAuthMethod, ChromaClientOptions, ChromaTokenHeader};
 use chromadb::ChromaClient;
+use chromadb::client::{ChromaAuthMethod, ChromaClientOptions, ChromaTokenHeader};
 use clap::Parser;
 
 #[derive(Parser, Debug, Clone, PartialEq)]
