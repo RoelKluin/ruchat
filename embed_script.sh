@@ -206,5 +206,5 @@ for f in "${files[@]}"; do
         echo "No metadata extracted for $f (lang: $lang)" >&2
     fi
 
-    ./ruchat embed "${embed_args[@]}" "$f contents:\n\`\`\`${lang}\n$(cat "$f")\n\`\`\`" || echo -e "Error in metadata for $f?\n" "${embed_args[@]}" 1>&2
+    ./ruchat embed "${embed_args[@]}" "$(cat "$f")" || echo -e "Error in metadata for $f?\n" "${embed_args[@]}" 1>&2
 done
