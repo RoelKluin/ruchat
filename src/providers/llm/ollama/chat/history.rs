@@ -3,7 +3,7 @@ use crossterm::terminal::ClearType;
 use std::collections::VecDeque;
 
 #[derive(Clone, Debug)]
-pub enum EditKind {
+pub(crate) enum EditKind {
     InsertChar(char),
     DeleteChar(char),
     InsertNewline,
@@ -99,7 +99,7 @@ impl EditKind {
 }
 
 #[derive(Clone, Debug)]
-pub struct Edit {
+pub(crate) struct Edit {
     kind: EditKind,
     before: Pos,
     after: Pos,
@@ -132,7 +132,7 @@ impl Edit {
 }
 
 #[derive(Clone, Debug)]
-pub struct History {
+pub(crate) struct History {
     index: usize,
     max_items: usize,
     edits: VecDeque<Edit>,

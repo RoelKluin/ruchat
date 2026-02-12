@@ -4,7 +4,7 @@ use chromadb::client::{ChromaAuthMethod, ChromaClientOptions, ChromaTokenHeader}
 use clap::Parser;
 
 #[derive(Parser, Debug, Clone, PartialEq)]
-pub struct ChromaClientConfigArgs {
+pub(crate) struct ChromaClientConfigArgs {
     #[arg(short = 'C', long, default_value = "http://localhost:8000")]
     pub chroma_server: String,
     #[arg(short = 't', long)]

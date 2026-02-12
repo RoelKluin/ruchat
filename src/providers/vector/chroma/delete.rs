@@ -3,14 +3,14 @@ use crate::RuChatError;
 use clap::Parser;
 
 #[derive(Parser, Debug, Clone, PartialEq)]
-pub struct ChromaDeleteArgs {
+pub(crate) struct ChromaDeleteArgs {
     #[arg(short, long)]
     pub collection: String,
     #[command(flatten)]
     pub client_config: ChromaClientConfigArgs,
 }
 
-pub async fn chroma_delete(args: ChromaDeleteArgs) -> Result<(), RuChatError> {
+pub(crate) async fn chroma_delete(args: ChromaDeleteArgs) -> Result<(), RuChatError> {
     let client = args.client_config.create_client().await?;
 
     client.delete_collection(&args.collection).await?;

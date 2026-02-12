@@ -14,7 +14,7 @@ use tokio_stream::StreamExt;
 /// in a Chroma database, including model details, query parameters,
 /// and database connection information.
 #[derive(Parser, Debug, Clone, PartialEq)]
-pub struct QueryArgs {
+pub(crate) struct QueryArgs {
     /// The query string to search for in the database.
     #[arg(short, long)]
     query: String,

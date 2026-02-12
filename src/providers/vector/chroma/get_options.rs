@@ -5,7 +5,7 @@ use clap::Parser;
 use serde_json::Value;
 
 #[derive(Parser, Debug, Clone, PartialEq)]
-pub struct ChromaGetOptions {
+pub(crate) struct ChromaGetOptions {
     /// Common Chroma client configuration arguments
     #[arg(short, long)]
     pub ids: Vec<String>,

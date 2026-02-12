@@ -9,7 +9,7 @@ use clap::Parser;
 /// in a Chroma database, including the collection name, server address,
 /// database name, and an optional authentication token.
 #[derive(Parser, Debug, Clone, PartialEq)]
-pub struct ChromaLsArgs {
+pub(crate) struct ChromaLsArgs {
     #[command(flatten)]
     pub collection: ChromaCollectionConfigArgs,
 

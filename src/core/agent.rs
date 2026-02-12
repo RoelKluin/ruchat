@@ -1,5 +1,5 @@
-pub mod manager;
-pub mod team;
-pub mod worker;
+pub(crate) mod manager;
+pub(crate) mod team;
+pub(crate) mod worker;
 
-pub use team::Team;
+pub(crate) use team::Team;

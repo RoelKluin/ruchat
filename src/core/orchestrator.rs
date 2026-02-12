@@ -3,27 +3,27 @@ use crate::ui::orchestrator_ui::OrchestratorUI;
 use anyhow::Result;
 use std::process::Command;
 
-pub struct AgentConfig {
+pub(crate) struct AgentConfig {
     pub role: String,
     pub model: String,
     pub temperature: f32,
     pub init_prompt: String,
 }
 
-pub enum TaskType {
+pub(crate) enum TaskType {
     RustRefactor,
     GitBisect,
     ShellAutomation,
     DebugCore,
 }
 
-pub enum Validation {
+pub(crate) enum Validation {
     Success,
     Failure(String),
     Skip,
 }
 
-pub struct Orchestrator {
+pub(crate) struct Orchestrator {
     pub architect: Agent,
     pub worker: Agent,
     pub critic: Agent,

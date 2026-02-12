@@ -8,7 +8,7 @@ use ollama_rs::Ollama;
 use serde::{Deserialize, Serialize};
 
 #[derive(Parser, Debug, Clone, PartialEq)]
-pub struct ManagerArgs {
+pub(crate) struct ManagerArgs {
     /// Optional path to manager config file
     #[arg(short, long)]
     pub path: Option<String>,
@@ -21,7 +21,7 @@ pub struct ManagerArgs {
 }
 
 #[derive(Subcommand, Debug, Clone, PartialEq)]
-pub enum ManagerCommands {
+pub(crate) enum ManagerCommands {
     /// Initialize a new manager config
     Init,
     /// Run the active team
@@ -31,7 +31,7 @@ pub enum ManagerCommands {
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
-pub struct Manager {
+pub(crate) struct Manager {
     pub teams: Vec<Team>,
     pub active_team: usize,
 }

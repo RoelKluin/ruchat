@@ -1,5 +1,5 @@
 #[derive(Debug, Clone)]
-pub struct Pos {
+pub(crate) struct Pos {
     pub col: usize,
     pub row: usize,
     pub offset: usize,

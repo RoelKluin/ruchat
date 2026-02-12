@@ -9,7 +9,7 @@ use std::path::PathBuf;
 // Function pointers cannot be serialized.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "snake_case")]
-pub enum ProcessorType {
+pub(crate) enum ProcessorType {
     None,
     TrimWhitespace,
     JsonExtract,
@@ -17,7 +17,7 @@ pub enum ProcessorType {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct Agent {
+pub(crate) struct Agent {
     pub name: String,
     pub model: String,
     pub role: String, // System prompt component

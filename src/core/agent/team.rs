@@ -4,7 +4,7 @@ use ollama_rs::Ollama;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct Team {
+pub(crate) struct Team {
     pub name: String,
     pub goal: String,
     pub agents: Vec<Agent>,
