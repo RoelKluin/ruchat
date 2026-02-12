@@ -1,7 +1,7 @@
 use crate::chroma::ChromaClientConfigArgs;
 use crate::chroma::ChromaCollectionConfigArgs;
 use crate::chroma::get_options::ChromaGetOptions;
-use crate::error::Result;
+use crate::Result;
 use clap::Parser;
 
 #[derive(Parser, Debug, Clone, PartialEq)]

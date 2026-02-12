@@ -1,4 +1,4 @@
-use crate::error::RuChatError;
+use crate::RuChatError;
 use crate::ollama::chat::event_result::EventResult;
 use crate::ollama::chat::history::{Edit, EditKind, History};
 use crate::ollama::chat::pos::Pos;

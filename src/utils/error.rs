@@ -10,12 +10,15 @@ pub enum RuChatError {
     #[error("Model Error: {0}")]
     ModelError(String),
 
+    /// Error when the model name is invalid.
     #[error("Invalid model name: {0}")]
     InvalidModelName(String),
 
+    /// Error when the model is not found.
     #[error("Model not found: {0}")]
     ModelNotFound(String),
 
+    /// Error when no model is specified.
     #[error("No model specified")]
     NoModelSpecified,
 
@@ -124,6 +127,7 @@ pub enum RuChatError {
     HistoryError(usize, usize),
 }
 
+/// A type alias for `Result` that uses `RuChatError` as the error type.
 pub type Result<T> = std::result::Result<T, RuChatError>;
 
 #[cfg(test)]

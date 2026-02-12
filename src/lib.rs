@@ -4,7 +4,7 @@ mod providers;
 mod tui;
 mod utils;
 
-pub use error::{Result, RuChatError};
+pub use crate::utils::error::{Result, RuChatError};
 
 use args::Args;
 use clap::Parser;
@@ -13,7 +13,6 @@ pub(crate) use core::agent;
 pub(crate) use providers::llm::ollama;
 pub(crate) use providers::vector::chroma;
 pub(crate) use tui::io;
-pub(crate) use utils::error;
 
 /// Runs the RuChat application.
 ///

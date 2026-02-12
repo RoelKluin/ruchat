@@ -1,5 +1,5 @@
 use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs};
-use crate::error::RuChatError;
+use crate::RuChatError;
 use anyhow::Result;
 use clap::Parser;
 

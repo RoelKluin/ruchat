@@ -1,4 +1,4 @@
-use crate::error::{Result, RuChatError};
+use crate::{Result, RuChatError};
 use std::collections::HashMap;
 
 /// Represents an answer in the conversation tree.

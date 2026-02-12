@@ -1,4 +1,4 @@
-use crate::error::RuChatError;
+use crate::RuChatError;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]

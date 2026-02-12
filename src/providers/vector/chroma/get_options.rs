@@ -1,5 +1,5 @@
 use crate::chroma::parse_metadata;
-use crate::error::Result;
+use crate::Result;
 use chromadb::collection::GetOptions;
 use clap::Parser;
 use serde_json::Value;

@@ -1,4 +1,4 @@
-use crate::error::{Result, RuChatError};
+use crate::{Result, RuChatError};
 use clap::Parser;
 use clap::ValueEnum;
 use std::collections::HashSet;

@@ -3,7 +3,7 @@ pub(crate) mod chat;
 pub(crate) mod func;
 mod model;
 pub(super) mod server;
-use crate::error::Result;
+use crate::Result;
 use clap::Parser;
 use ollama_rs::Ollama;
 use ollama_rs::generation::completion::request::GenerationRequest;

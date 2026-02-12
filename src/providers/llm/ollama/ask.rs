@@ -1,5 +1,5 @@
 use crate::cli::prompt::PromptArgs;
-use crate::error::{Result, RuChatError};
+use crate::{Result, RuChatError};
 use crate::io::Io;
 use crate::ollama::OllamaArgs;
 use clap::Parser;

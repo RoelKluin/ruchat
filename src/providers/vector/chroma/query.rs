@@ -1,5 +1,5 @@
 use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs};
-use crate::error::RuChatError;
+use crate::RuChatError;
 use crate::io::Io;
 use crate::ollama::OllamaArgs;
 use anyhow::Result;

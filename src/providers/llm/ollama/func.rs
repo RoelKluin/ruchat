@@ -1,5 +1,5 @@
 mod strukt;
-use crate::error::Result;
+use crate::Result;
 use crate::io::Io;
 use crate::ollama::OllamaArgs;
 use ollama_rs::models::ModelOptions;

@@ -6,7 +6,7 @@ use crate::chroma::query::QueryArgs;
 use crate::chroma::similarity::SimilarityArgs;
 use crate::chroma::MetadataArgs;
 use crate::core::embed::EmbedPromptArgs;
-use crate::error::Result;
+use crate::Result;
 use crate::ollama::ask::AskArgs;
 use crate::ollama::chat::ChatArgs;
 use crate::ollama::func::func;

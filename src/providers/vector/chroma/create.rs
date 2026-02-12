@@ -1,6 +1,6 @@
 use crate::chroma::parse_metadata;
 use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs};
-use crate::error::Result;
+use crate::Result;
 use clap::Parser;
 
 /// Command-line arguments for creating data in a Chroma database.

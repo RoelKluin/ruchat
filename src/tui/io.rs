@@ -1,4 +1,4 @@
-use crate::error::RuChatError;
+use crate::RuChatError;
 use std::io::stdin;
 use tokio::io::AsyncWriteExt;
 

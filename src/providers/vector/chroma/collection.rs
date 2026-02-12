@@ -1,4 +1,4 @@
-use crate::error::{Result, RuChatError};
+use crate::{Result, RuChatError};
 use chromadb::ChromaClient;
 use chromadb::collection::ChromaCollection;
 use clap::Parser;

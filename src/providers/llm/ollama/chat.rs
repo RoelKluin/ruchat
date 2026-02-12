@@ -3,7 +3,7 @@ mod event_result;
 mod history;
 mod pos;
 use crate::core::chat::tree::ConversationTree;
-use crate::error::{Result, RuChatError};
+use crate::{Result, RuChatError};
 use crate::ollama::OllamaArgs;
 use crate::ollama::chat::event_result::EventResult;
 use bufcursor::BufCursor;

@@ -1,6 +1,6 @@
 use crate::chroma::parse_metadata;
 use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs};
-use crate::error::RuChatError;
+use crate::RuChatError;
 use crate::ollama::OllamaArgs;
 use anyhow::Result;
 use chromadb::collection::QueryOptions;
