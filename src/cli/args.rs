@@ -1,18 +1,18 @@
 use crate::agent::manager::{Manager, ManagerArgs};
-use crate::chroma::MetadataArgs;
 use crate::chroma::create::ChromaCreateArgs;
-use crate::chroma::delete::{ChromaDeleteArgs, chroma_delete};
-use crate::chroma::ls::{ChromaLsArgs, chroma_ls};
+use crate::chroma::delete::{chroma_delete, ChromaDeleteArgs};
+use crate::chroma::ls::{chroma_ls, ChromaLsArgs};
 use crate::chroma::query::QueryArgs;
 use crate::chroma::similarity::SimilarityArgs;
+use crate::chroma::MetadataArgs;
 use crate::core::embed::EmbedPromptArgs;
 use crate::error::Result;
-use crate::ollama::OllamaArgs;
-use crate::ollama::ServerArgs;
 use crate::ollama::ask::AskArgs;
 use crate::ollama::chat::ChatArgs;
 use crate::ollama::func::func;
 use crate::ollama::func::func_struct;
+use crate::ollama::OllamaArgs;
+use crate::ollama::ServerArgs;
 use clap::{Parser, Subcommand};
 
 /// Main command line interface for RuChat.
@@ -65,7 +65,7 @@ impl Args {
 /// by the RuChat application. Each variant corresponds to a specific
 /// operation or functionality.
 #[derive(Subcommand, Debug, Clone, PartialEq)]
-pub(super) enum Commands {
+pub(crate) enum Commands {
     /// Query language model using a prompt, you may include file context.
     Ask(AskArgs),
     /// Pipe markdown to language model separated by three hyphens/dashes, asterisks, or underscores.

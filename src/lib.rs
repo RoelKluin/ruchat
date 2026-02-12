@@ -9,7 +9,7 @@ pub use error::{Result, RuChatError};
 use args::Args;
 use clap::Parser;
 pub(crate) use cli::{args, options, serde};
-pub(crate) use core::{agent, chat::tree};
+pub(crate) use core::agent;
 pub(crate) use providers::llm::ollama;
 pub(crate) use providers::vector::chroma;
 pub(crate) use tui::io;
@@ -39,10 +39,10 @@ pub async fn run() -> Result<()> {
 mod tests {
     use super::*;
     use crate::args::Commands;
-    use crate::ollama::OllamaArgs;
     use crate::ollama::ask::AskArgs;
-    use crate::prompt::PromptArgs;
+    use crate::ollama::OllamaArgs;
     use args::Args;
+    use cli::prompt::PromptArgs;
 
     #[tokio::test]
     async fn test_server_run_success() {

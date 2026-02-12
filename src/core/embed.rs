@@ -120,25 +120,3 @@ impl EmbedArgs {
         Ok(())
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_get_metadata_valid() {
-        let metadata_str = Some("key1:value1,key2:value2".to_string());
-        let result = parse_metadata(&metadata_str);
-        assert!(result.is_ok());
-        let metadata = result.unwrap().unwrap();
-        assert_eq!(metadata["key1"], "value1".into());
-        assert_eq!(metadata["key2"], "value2".into());
-    }
-
-    #[test]
-    fn test_get_metadata_invalid() {
-        let metadata_str = Some("key1value1".to_string());
-        let result = parse_metadata(&metadata_str);
-        assert!(result.is_err());
-    }
-}

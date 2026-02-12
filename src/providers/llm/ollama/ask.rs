@@ -3,7 +3,7 @@ use crate::error::{Result, RuChatError};
 use crate::io::Io;
 use crate::ollama::OllamaArgs;
 use clap::Parser;
-use ollama_rs::{Ollama, generation::completion::request::GenerationRequest, models::ModelOptions};
+use ollama_rs::{generation::completion::request::GenerationRequest, models::ModelOptions, Ollama};
 use tokio_stream::StreamExt;
 
 const DEFAULT_MODEL: &str = "qwen2.5vl:latest";
@@ -81,6 +81,8 @@ impl AskArgs {
                 }
                 while let Ok(line) = cio.read_line().await {
                     if line == end_marker {
+                        cio.write_error_line("End marker received, finishing input...")
+                            .await?;
                         break;
                     }
                     input += line.as_str();

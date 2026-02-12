@@ -10,14 +10,12 @@ pub(crate) mod similarity;
 
 use crate::error::RuChatError;
 use anyhow::{Context, Result};
-use serde_json::{Value, map::Map};
+use serde_json::{map::Map, Value};
 use std::fs;
 use std::path::Path;
 
 pub(crate) use client::ChromaClientConfigArgs;
 pub(crate) use collection::ChromaCollectionConfigArgs;
-pub(crate) use create::ChromaCreateArgs;
-pub(super) use get_options::ChromaGetOptions;
 pub(crate) use metadata::MetadataArgs;
 
 // Chroma metadata is serialized to JSON and stored.
@@ -72,4 +70,26 @@ pub(crate) fn parse_metadata(
     Err(RuChatError::InvalidMetadata(
         "Value is neither valid inline JSON nor a path to an existing valid JSON file".into(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_metadata_valid() {
+        let metadata_str = Some("key1:value1,key2:value2".to_string());
+        let result = parse_metadata(&metadata_str);
+        assert!(result.is_ok());
+        let metadata = result.unwrap().unwrap();
+        assert_eq!(metadata["key1"], "value1".into());
+        assert_eq!(metadata["key2"], "value2".into());
+    }
+
+    #[test]
+    fn test_get_metadata_invalid() {
+        let metadata_str = Some("key1value1".to_string());
+        let result = parse_metadata(&metadata_str);
+        assert!(result.is_err());
+    }
 }
