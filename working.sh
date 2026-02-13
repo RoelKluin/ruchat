@@ -7,3 +7,8 @@
 ./ruchat query --model 'qwen3:latest' --model "all-minilm:l6-v2" \
 --query "Contents of file: src/ollama/ask.rs" \
 --prompt "how can we embed an answer from ask.rs?"
+
+
+ ./ruchat get --model "qwen2.5vl:latest" --collection repo_src-all-minilm_l6-v2  --prompt 'what argument(s) does the ask function in Ask require?'
+
+

@@ -17,19 +17,23 @@ use tokio_stream::StreamExt;
 pub(crate) struct GetArgs {
     /// The get string to search for in the database.
     #[arg(short, long)]
-    get: String,
+    get: Option<String>,
 
     /// The prompt to use for generating a response.
     #[arg(short, long)]
     prompt: String,
 
     /// The number of results to return.
-    #[arg(short, long, default_value_t = 1)]
-    count: usize,
+    #[arg(short, long)]
+    count: Option<usize>,
 
     /// Chroma database metadata, comma separated key:value pairs.
     #[arg(short, long)]
     metadata: Option<String>,
+
+    /// Optionally include documents in the get response, comma separated values.
+    #[arg(short, long)]
+    include: Option<String>,
 
     #[command(flatten)]
     collection: ChromaCollectionConfigArgs,
@@ -63,29 +67,42 @@ impl GetArgs {
 
         let client = self.client.create_client().await?;
         let collection = self.collection.get_collection(&client, "default").await?;
-        let metadata = self.metadata.as_deref().map(|md| md.into());
+        let where_metadata = self.metadata.as_deref().map(|md| md.into());
 
         // Create a filter object to filter by document content.
-        let where_document = json!({
-            "$contains": self.get.as_str()
+        let where_document = self.get.as_ref().map(|get| {
+            json!({
+                "$contains": get.as_str()
+            })
         });
-        eprintln!("Where document filter: {:?}", where_document);
+        if where_metadata.is_none() && where_document.is_none() {
+            eprintln!(
+                "Warning: No filters provided, get will return all documents in the collection."
+            );
+        }
+
+        let include = self.include.as_ref().map(|inc| {
+            inc.split(',')
+                .map(|s| s.trim().to_string())
+                .collect::<Vec<String>>()
+        });
 
         // Get embeddings from a collection with filters and limit set to 1.
         // An empty IDs vec will return all embeddings.
         let get_options = GetOptions {
             ids: vec![],
-            where_metadata: metadata,
-            limit: Some(self.count),
+            where_metadata,
+            limit: self.count,
             offset: None,
-            where_document: Some(where_document),
-            include: Some(vec!["documents".into(), "embeddings".into()]),
+            where_document,
+            include,
         };
 
         let get_result = collection.get(get_options).await?;
+        eprintln!("Get result: {:?}", get_result);
         let res: Vec<_> = get_result
-            .embeddings
-            .map(|embeddings| embeddings.into_iter().flatten().collect())
+            .documents
+            .map(|documents| documents.into_iter().collect())
             .unwrap_or_default();
         eprintln!("Get result: {:?}", res);
         let prompt = format!(
