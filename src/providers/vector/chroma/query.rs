@@ -1,7 +1,8 @@
 use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs};
-use crate::RuChatError;
+use crate::core::embed::EmbedArgs;
 use crate::io::Io;
 use crate::ollama::OllamaArgs;
+use crate::RuChatError;
 use anyhow::Result;
 use chroma::types::{
     BooleanOperator, CompositeExpression, DocumentExpression, DocumentOperator, IncludeList,
@@ -10,7 +11,6 @@ use chroma::types::{
 use clap::Parser;
 use serde_json::json;
 use tokio_stream::StreamExt;
-use crate::embed::EmbedArgs;
 
 /// Command-line arguments for querying a Chroma database.
 ///

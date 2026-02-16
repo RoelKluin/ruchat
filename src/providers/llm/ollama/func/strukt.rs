@@ -1,6 +1,6 @@
-use crate::Result;
 use crate::io::Io;
 use crate::ollama::OllamaArgs;
+use crate::Result;
 use ollama_rs::models::ModelOptions;
 use ollama_rs::{
     coordinator::Coordinator,
@@ -78,7 +78,7 @@ pub(crate) async fn func_struct(args: OllamaArgs) -> Result<()> {
 
     let format = FormatType::StructuredJson(Box::new(JsonStructure::new::<Weather>()));
 
-    let mut coordinator = Coordinator::new(ollama, model, history)
+    let mut coordinator = Coordinator::new(ollama, model[0].clone(), history)
         .add_tool(get_weather)
         .add_tool(get_available_space)
         .format(format)

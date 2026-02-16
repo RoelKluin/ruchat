@@ -1,7 +1,7 @@
 mod strukt;
-use crate::Result;
 use crate::io::Io;
 use crate::ollama::OllamaArgs;
+use crate::Result;
 use ollama_rs::models::ModelOptions;
 use ollama_rs::{
     coordinator::Coordinator,
@@ -36,7 +36,7 @@ pub(crate) use strukt::func_struct;
 pub(crate) async fn func(args: OllamaArgs) -> Result<()> {
     let history = vec![];
     let (ollama, model) = args.init("").await?;
-    let mut coordinator = Coordinator::new(ollama, model, history)
+    let mut coordinator = Coordinator::new(ollama, model[0].clone(), history)
         .options(ModelOptions::default().num_ctx(16384))
         .add_tool(Calculator {})
         .add_tool(DDGSearcher::new())

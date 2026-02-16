@@ -38,6 +38,8 @@ pub enum RuChatError {
     #[error("Ollama error: {0}")]
     OllamaError(#[from] ollama_rs::error::OllamaError),
 
+    MetadataFileReadError
+
     /// Error when parsing the server argument.
     #[error("Unable to parse arg --server: '{0}'")]
     ArgServerError(String),

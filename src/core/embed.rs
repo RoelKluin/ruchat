@@ -1,7 +1,7 @@
 use crate::chroma::parse_metadata;
 use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs};
-use crate::RuChatError;
 use crate::ollama::OllamaArgs;
+use crate::RuChatError;
 use chroma::types::{UpdateMetadata, UpdateMetadataValue};
 use clap::Parser;
 use log::{info, warn};
@@ -83,7 +83,7 @@ impl EmbedArgs {
             .hyphenated()
             .to_string();
 
-        let client = self.client_config.create_client().await?;
+        let client = self.client_config.create_client()?;
         let collection = self.collection_config.get_collection(&client, "").await?;
 
         info!(
@@ -100,20 +100,13 @@ impl EmbedArgs {
             info!("Generated embedding dimension: {}", embeddings[0].len());
         }
 
-        let ids = vec![id.as_str()];
+        let ids = vec![id.clone()];
+        let uris = None; //Some(vec!["".to_string()]);
         let documents = None; //Some(vec![prompt.as_str()]);
-        let metadata = parse_metadata(&self.metadata)?;
-        let collection_entries = CollectionEntries {
-            ids,
-            metadatas: metadata.map(|md| vec![md]),
-            documents,
-            embeddings: Some(embeddings),
-        };
-        // The function to use to compute the embeddings. If None, embeddings must be provided.
-        let embedding_function: Option<Box<dyn EmbeddingFunction>> = None;
+        let metadatas = parse_metadata(&self.metadata)?;
 
         let result = collection
-            .upsert(collection_entries, embedding_function)
+            .upsert(ids, embeddings, documents, uris, metadatas)
             .await?;
         info!("Upserted {}", result);
         Ok(())

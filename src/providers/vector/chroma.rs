@@ -9,9 +9,9 @@ mod metadata;
 pub(crate) mod query;
 pub(crate) mod similarity;
 
-use crate::RuChatError;
-use anyhow::{Context, Result};
-use serde_json::{map::Map, Value};
+use crate::{Result, RuChatError};
+use chroma::types::MetadataValue;
+use serde_json;
 use std::fs;
 use std::path::Path;
 
@@ -31,46 +31,24 @@ pub(crate) use metadata::MetadataArgs;
 /// # Returns
 ///
 /// A `Result` containing an optional map of metadata or a `RuChatError`.
-pub(crate) fn parse_metadata(
-    metadata: &Option<String>,
-) -> Result<Option<Map<String, Value>>, RuChatError> {
-    let input = match metadata.as_deref() {
-        None | Some("") => return Ok(None),
-        Some(s) => s.trim(),
-    };
 
-    // Helper to normalize Value → Option<Map<String, Value>>
-    fn normalize(v: Value) -> Result<Option<Map<String, Value>>, RuChatError> {
-        match v {
-            Value::Object(map) => Ok(Some(map)),
-            Value::Null => Ok(None),
-            other => Err(RuChatError::InvalidMetadata(format!(
-                "Metadata root must be JSON object {{ ... }} or null, got {other}"
-            ))),
+pub(crate) fn parse_metadata(metadata: &Option<String>) -> Result<Option<MetadataValue>> {
+    match metadata {
+        Some(input) => {
+            let json_content = if std::path::Path::new(input).exists() {
+                fs::read_to_string(input)
+                    .map_err(|e| RuChatError::MetadataFileReadError(input.clone(), e))?
+            } else {
+                input.clone()
+            };
+
+            let parsed: MetadataValue = serde_json::from_str(&json_content)
+                .map_err(|e| RuChatError::MetadataParseError(input.clone(), e))?;
+
+            Ok(Some(parsed))
         }
+        None => Ok(None),
     }
-
-    // Case 1: inline JSON string
-    if let Ok(v) = serde_json::from_str::<Value>(input) {
-        return normalize(v);
-    }
-
-    // Case 2: file path pointing to JSON
-    let path = Path::new(input);
-    if path.exists() && path.is_file() {
-        let content = fs::read_to_string(path)
-            .with_context(|| format!("Cannot read metadata file: {}", input))?;
-
-        let v: Value =
-            serde_json::from_str(&content).context("File exists but is not valid JSON")?;
-
-        return normalize(v);
-    }
-
-    // Neither inline JSON nor valid JSON file
-    Err(RuChatError::InvalidMetadata(
-        "Value is neither valid inline JSON nor a path to an existing valid JSON file".into(),
-    ))
 }
 
 #[cfg(test)]
