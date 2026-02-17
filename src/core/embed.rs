@@ -1,5 +1,4 @@
-use crate::chroma::parse_metadata;
-use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs};
+use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs, UpdateMetadataArrayArgs};
 use crate::ollama::OllamaArgs;
 use crate::RuChatError;
 use clap::Parser;
@@ -29,10 +28,6 @@ impl EmbedPromptArgs {
 /// and database connection information.
 #[derive(Parser, Debug, Clone, PartialEq)]
 pub(crate) struct EmbedArgs {
-    /// Chroma update metadata, comma separated key:value pairs.
-    #[arg(short, long)]
-    metadata: Option<String>,
-
     /// ID associated with the embedding entry.
     #[arg(short, long)]
     id: Option<String>,
@@ -45,6 +40,9 @@ pub(crate) struct EmbedArgs {
 
     #[command(flatten)]
     collection_config: ChromaCollectionConfigArgs,
+
+    #[command(flatten)]
+    update_metadatas: UpdateMetadataArrayArgs,
 }
 
 impl EmbedArgs {
@@ -102,12 +100,15 @@ impl EmbedArgs {
         let ids = vec![id.clone()];
         let uris = None; //Some(vec!["".to_string()]);
         let documents = None; //Some(vec![prompt.as_str()]);
-        let metadatas = parse_metadata(&self.metadata)?;
+        let update_metadatas = self.update_metadatas.parse()?;
 
         let result = collection
-            .upsert(ids, embeddings, documents, uris, metadatas)
+            .upsert(ids, embeddings, documents, uris, update_metadatas)
             .await?;
-        info!("Upserted {}", serde_json::to_string_pretty(&result)?);
+        match serde_json::to_string_pretty(&result) {
+            Ok(json) => info!("Upserted: {}", json),
+            Err(e) => warn!("Upserted but failed to serialize result: {}", e),
+        }
         Ok(())
     }
 }

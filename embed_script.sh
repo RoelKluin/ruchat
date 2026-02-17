@@ -1,6 +1,8 @@
 #!/bin/bash
 declare -A ext
 
+[ -n "$DEBUG" ] && set -x
+
 while read -r lang extension comment_re; do
     [[ "${lang:0:1}" == "#" ]] && continue
     [[ -z "$extension" || -z "$lang" ]] && continue
@@ -36,25 +38,19 @@ fi
 
 
 for f in "${files[@]}"; do
-    metadata_json="{}"
+    metadata_array=()
 
     for extension in "${!ext[@]}"; do
         if [[ $f == *"$extension" ]]; then
             lang="${ext[$extension]}"
 
             # Initial metadata object
-            new_json="$(jq -n \
-                --argjson prev "$metadata_json" \
+            base_info="$(jq -n \
                 --arg f "$f" \
                 --arg lang "$lang" \
-                '$prev + {
-                    file: $f,
-                    language: $lang
-                }' 2>/dev/null)"
+                '{ file: $f, language: $lang }' 2>/dev/null)"
 
-            if [ $? -eq 0 ] && [ -n "$new_json" ]; then
-                 metadata_json="$new_json"
-            else
+            if [ $? -ne 0 ] || [ -z "$base_info" ]; then
                  echo "Error building base metadata JSON for $f" >&2
                  continue # Skip file if base metadata fails
             fi
@@ -83,10 +79,10 @@ for f in "${files[@]}"; do
 
                 # Safely update JSON
                 new_json="$(jq -n \
-                    --argjson prev "$metadata_json" \
-                    --arg kindKey "${var}.kind" \
+                    --argjson prev "$base_info" \
+                    --arg name "$var" \
                     --arg kind "$lang_kind" \
-                    '$prev + { ($kindKey): $kind }' 2>/dev/null)"
+                    '$prev + { name: $name, kind: $kind }' 2>/dev/null)"
 
                 if [ $? -eq 0 ] && [ -n "$new_json" ]; then
                     metadata_json="$new_json"
@@ -103,7 +99,7 @@ for f in "${files[@]}"; do
 
                         new_json="$(jq -n \
                             --argjson prev "$metadata_json" \
-                            --arg k "${var}.$tkey" \
+                            --arg k "$tkey" \
                             --arg v "$tval" \
                             '$prev + {($k): $v}' 2>/dev/null)"
 
@@ -145,9 +141,8 @@ for f in "${files[@]}"; do
                     if [[ -n "$references" ]]; then
                         new_json="$(jq -n \
                             --argjson prev "$metadata_json" \
-                            --arg var "$var" \
                             --arg call "$references" \
-                            '$prev + { ($var + ".references"): $call }' 2>/dev/null)"
+                            '$prev + { references: $call }' 2>/dev/null)"
                          if [ $? -eq 0 ] && [ -n "$new_json" ]; then
                              metadata_json="$new_json"
                          fi
@@ -162,16 +157,15 @@ for f in "${files[@]}"; do
                 # Add start/end line numbers
                 new_json="$(jq -n \
                     --argjson prev "$metadata_json" \
-                    --arg var   "$var" \
                     --arg start "$start" \
                     --arg end   "$end" \
                     '$prev + {
-                        ($var + ".start"): ($start | tonumber),
-                        ($var + ".end"):   ($end   | tonumber)
+                        start: ($start | tonumber),
+                        end:   ($end   | tonumber)
                     }' 2>/dev/null)"
 
                 if [ $? -eq 0 ] && [ -n "$new_json" ]; then
-                    metadata_json="$new_json"
+                    metadata_array+=("$new_json")
                 fi
 
             done < <(grep -F "	$f	" tags | awk -F'\t' -v f="$f" '
@@ -197,14 +191,19 @@ for f in "${files[@]}"; do
         fi
     done
 
+    if [ ${#metadata_array[@]} -gt 0 ]; then
+      # Join array elements with comma
+      metadata_json=$(printf '%s\n' "${metadata_array[@]}" | jq -s .)
+    else
+      metadata_json='[]'
+    fi
     # Final Check and Embed
     embed_args=("--collection" "$collection" "--model" "$model")
-    if jq -e 'length > 0' <<< "$metadata_json" >/dev/null; then
-        echo "Embedding file $f with metadata..." >&2
-        embed_args+=("--metadata" "$(jq -c . <<< "$metadata_json")")
+    if [ ${#metadata_array[@]} -gt 0 ]; then
+        embed_args+=("--metadata" "$(jq -c . <<< "$metadata_json")")   # already compact array
     else
-        echo "No metadata extracted for $f (lang: $lang)" >&2
+      echo "No metadata for file $f" >&2
     fi
 
-    ./ruchat embed "${embed_args[@]}" "$(cat "$f")" || echo -e "Error in metadata for $f?\n" "${embed_args[@]}" 1>&2
+    ./ruchat embed "${embed_args[@]}" "$(cat "$f")" || echo -e "Error embedding $f?\n" "${embed_args[@]}" 1>&2
 done

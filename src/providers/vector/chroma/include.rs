@@ -1,16 +1,10 @@
 // src/chroma/parser.rs
 use crate::{RuChatError, Result};
-use chroma::types::{
-    BooleanOperator, CompositeExpression, DocumentExpression, DocumentOperator,
-    MetadataComparison, MetadataExpression, MetadataValue, PrimitiveOperator, Where,
-    MetadataSetValue, SetOperator, ContainsOperator, SparseVector, IncludeList, Include,
-};
-use std::fmt::Display;
-use std::result::Result as StdResult;
+use chroma::types::{IncludeList, Include};
 use clap::Parser;
 
 #[derive(Parser, Debug, Clone, PartialEq)]
-pub struct IncludeArgs {
+pub(crate) struct IncludeArgs {
     /// comma seperated string of include fields: "distance,document,embedding,metadata,uri"
     #[arg(short, long)]
     include: Option<String>,
@@ -35,7 +29,7 @@ fn parse_include(include: &str) -> Result<IncludeList> {
 }
 
 impl IncludeArgs {
-    pub fn parse(&self) -> Result<Option<IncludeList>> {
+    pub(crate) fn parse(&self) -> Result<Option<IncludeList>> {
         self.include.as_ref().map(|s| parse_include(s)).transpose()
     }
 }

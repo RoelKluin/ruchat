@@ -1,15 +1,10 @@
-use crate::chroma::parse_metadata;
-use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs};
+use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs, MetadataArgs};
 use crate::Result;
 use clap::Parser;
 
 /// Command-line arguments for creating data in a Chroma database.
 #[derive(Parser, Debug, Clone, PartialEq)]
 pub(crate) struct ChromaCreateArgs {
-    /// Chroma update metadata, comma separated key:value pairs.
-    #[arg(short, long)]
-    metadata: Option<String>,
-
     /// Chroma schema, a JSON string defining the schema for the collection.
     #[arg(short, long)]
     schema: Option<String>,
@@ -19,6 +14,9 @@ pub(crate) struct ChromaCreateArgs {
 
     #[command(flatten)]
     collection: ChromaCollectionConfigArgs,
+
+    #[command(flatten)]
+    metadata: MetadataArgs,
 }
 
 impl ChromaCreateArgs {
@@ -31,7 +29,7 @@ impl ChromaCreateArgs {
         let client = self.client.create_client()?;
         let name = self.collection.name();
         let schema = self.schema.as_ref().map(|s| serde_json::from_str(s)).transpose()?;
-        let metadata = parse_metadata(&self.metadata)?;
+        let metadata = self.metadata.parse()?;
 
         client.create_collection(name, schema, metadata).await?;
         Ok(())
