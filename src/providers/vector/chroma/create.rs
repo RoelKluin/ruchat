@@ -1,6 +1,5 @@
 use crate::chroma::parse_metadata;
 use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs};
-use chroma::types::Schema;
 use crate::Result;
 use clap::Parser;
 
@@ -10,6 +9,10 @@ pub(crate) struct ChromaCreateArgs {
     /// Chroma update metadata, comma separated key:value pairs.
     #[arg(short, long)]
     metadata: Option<String>,
+
+    /// Chroma schema, a JSON string defining the schema for the collection.
+    #[arg(short, long)]
+    schema: Option<String>,
 
     #[command(flatten)]
     client: ChromaClientConfigArgs,
@@ -27,7 +30,7 @@ impl ChromaCreateArgs {
     pub(crate) async fn create(&self) -> Result<()> {
         let client = self.client.create_client()?;
         let name = self.collection.name();
-        let schema: Option<Schema> = None;
+        let schema = self.schema.as_ref().map(|s| serde_json::from_str(s)).transpose()?;
         let metadata = parse_metadata(&self.metadata)?;
 
         client.create_collection(name, schema, metadata).await?;
