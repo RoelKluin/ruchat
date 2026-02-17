@@ -1,8 +1,6 @@
-use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs, parse_where};
-use crate::RuChatError;
-use anyhow::Result;
+use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs, IncludeArgs, WhereArgs};
+use crate::{RuChatError, Result};
 use clap::Parser;
-use chroma::types::IncludeList;
 use log::info;
 
 /// Command-line arguments for geting a Chroma database.
@@ -28,39 +26,38 @@ pub(crate) struct GetArgs {
     #[arg(short, long)]
     metadata: Option<String>,
 
-    /// Optionally include documents in the get response, comma separated values.
-    #[arg(short, long)]
-    include: Option<String>,
-
     #[command(flatten)]
     collection: ChromaCollectionConfigArgs,
 
     #[command(flatten)]
     client: ChromaClientConfigArgs,
+
+    #[command(flatten)]
+    include: IncludeArgs,
+
+    #[command(flatten)]
+    r#where: WhereArgs,
 }
 
 impl GetArgs {
-    pub(crate) async fn get(&self) -> Result<(), RuChatError> {
-        let client = self.client.create_client()?;
+    pub(crate) async fn get(&self) -> Result<()> {
+        let client = self.client.create_client().map_err(RuChatError::ChromaError)?;
         let collection = self.collection.get_collection(&client, "default").await?;
 
         let ids: Option<Vec<String>> = self.ids.as_ref()
             .map(|s| s.split(',').map(|id| id.trim().to_string()).collect());
 
-        let owhere = self.metadata.as_ref()
-            .map(|md| parse_where(md))
-            .transpose()?;
+        let r#where = self.r#where.parse()?;
 
-        let include_list = self.include.as_ref()
-            .map(|inc| serde_json::from_str::<IncludeList>(inc))
-            .transpose()?;
+        let include_list = self.include.parse()?;
 
         let get_result = collection.get(
-            ids, owhere, self.limit, self.offset, include_list,
-        ).await?;
+            ids, r#where, self.limit, self.offset, include_list,
+        ).await
+            .map_err(RuChatError::ChromaHttpClientError)?;
 
         let res: Vec<_> = get_result.documents.unwrap_or_default();
-        info!("Get result: {}", serde_json::to_string_pretty(&res)?);
+        info!("Get result: {:?}", res);
         Ok(())
     }
 

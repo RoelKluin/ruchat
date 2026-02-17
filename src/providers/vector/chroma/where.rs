@@ -1,14 +1,16 @@
 // src/chroma/parser.rs
-use crate::RuChatError;
+use crate::{RuChatError, Result};
 use chroma::types::{
     BooleanOperator, CompositeExpression, DocumentExpression, DocumentOperator,
     MetadataComparison, MetadataExpression, MetadataValue, PrimitiveOperator, Where,
     MetadataSetValue, SetOperator, ContainsOperator, SparseVector,
 };
 use std::fmt::Display;
+use std::result::Result as StdResult;
+use clap::Parser;
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum Token {
+enum Token {
     Identifier(String),
     Operator(String),
     Literal(String),
@@ -28,8 +30,24 @@ impl Display for Token {
     }
 }
 
+#[derive(Parser, Debug, Clone, PartialEq)]
+pub struct WhereArgs {
+    /// The metadata query string, e.g. "key1 = 'value' AND key2 > 5".
+    #[arg(short, long)]
+    r#where: Option<String>,
+}
 
-pub fn parse_where(input: &str) -> Result<Where, RuChatError> {
+impl WhereArgs {
+    pub fn parse(&self) -> Result<Option<Where>> {
+        if let Some(ref w) = self.r#where {
+            Ok(Some(parse_where(w)?))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+fn parse_where(input: &str) -> Result<Where> {
     let tokens = tokenize(input);
     let mut pos = 0;
     if tokens.is_empty() {
@@ -86,7 +104,7 @@ fn tokenize(input: &str) -> Vec<Token> {
     tokens
 }
 // OR Logic (Lowest Precedence)
-fn parse_expression(tokens: &[Token], pos: &mut usize) -> Result<Where, RuChatError> {
+fn parse_expression(tokens: &[Token], pos: &mut usize) -> Result<Where> {
     let mut left = parse_term(tokens, pos)?;
     while *pos < tokens.len() && tokens[*pos] == Token::Or {
         *pos += 1;
@@ -100,7 +118,7 @@ fn parse_expression(tokens: &[Token], pos: &mut usize) -> Result<Where, RuChatEr
 }
 
 // AND Logic
-fn parse_term(tokens: &[Token], pos: &mut usize) -> Result<Where, RuChatError> {
+fn parse_term(tokens: &[Token], pos: &mut usize) -> Result<Where> {
     let mut left = parse_factor(tokens, pos)?;
     while *pos < tokens.len() && tokens[*pos] == Token::And {
         *pos += 1;
@@ -113,7 +131,7 @@ fn parse_term(tokens: &[Token], pos: &mut usize) -> Result<Where, RuChatError> {
     Ok(left)
 }
 
-fn parse_factor(tokens: &[Token], pos: &mut usize) -> Result<Where, RuChatError> {
+fn parse_factor(tokens: &[Token], pos: &mut usize) -> Result<Where> {
     let current = tokens.get(*pos).ok_or_else(|| {
         RuChatError::InternalError("Unexpected end of input".to_string())
     })?;
@@ -165,7 +183,7 @@ fn map_sql_to_document_op(op: &str) -> DocumentOperator {
 }
 
 // Extracted helpers to keep the parser logic clean
-fn extract_operator(tokens: &[Token], pos: &mut usize, key: &str) -> Result<String, RuChatError> {
+fn extract_operator(tokens: &[Token], pos: &mut usize, key: &str) -> Result<String> {
     let op_token = tokens.get(*pos).ok_or_else(|| {
         RuChatError::InternalError(format!("Expected operator after '{}'", key))
     })?;
@@ -177,7 +195,7 @@ fn extract_operator(tokens: &[Token], pos: &mut usize, key: &str) -> Result<Stri
     Ok(op)
 }
 
-fn extract_value(tokens: &[Token], pos: &mut usize) -> Result<String, RuChatError> {
+fn extract_value(tokens: &[Token], pos: &mut usize) -> Result<String> {
     let val_token = tokens.get(*pos).ok_or_else(|| {
         RuChatError::InternalError("Expected value after operator".to_string())
     })?;
@@ -219,13 +237,13 @@ fn parse_metadata_value(value_str: &str) -> MetadataValue {
     // 3. Try Arrays (Inference)
     if value_str.contains(',') {
         let split: Vec<&str> = value_str.split(',').map(|s| s.trim()).collect();
-        if let Ok(v) = split.iter().map(|s| s.parse::<bool>()).collect::<Result<Vec<_>, _>>() {
+        if let Ok(v) = split.iter().map(|s| s.parse::<bool>()).collect::<StdResult<Vec<_>, _>>() {
             return MetadataValue::BoolArray(v);
         }
-        if let Ok(v) = split.iter().map(|s| s.parse::<i64>()).collect::<Result<Vec<_>, _>>() {
+        if let Ok(v) = split.iter().map(|s| s.parse::<i64>()).collect::<StdResult<Vec<_>, _>>() {
             return MetadataValue::IntArray(v);
         }
-        if let Ok(v) = split.iter().map(|s| s.parse::<f64>()).collect::<Result<Vec<_>, _>>() {
+        if let Ok(v) = split.iter().map(|s| s.parse::<f64>()).collect::<StdResult<Vec<_>, _>>() {
             return MetadataValue::FloatArray(v);
         }
         return MetadataValue::StringArray(split.into_iter().map(|s| s.to_string()).collect());
@@ -239,13 +257,13 @@ fn parse_metadata_set_value(value_str: &str) -> MetadataSetValue {
     let cleaned = value_str.trim_matches(|c| c == '[' || c == ']' || c == '(' || c == ')');
     let split: Vec<&str> = cleaned.split(',').map(|s| s.trim()).collect();
 
-    if let Ok(v) = split.iter().map(|s| s.parse::<bool>()).collect::<Result<Vec<_>, _>>() {
+    if let Ok(v) = split.iter().map(|s| s.parse::<bool>()).collect::<StdResult<Vec<_>, _>>() {
         return MetadataSetValue::Bool(v);
     }
-    if let Ok(v) = split.iter().map(|s| s.parse::<i64>()).collect::<Result<Vec<_>, _>>() {
+    if let Ok(v) = split.iter().map(|s| s.parse::<i64>()).collect::<StdResult<Vec<_>, _>>() {
         return MetadataSetValue::Int(v);
     }
-    if let Ok(v) = split.iter().map(|s| s.parse::<f64>()).collect::<Result<Vec<_>, _>>() {
+    if let Ok(v) = split.iter().map(|s| s.parse::<f64>()).collect::<StdResult<Vec<_>, _>>() {
         return MetadataSetValue::Float(v);
     }
     MetadataSetValue::Str(split.into_iter().map(|s| s.to_string()).collect())

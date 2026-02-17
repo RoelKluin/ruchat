@@ -146,6 +146,14 @@ pub enum RuChatError {
     /// A catch-all error for unexpected internal issues.
     #[error("Internal error: {0}")]
     InternalError(String),
+
+    /// Error when the include list is invalid.
+    #[error("Invalid include list: {0}")]
+    InvalidIncludeList(String),
+
+    /// Error when an include field is invalid.
+    #[error("Invalid include field: {0}")]
+    InvalidIncludeField(String),
 }
 
 /// A type alias for `Result` that uses `RuChatError` as the error type.

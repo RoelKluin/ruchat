@@ -1,10 +1,7 @@
-use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs, parse_where};
+use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs, IncludeArgs, WhereArgs};
 use crate::ollama::OllamaArgs;
 use crate::RuChatError;
 use anyhow::Result;
-use chroma::types::{
-     IncludeList,
-};
 use clap::Parser;
 use log::{info, warn};
 use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
@@ -32,10 +29,6 @@ pub(crate) struct QueryArgs {
     #[arg(short, long)]
     ids: Option<String>,
 
-    /// JSON string for IncludeList.
-    #[arg(short, long)]
-    include: Option<String>,
-
     /// Chroma database metadata, comma separated key:value pairs.
     #[arg(short, long)]
     metadata: Option<String>,
@@ -48,6 +41,12 @@ pub(crate) struct QueryArgs {
 
     #[command(flatten)]
     ollama: OllamaArgs,
+
+    #[command(flatten)]
+    include: IncludeArgs,
+
+    #[command(flatten)]
+    r#where: WhereArgs,
 }
 
 impl QueryArgs {
@@ -65,26 +64,22 @@ impl QueryArgs {
 
         let query_embeddings = res.embeddings;
         
-        let where_metadata = self.metadata.as_ref()
-            .map(|md| parse_where(md))
-            .transpose()?;
+        let r#where = self.r#where.parse()?;
 
         let ids = self.ids.as_ref()
             .map(|s| s.split(',').map(|id| id.trim().to_string()).collect());
 
-        let include = self.include.as_ref()
-            .map(|inc| serde_json::from_str::<IncludeList>(inc))
-            .transpose()?;
+        let include = self.include.parse()?;
 
         let query_result = collection.query(
             query_embeddings,
             self.n_results,
-            where_metadata,
+            r#where,
             ids,
             include,
         ).await?;
 
-        info!("Query results: {}", serde_json::to_string_pretty(&query_result)?); 
+        info!("Query results: {:?}", query_result);
         Ok(())
     }
 }

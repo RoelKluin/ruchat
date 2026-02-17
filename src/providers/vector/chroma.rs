@@ -5,7 +5,8 @@ pub(crate) mod delete;
 pub(crate) mod get;
 pub(crate) mod ls;
 pub(crate) mod query;
-pub(crate) mod parser;
+pub(crate) mod r#where;
+pub(crate) mod include;
 
 use crate::{Result, RuChatError};
 use std::fs;
@@ -13,7 +14,8 @@ use std::path::Path;
 
 pub(crate) use client::ChromaClientConfigArgs;
 pub(crate) use collection::ChromaCollectionConfigArgs;
-pub(crate) use parser::parse_where;
+pub(crate) use r#where::WhereArgs;
+pub(crate) use include::IncludeArgs;
 
 // Chroma metadata is serialized to JSON and stored.
 // But filtering (where clause) is still very limited:
@@ -57,8 +59,6 @@ where
         }
     }
 }
-
-
 
 #[cfg(test)]
 mod tests {
