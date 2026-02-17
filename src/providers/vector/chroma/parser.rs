@@ -62,9 +62,9 @@ fn tokenize(input: &str) -> Vec<Token> {
             '=' | '!' | '>' | '<' => {
                 let mut op = String::new();
                 op.push(chars.next().unwrap());
-                if let Some(&nc) = chars.peek() {
-                    if (c == '!' || c == '>' || c == '<') && nc == '=' { op.push(chars.next().unwrap()); }
-                    else if c == '<' && nc == '>' { op.push(chars.next().unwrap()); }
+                if c != '=' && let Some(&nc) = chars.peek() {
+                    if c == '<' && (nc == '=' || nc == '>') { op.push(chars.next().unwrap()); }
+                    if (c == '!' || c == '>') && nc == '=' { op.push(chars.next().unwrap()); }
                 }
                 tokens.push(Token::Operator(op));
             }
@@ -206,11 +206,10 @@ fn map_sql_comparison(op: &str, val: &str) -> MetadataComparison {
 
 fn parse_metadata_value(value_str: &str) -> MetadataValue {
     // 1. Try JSON for SparseVector support
-    if value_str.starts_with('{') && value_str.ends_with('}') {
-        if let Ok(sv) = serde_json::from_str::<SparseVector>(value_str) {
+    if value_str.starts_with('{') && value_str.ends_with('}')
+        && let Ok(sv) = serde_json::from_str::<SparseVector>(value_str) {
             return MetadataValue::SparseVector(sv);
         }
-    }
 
     // 2. Try Primitives
     if let Ok(b) = value_str.parse::<bool>() { return MetadataValue::Bool(b); }

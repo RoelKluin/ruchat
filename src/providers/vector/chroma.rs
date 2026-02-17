@@ -8,7 +8,6 @@ pub(crate) mod query;
 pub(crate) mod parser;
 
 use crate::{Result, RuChatError};
-use serde_json;
 use std::fs;
 use std::path::Path;
 
@@ -28,8 +27,6 @@ pub(crate) use parser::parse_where;
 /// # Returns
 ///
 /// A `Result` containing an optional map of metadata or a `RuChatError`.
-
-
 pub(crate) fn parse_metadata<T>(
     metadata: &Option<String>,
 ) -> Result<Option<T>>
