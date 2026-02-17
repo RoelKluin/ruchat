@@ -29,7 +29,7 @@ impl OllamaArgs {
     /// # Returns
     ///
     /// A `Result` indicating success or failure.
-    pub(crate) async fn rm(&self) -> Result<()> {
+    pub(crate) async fn delete_model(&self) -> Result<()> {
         let (ollama, models) = self.init("").await?;
         ollama.delete_model(models[0].clone()).await?;
         Ok(())

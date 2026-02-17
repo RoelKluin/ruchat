@@ -41,14 +41,14 @@ impl Args {
             Commands::Ask(args) => args.ask("").await,
             Commands::Pipe(args) => args.ask("---").await,
             Commands::Chat(args) => args.chat().await,
-            Commands::Ls(args) => args.ls().await,
-            Commands::Rm(args) => args.rm().await,
-            Commands::Pull(args) => args.pull().await,
+            Commands::OllamaLs(args) => args.ls().await,
+            Commands::OllamaDelete(args) => args.delete_model().await,
+            Commands::OllamaPull(args) => args.pull().await,
             Commands::Func(args) => func(args).await,
             Commands::FuncStruct(args) => func_struct(args).await,
             Commands::Embed(args) => args.embed().await,
-            Commands::Query(args) => args.query().await,
-            Commands::Get(args) => args.get().await,
+            Commands::ChromaQuery(args) => args.query().await,
+            Commands::ChromaGet(args) => args.get().await,
             Commands::ChromaCreate(args) => args.create().await,
             Commands::ChromaLs(args) => chroma_ls(args).await,
             Commands::ChromaDelete(args) => chroma_delete(args).await,
@@ -71,11 +71,11 @@ pub(crate) enum Commands {
     /// Chat with a language model.
     Chat(ChatArgs),
     /// List models.
-    Ls(ServerArgs),
+    OllamaLs(ServerArgs),
     /// Remove a model.
-    Rm(OllamaArgs),
+    OllamaDelete(OllamaArgs),
     /// Pull a model from a remote ollama server.
-    Pull(OllamaArgs),
+    OllamaPull(OllamaArgs),
     /// Run a function using a language model.
     Func(OllamaArgs),
     /// Run a function using a language model with structured input.
@@ -83,9 +83,9 @@ pub(crate) enum Commands {
     /// Use embedding model to create embeddings in Chroma.
     Embed(EmbedPromptArgs),
     /// Query Chroma database.
-    Query(QueryArgs),
+    ChromaQuery(QueryArgs),
     /// Get from Chroma database.
-    Get(GetArgs),
+    ChromaGet(GetArgs),
     /// Create Chroma database collections.
     ChromaCreate(ChromaCreateArgs),
     /// List Chroma database collections.
