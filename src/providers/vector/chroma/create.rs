@@ -1,5 +1,6 @@
 use crate::chroma::parse_metadata;
 use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs};
+use chroma::types::Schema;
 use crate::Result;
 use clap::Parser;
 
@@ -24,11 +25,12 @@ impl ChromaCreateArgs {
     /// arguments, parses the metadata, and creates a collection with the specified name and
     /// metadata.
     pub(crate) async fn create(&self) -> Result<()> {
-        let client = self.client.create_client().await?;
+        let client = self.client.create_client()?;
         let name = self.collection.name();
+        let schema: Option<Schema> = None;
         let metadata = parse_metadata(&self.metadata)?;
 
-        client.create_collection(name, metadata, false).await?;
+        client.create_collection(name, schema, metadata).await?;
         Ok(())
     }
 }

@@ -38,7 +38,13 @@ pub enum RuChatError {
     #[error("Ollama error: {0}")]
     OllamaError(#[from] ollama_rs::error::OllamaError),
 
-    MetadataFileReadError
+    /// Error when parsing metadata.
+    #[error("Metadata parse error for input '{0}': {1}")]
+    MetadataFileReadError(String, std::io::Error),
+
+    /// Error when parsing metadata.
+    #[error("Metadata parse error for input '{0}': {1}")]
+    MetadataParseError(String, serde_json::error::Error),
 
     /// Error when parsing the server argument.
     #[error("Unable to parse arg --server: '{0}'")]
@@ -131,6 +137,15 @@ pub enum RuChatError {
     /// Error when a collection is not found.
     #[error("No answer found for question_id {0} and answer_id {1}")]
     HistoryError(usize, usize),
+
+
+    /// Error when the provided string is neither a file nor parseable metadata.
+    #[error("Provided string is neither a file or parseable '{0}'")]
+    MetadataFileOrParseError(String),
+
+    /// A catch-all error for unexpected internal issues.
+    #[error("Internal error: {0}")]
+    InternalError(String),
 }
 
 /// A type alias for `Result` that uses `RuChatError` as the error type.

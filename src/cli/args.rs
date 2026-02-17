@@ -4,8 +4,6 @@ use crate::chroma::delete::{chroma_delete, ChromaDeleteArgs};
 use crate::chroma::get::GetArgs;
 use crate::chroma::ls::{chroma_ls, ChromaLsArgs};
 use crate::chroma::query::QueryArgs;
-use crate::chroma::similarity::SimilarityArgs;
-use crate::chroma::MetadataArgs;
 use crate::core::embed::EmbedPromptArgs;
 use crate::ollama::ask::AskArgs;
 use crate::ollama::chat::ChatArgs;
@@ -51,11 +49,9 @@ impl Args {
             Commands::Embed(args) => args.embed().await,
             Commands::Query(args) => args.query().await,
             Commands::Get(args) => args.get().await,
-            Commands::Similarity(args) => args.similarity_search().await,
             Commands::ChromaCreate(args) => args.create().await,
             Commands::ChromaLs(args) => chroma_ls(args).await,
             Commands::ChromaDelete(args) => chroma_delete(args).await,
-            Commands::ChromaMetadata(args) => args.get_metadata().await,
             Commands::Manager(args) => Manager::execute_command(args).await,
         }
     }
@@ -90,16 +86,12 @@ pub(crate) enum Commands {
     Query(QueryArgs),
     /// Get from Chroma database.
     Get(GetArgs),
-    /// Find similar embeddings in Chroma database.
-    Similarity(SimilarityArgs),
     /// Create Chroma database collections.
     ChromaCreate(ChromaCreateArgs),
     /// List Chroma database collections.
     ChromaLs(ChromaLsArgs),
     /// Delete Chroma database collections or entries.
     ChromaDelete(ChromaDeleteArgs),
-    /// Retrieve the metadata of a Chroma database collection.
-    ChromaMetadata(MetadataArgs),
     /// Manage agents.
     Manager(ManagerArgs),
 }

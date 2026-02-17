@@ -34,7 +34,7 @@ pub(crate) async fn chroma_ls(args: ChromaLsArgs) -> Result<(), RuChatError> {
     let client = args.client.create_client()?;
 
     // Instantiate a ChromaCollection to perform operations on a collection
-    let collection = args.collection.get_or_create_collection(&client).await?;
+    let collection = args.collection.get_collection(&client, "").await?;
 
     eprintln!("Collection Name: {}", collection.name());
     eprintln!("Collection ID: {}", collection.id());

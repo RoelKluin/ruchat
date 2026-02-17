@@ -1,8 +1,7 @@
 use crate::{Result, RuChatError};
-use chroma::types::{Cmek, Metadata, MetadataValue, Schema, ValueTypes};
+use chroma::types::{Metadata, Schema};
 use chroma::{ChromaCollection, ChromaHttpClient};
 use clap::Parser;
-use serde_json::{Map, Value};
 
 #[derive(Parser, Debug, Clone, PartialEq)]
 pub(crate) struct ChromaCollectionConfigArgs {
@@ -15,13 +14,14 @@ impl ChromaCollectionConfigArgs {
     pub(crate) async fn get_or_create_collection(
         &self,
         client: &ChromaHttpClient,
-        metadata: Option<Map<String, Value>>,
+        schema: Option<Schema>,
+        metadata: Option<Metadata>,
     ) -> Result<ChromaCollection> {
         if self.collection.is_empty() {
             return Err(RuChatError::NoCollectionSpecified);
         }
         let collection: ChromaCollection = client
-            .get_or_create_collection(self.collection.as_str(), metadata)
+            .get_or_create_collection(self.collection.as_str(), schema, metadata)
             .await?;
         Ok(collection)
     }

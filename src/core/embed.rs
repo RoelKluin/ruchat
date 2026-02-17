@@ -2,7 +2,6 @@ use crate::chroma::parse_metadata;
 use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs};
 use crate::ollama::OllamaArgs;
 use crate::RuChatError;
-use chroma::types::{UpdateMetadata, UpdateMetadataValue};
 use clap::Parser;
 use log::{info, warn};
 use md5::{Digest, Md5};
@@ -108,7 +107,7 @@ impl EmbedArgs {
         let result = collection
             .upsert(ids, embeddings, documents, uris, metadatas)
             .await?;
-        info!("Upserted {}", result);
+        info!("Upserted {}", serde_json::to_string_pretty(&result)?);
         Ok(())
     }
 }
