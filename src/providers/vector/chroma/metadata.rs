@@ -20,20 +20,6 @@ impl MetadataArgs {
 }
 
 #[derive(Parser, Debug, Clone, PartialEq)]
-pub(crate) struct UpdateMetadataArgs {
-    /// An JSON string or a file path to JSON metadata
-    #[arg(short, long)]
-    update_metadata: Option<String>,
-}
-
-impl UpdateMetadataArgs {
-    /// Parses the update metadata argument and returns a map of metadata.
-    pub(crate) fn parse(&self) -> Result<Option<UpdateMetadata>> {
-        self.update_metadata.as_ref().map(|s| parse_metadata::<UpdateMetadata>(s)).transpose()
-    }
-}
-
-#[derive(Parser, Debug, Clone, PartialEq)]
 pub(crate) struct UpdateMetadataArrayArgs {
     /// An JSON string or a file path to JSON metadata
     #[arg(short, long)]

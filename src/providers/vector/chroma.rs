@@ -13,4 +13,4 @@ pub(crate) use client::ChromaClientConfigArgs;
 pub(crate) use collection::ChromaCollectionConfigArgs;
 pub(crate) use r#where::WhereArgs;
 pub(crate) use include::IncludeArgs;
-pub(crate) use metadata::{MetadataArgs, UpdateMetadataArgs, UpdateMetadataArrayArgs};
+pub(crate) use metadata::{MetadataArgs, UpdateMetadataArrayArgs};
