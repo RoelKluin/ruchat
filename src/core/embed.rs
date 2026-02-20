@@ -75,16 +75,20 @@ impl EmbedArgs {
 
         let mut chunk_texts: Vec<String> = Vec::new();
         let mut chunk_ids = Vec::new();
-        let mut chunk_metadatas = Vec::new();
 
         let client = self.client_config.create_client()?;
         let collection = self.collection_config.get_collection(&client, "").await?;
         // 2. Process each metadata entry to create slices
-        if metadata_items.is_empty() {
+        let chunk_metadatas = if metadata_items.len() < 2 {
             // Fallback: If no metadata provided, treat whole prompt as one chunk
             chunk_texts.push(prompt.clone());
-            chunk_metadatas.push(None); // Or empty metadata
+            if metadata_items.is_empty() {
+                None
+            } else {
+                Some(vec![Some(metadata_items[0].clone())]) // Use the single metadata for the whole prompt
+            }
         } else {
+            let mut chunk_metadatas = Vec::new();
             for meta in metadata_items {
                 // Assuming UpdateMetadata has start/end fields or can be converted to a Map
                 // If it's a struct, you might need to use serde_json::to_value()
@@ -100,7 +104,8 @@ impl EmbedArgs {
                 chunk_texts.push(content);
                 chunk_metadatas.push(Some(meta)); 
             }
-        }
+            Some(chunk_metadatas)
+        };
 
         // 3. Generate IDs for each chunk
         for content in &chunk_texts {
@@ -125,7 +130,7 @@ impl EmbedArgs {
                 embeddings,
                 chunk_texts_copy,// Pass the slices as documents
                 None,              // URIs
-                Some(chunk_metadatas)
+                chunk_metadatas
             )
             .await?;
 

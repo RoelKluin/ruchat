@@ -9,6 +9,8 @@
 --prompt "how can we embed an answer from ask.rs?"
 
 
- ./ruchat get --model "qwen2.5vl:latest" --collection repo_src-all-minilm_l6-v2  --prompt 'what argument(s) does the ask function in Ask require?'
+./ruchat get --model "qwen2.5vl:latest" --collection repo_src-all-minilm_l6-v2  --prompt 'what argument(s) does the ask function in Ask require?'
+
+chroma browse repo_src-all-minilm_l6-v2 --host http://localhost:8000
 
 
