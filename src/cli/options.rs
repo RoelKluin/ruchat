@@ -63,7 +63,7 @@ mod tests {
     #[tokio::test]
     async fn test_read_options_file() {
         let path = "test_options.json";
-        fs::write(path, r#"{\"option1\": \"value1\"}"#).unwrap();
+        fs::write(path, r#"{"option1": "value1"}"#).unwrap();
         let value = read_options_file(path).await.unwrap();
         assert_eq!(value["option1"], "value1");
         fs::remove_file(path).unwrap();
@@ -72,7 +72,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_options_with_file() {
         let path = "test_options.json";
-        fs::write(path, r#"{\"option1\": \"value1\"}"#).unwrap();
+        fs::write(path, r#"{"option1": "value1"}"#).unwrap();
         assert!(get_options(Some(path)).await.is_ok());
         fs::remove_file(path).unwrap();
     }

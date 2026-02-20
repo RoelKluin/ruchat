@@ -124,7 +124,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_request_ask() {
-        let args = Args::parse_from(&["test", "ls"]);
+        let args = Args::parse_from(&["test", "ollama-ls"]);
         let result = args.handle_request().await;
         assert!(result.is_ok());
     }
