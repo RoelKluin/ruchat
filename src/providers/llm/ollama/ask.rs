@@ -19,10 +19,10 @@ pub(crate) struct AskArgs {
     output_format: String,
 
     #[command(flatten)]
-    prompt_args: PromptArgs,
+    prompt: PromptArgs,
 
     #[command(flatten)]
-    ollama_args: OllamaArgs,
+    ollama: OllamaArgs,
 }
 
 // Reusable generation logic for Agents
@@ -70,7 +70,7 @@ impl AskArgs {
     /// A `Result` indicating success or failure.
     pub(crate) async fn ask(&self, end_marker: &str) -> Result<()> {
         let mut cio = Io::new();
-        let mut prompt = match self.prompt_args.get_prompt() {
+        let mut prompt = match self.prompt.get_prompt() {
             Ok(p) => p,
             Err(RuChatError::NoPromptProvided) => {
                 let mut input = String::new();
@@ -96,9 +96,9 @@ impl AskArgs {
             prompt.push_str(&self.output_format);
             prompt.push_str(" output format.\n");
         }
-        let (ollama, model) = self.ollama_args.init("").await?;
+        let (ollama, model) = self.ollama.init("").await?;
         let request = self
-            .ollama_args
+            .ollama
             .build_generation_request(model[0].clone(), prompt)
             .await?;
         let mut stream = ollama.generate_stream(request).await?;

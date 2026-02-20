@@ -8,16 +8,16 @@ use clap::Parser;
 use ollama_rs::Ollama;
 use ollama_rs::generation::completion::request::GenerationRequest;
 
-pub(super) use model::ModelArgs;
+pub(crate) use model::ModelArgs;
 pub(crate) use server::ServerArgs;
 
 #[derive(Parser, Debug, Clone, Default, PartialEq)]
 pub(crate) struct OllamaArgs {
     #[command(flatten)]
-    server_args: ServerArgs,
+    server: ServerArgs,
 
     #[command(flatten)]
-    model_args: ModelArgs,
+    model: ModelArgs,
 }
 
 impl OllamaArgs {
@@ -48,14 +48,14 @@ impl OllamaArgs {
         Ok(())
     }
     pub(crate) fn init_server(&self) -> Result<Ollama> {
-        self.server_args.init()
+        self.server.init()
     }
     /// see [ServerArgs::init]
     pub(crate) async fn init(&self, default: &str) -> Result<(Ollama, Vec<String>)> {
         let ollama = self.init_server()?;
         let mut models = Vec::new();
-        for nr in 0..self.model_args.get_nr_of_models() {
-            let model = self.model_args.get_model(&ollama, nr, default).await?;
+        for nr in 0..self.model.get_nr_of_models() {
+            let model = self.model.get_model(&ollama, nr, default).await?;
             models.push(model);
         }
         Ok((ollama, models))
@@ -66,8 +66,6 @@ impl OllamaArgs {
         model: String,
         prompt: String,
     ) -> Result<GenerationRequest<'_>> {
-        self.model_args
-            .build_generation_request(model, prompt)
-            .await
+        self.model.build_generation_request(model, prompt).await
     }
 }

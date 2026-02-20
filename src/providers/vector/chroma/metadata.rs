@@ -23,13 +23,13 @@ impl MetadataArgs {
 pub(crate) struct UpdateMetadataArrayArgs {
     /// An JSON string or a file path to JSON metadata
     #[arg(short, long)]
-    update_metadatas: Option<String>
+    metadata: Option<String>
 }
 
 impl UpdateMetadataArrayArgs {
     /// Parses the update metadata argument and returns a map of metadata.
     pub(crate) fn parse(&self) -> Result<Option<Vec<Option<UpdateMetadata>>>> {
-        self.update_metadatas.as_ref().map(|s| parse_metadata::<Vec<Option<UpdateMetadata>>>(s)).transpose()
+        self.metadata.as_ref().map(|s| parse_metadata::<Vec<Option<UpdateMetadata>>>(s)).transpose()
     }
 }
 
@@ -74,18 +74,18 @@ mod tests {
 
     #[test]
     fn test_get_metadata_valid() {
-        let metadata_str = Some("key1:value1,key2:value2".to_string());
-        let result = parse_metadata(&metadata_str);
+        let metadata_str = "key1:value1,key2:value2";
+        let result = parse_metadata::<Metadata>(&metadata_str);
         assert!(result.is_ok());
-        let metadata = result.unwrap().unwrap();
+        let metadata = result.unwrap();
         assert_eq!(metadata["key1"], "value1".into());
         assert_eq!(metadata["key2"], "value2".into());
     }
 
     #[test]
     fn test_get_metadata_invalid() {
-        let metadata_str = Some("key1value1".to_string());
-        let result = parse_metadata(&metadata_str);
+        let metadata_str = "key1value1";
+        let result = parse_metadata::<Metadata>(&metadata_str);
         assert!(result.is_err());
     }
 }

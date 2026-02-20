@@ -15,10 +15,10 @@ s="[:space:]"
 S="[^$s]"
 s="[$s]"
 
-# Parse the kinds safely
+# Parse the kinds
 while read -r k v; do
   tags[$k]="$v"
-done < <(ctags --list-kinds-full | awk '{print $3 ":" $2 " " $4}')
+done < <(ctags --list-kinds-full | awk '{print $1 ":" $2 " " $3}')
 
 
 model="all-minilm:l6-v2"
@@ -55,11 +55,7 @@ for f in "${files[@]}"; do
                  continue # Skip file if base metadata fails
             fi
 
-            # --- KEY FIX: Use awk for robust parsing instead of sed ---
-            # 1. grep -F "$f" pre-filters lines containing the filename (fast)
-            # 2. awk -F'\t' strictly splits by tabs, avoiding regex fragility
             while IFS=$'\a' read -r var ex_cmd kind; do
-                echo "Processing tag: var='$var', ex_cmd='$ex_cmd', kind='$kind' for file '$f'" >&2
 
                 # Trim & normalize
                 var="${var//[[:space:]]/}"
@@ -76,6 +72,7 @@ for f in "${files[@]}"; do
                 fi
 
                 lang_kind="${tags[$lang:${kind}]:-$kind}"
+                echo "Processing tag: var='$var', ex_cmd='$ex_cmd', kind='$lang_kind', lang='$lang', file '$f'" >&2
 
                 # Safely update JSON
                 new_json="$(jq -n \
@@ -115,20 +112,44 @@ for f in "${files[@]}"; do
                 # Handle regex search pattern vs line number
                 if [[ "$ex_cmd" =~ ^/ ]]; then
                     # Convert ctags regex to sed address
-                    # Note: We use # delimiter to avoid conflict with / in pattern
                     sed_re=$(printf '%s\n' "$ex_cmd" | sed -E 's#^([/?])(.*)\1;?$#/\2/#')
 
                     # Run sed on source file to find line number
                     start="$(sed -n "${sed_re}{=;q}" "$f" 2>/dev/null)"
                     end="$start"
-
-                    # (Simplified end-finding logic for brevity - keeping your logic structure)
-                    # You can add back the block specific logic here if needed
-
-                elif [[ "$ex_cmd" =~ ^[0-9]+$ ]]; then
-                    # It's already a line number
+                    # FIXME: improve per lang/kind handling here:
+                    if [[ "$lang:$lang_kind" =~ ^Rust:([f]unction|method|implementation|macro|module|struct|enum)$ ]] || \
+                            [[ "$lang:$lang_kind" =~ ^Sh:([f]unction|script|heredoc)$ ]] || \
+                            [[ "$lang:$lang_kind" =~ ^TOML:(arraytable|table|key)$ ]] || \
+                            [[ "$lang:$lang_kind" == "Markdown:(chapter|section|subsection|subsubsection|l4subsection|l5subsection|footnote|hashtag)" ]]; then
+                        # For these kinds, try to find the closing brace
+                        ex_end_cmd=$(echo "$ex_cmd" | sed -E -n 's~(/\^[ \t]*).*$~\1[^[:space:]].*$/~p')
+                        if [[ -n "$ex_end_cmd" ]]; then
+                            end=$(sed -n "${sed_re},${ex_end_cmd}{${sed_re}b;${ex_end_cmd}{=;q}}" "$f")
+                            [[ -z "$end" ]] && end="$start"
+                        fi
+                    fi
+                elif [[ $ex_cmd =~ ^[0-9]+$ ]]; then
                     start="$ex_cmd"
                     end="$start"
+                    # FIXME: improve per lang/kind handling here:
+                    if [[ "$lang:$lang_kind" =~ ^Rust:([f]unction|method|implementation|macro|module|struct|enum)$ ]] || \
+                            [[ "$lang:$lang_kind" =~ ^Sh:[f]unction$ ]]; then
+                        # For these kinds, try to find the closing brace
+                        total_lines=$(wc -l < "$f")
+                        brace_count=0
+                        for (( line_num=start; line_num<=total_lines; line_num++ )); do
+                            line_content=$(sed -n "${line_num}p" "$f")
+                            # Count opening and closing braces
+                            open_braces=$(grep -o '{' <<< "$line_content" | wc -l)
+                            close_braces=$(grep -o '}' <<< "$line_content" | wc -l)
+                            brace_count=$((brace_count + open_braces - close_braces))
+                            if (( brace_count <= 0 )); then
+                                end=$line_num
+                                break
+                            fi
+                        done
+                    fi
                 fi
 
                 # Find references (call sites)

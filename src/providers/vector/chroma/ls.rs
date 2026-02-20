@@ -37,20 +37,17 @@ pub(crate) async fn chroma_ls(args: ChromaLsArgs) -> Result<(), RuChatError> {
     if args.collection.name().is_empty() {
         // List all collections in the database
         let collections = client.list_collections(100, None).await?;
+        eprintln!("Name\tID\tCount\tMetadata");
         for collection in collections {
-            eprintln!("Collection Name: {}", collection.name());
-            eprintln!("Collection ID: {}", collection.id());
-            eprintln!("Collection Metadata: {:?}", collection.metadata());
-            eprintln!("Collection Count: {}", collection.count().await?);
-            eprintln!("-----------------------------");
+            eprintln!("{}\t{}\t{}\t{:?}", collection.name(), collection.id(), collection.count().await?, collection.metadata());
         }
     } else {
         // Instantiate a ChromaCollection to perform operations on a collection
         let collection = args.collection.get_collection(&client, "").await?;
         eprintln!("Collection Name: {}", collection.name());
         eprintln!("Collection ID: {}", collection.id());
-        eprintln!("Collection Metadata: {:?}", collection.metadata());
         eprintln!("Collection Count: {}", collection.count().await?);
+        eprintln!("Collection Metadata: {:?}", collection.metadata());
     }
     Ok(())
 }

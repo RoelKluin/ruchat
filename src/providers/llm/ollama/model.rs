@@ -17,6 +17,12 @@ pub(crate) struct ModelArgs {
 }
 
 impl ModelArgs {
+    #[cfg(test)]
+    pub(crate) fn new(model: &str, options: Option<&str>) -> Self {
+        let model = model.split(',').map(|s| s.trim().to_string()).collect();
+        let options = options.map(|s| s.to_string());
+        Self { model, options }
+    }
     pub(super) async fn get_model(
         &self,
         ollama: &Ollama,

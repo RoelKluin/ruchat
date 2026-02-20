@@ -103,8 +103,7 @@ mod tests {
 
     #[test]
     fn test_args_parsing() {
-        let args = Args::parse_from(&["test", "--server", "http://localhost:8080", "--verbose"]);
-        assert_eq!(args.server, "http://localhost:8080");
+        let args = Args::parse_from(&["test", "-v"]);
         assert!(args.verbose);
     }
 

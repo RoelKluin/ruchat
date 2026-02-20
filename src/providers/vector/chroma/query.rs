@@ -17,10 +17,6 @@ pub(crate) struct QueryArgs {
     #[arg(short, long)]
     query: String,
 
-    /// The prompt to use for generating a response.
-    #[arg(short, long)]
-    prompt: String,
-
     /// The number of results to return.
     #[arg(short, long)]
     n_results: Option<u32>,
@@ -28,10 +24,6 @@ pub(crate) struct QueryArgs {
     /// Comma separated list of document IDs to restrict the search.
     #[arg(short, long)]
     ids: Option<String>,
-
-    /// Chroma database metadata, comma separated key:value pairs.
-    #[arg(short, long)]
-    metadata: Option<String>,
 
     #[command(flatten)]
     collection: ChromaCollectionConfigArgs,
@@ -55,11 +47,11 @@ impl QueryArgs {
         let collection = self.collection.get_collection(&client, "default").await?;
 
         let (ollama, models) = self.ollama.init("all-minilm:l6-v2").await?;
-        let model = models.last().unwrap().to_string();
+        let model = models.last().ok_or(RuChatError::ModelNotFound("all-minilm:l6-v2".to_string()))?;
         if model != "all-minilm:l6-v2" && !model.contains("embed") {
             warn!("Model {model} might not be an embeddings model");
         }
-        let request = GenerateEmbeddingsRequest::new(model, vec![self.query.as_str()].into());
+        let request = GenerateEmbeddingsRequest::new(model.to_string(), vec![self.query.as_str()].into());
         let res = ollama.generate_embeddings(request).await?;
 
         let query_embeddings = res.embeddings;
