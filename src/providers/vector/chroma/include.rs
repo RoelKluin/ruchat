@@ -10,21 +10,20 @@ pub(crate) struct IncludeArgs {
     include: Option<String>,
 }
 
+fn parse_include(include: &str) -> Result<IncludeList> {
+    serde_json::from_str(include).map_err(|e| RuChatError::InvalidIncludeList(format!("Error {e} while parsing '{include}'")))
+}
+
 impl IncludeArgs {
     pub(crate) fn parse(&self) -> Result<Option<IncludeList>> {
-        self.include.as_ref().map(|include|
-            serde_json::from_str(include)
-                .map_err(|e| {
-                    let err_msg = format!("Error {e} while parsing '{include}'");
-                    RuChatError::InvalidIncludeList(err_msg)
-                })
-            ).transpose()
+        self.include.as_ref().map(|s| parse_include(s)).transpose()
     }
 }
 
 #[cfg(test)]
 mod tests{
     use super::*;
+    use chroma::types::Include;
 
     #[test]
     fn test_parse_include() {
