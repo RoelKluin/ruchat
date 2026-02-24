@@ -89,14 +89,31 @@ fn tokenize(input: &str) -> Vec<Token> {
             _ => {
                 let mut s = String::new();
                 while let Some(&nc) = chars.peek() {
-                    if nc.is_alphanumeric() || nc == '_' { s.push(chars.next().unwrap()); }
-                    else { break; }
+                    // Allow alphanumeric, underscores, dots (for floats), and commas (for arrays)
+                    if nc.is_alphanumeric() || nc == '_' || nc == '.' || nc == ',' {
+                        s.push(chars.next().unwrap());
+                    } else {
+                        break;
+                    }
                 }
+
+                if s.is_empty() {
+                    chars.next(); // Consume unknown character to avoid infinite loop
+                    continue;
+                }
+
                 match s.to_uppercase().as_str() {
                     "AND" => tokens.push(Token::And),
                     "OR" => tokens.push(Token::Or),
-                    "IN" => tokens.push(Token::Operator("IN".to_string())),
-                    _ => tokens.push(Token::Identifier(s)),
+                    "IN" | "CONTAINS" | "LIKE" | "REGEX" => tokens.push(Token::Operator(s.to_uppercase())),
+                    _ => {
+                        // Check if it's a numeric literal (starts with a digit)
+                        if s.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+                            tokens.push(Token::Literal(s));
+                        } else {
+                            tokens.push(Token::Identifier(s));
+                        }
+                    }
                 }
             }
         }
@@ -199,12 +216,22 @@ fn extract_value(tokens: &[Token], pos: &mut usize) -> Result<String> {
     let val_token = tokens.get(*pos).ok_or_else(|| {
         RuChatError::InternalError("Expected value after operator".to_string())
     })?;
-    let val = match val_token {
-        Token::Literal(v) | Token::Identifier(v) => v.clone(),
-        _ => return Err(RuChatError::InternalError("Expected literal value".to_string())),
-    };
-    *pos += 1;
-    Ok(val)
+
+    match val_token {
+        Token::Literal(v) | Token::Identifier(v) => {
+            *pos += 1;
+            Ok(v.clone())
+        }
+        Token::LParen => {
+            *pos += 1; // Skip '('
+            let v = extract_value(tokens, pos)?; // Get the inner value
+            if tokens.get(*pos) == Some(&Token::RParen) {
+                *pos += 1; // Skip ')'
+            }
+            Ok(v)
+        }
+        _ => Err(RuChatError::InternalError(format!("Expected value, found {}", val_token))),
+    }
 }
 
 fn map_sql_comparison(op: &str, val: &str) -> MetadataComparison {
@@ -234,9 +261,12 @@ fn parse_metadata_value(value_str: &str) -> MetadataValue {
     if let Ok(i) = value_str.parse::<i64>() { return MetadataValue::Int(i); }
     if let Ok(f) = value_str.parse::<f64>() { return MetadataValue::Float(f); }
 
+    // Clean brackets for array inference
+    let cleaned = value_str.trim_matches(|c| c == '[' || c == ']');
+
     // 3. Try Arrays (Inference)
-    if value_str.contains(',') {
-        let split: Vec<&str> = value_str.split(',').map(|s| s.trim()).collect();
+    if cleaned.contains(',') {
+        let split: Vec<&str> = cleaned.split(',').map(|s| s.trim()).collect();
         if let Ok(v) = split.iter().map(|s| s.parse::<bool>()).collect::<StdResult<Vec<_>, _>>() {
             return MetadataValue::BoolArray(v);
         }
@@ -267,4 +297,275 @@ fn parse_metadata_set_value(value_str: &str) -> MetadataSetValue {
         return MetadataSetValue::Float(v);
     }
     MetadataSetValue::Str(split.into_iter().map(|s| s.to_string()).collect())
+}
+
+#[cfg(test)]
+mod tests{
+    use super::*;
+    #[test]
+    fn test_tokenizer() {
+        let input = "key1 = 'value' AND key2 > 5 OR document CONTAINS 'pattern'";
+        let tokens = tokenize(input);
+        assert_eq!(tokens, vec![
+            Token::Identifier("key1".to_string()),
+            Token::Operator("=".to_string()),
+            Token::Literal("value".to_string()),
+            Token::And,
+            Token::Identifier("key2".to_string()),
+            Token::Operator(">".to_string()),
+            Token::Literal("5".to_string()),
+            Token::Or,
+            Token::Identifier("document".to_string()),
+            Token::Operator("CONTAINS".to_string()),
+            Token::Literal("pattern".to_string()),
+        ]);
+    }
+
+    #[test]
+    fn test_parse_where() {
+        let input = "key1 = 'value' AND key2 > 5 OR document CONTAINS 'pattern'";
+        let where_clause = parse_where(input).unwrap();
+        assert_eq!(where_clause, Where::Composite(CompositeExpression {
+            operator: BooleanOperator::Or,
+            children: vec![
+                Where::Composite(CompositeExpression {
+                    operator: BooleanOperator::And,
+                    children: vec![
+                        Where::Metadata(MetadataExpression {
+                            key: "key1".to_string(),
+                            comparison: MetadataComparison::Primitive(PrimitiveOperator::Equal, MetadataValue::Str("value".to_string())),
+                        }),
+                        Where::Metadata(MetadataExpression {
+                            key: "key2".to_string(),
+                            comparison: MetadataComparison::Primitive(PrimitiveOperator::GreaterThan, MetadataValue::Int(5)),
+                        }),
+                    ],
+                }),
+                Where::Document(DocumentExpression {
+                    operator: DocumentOperator::Contains,
+                    pattern: "pattern".to_string(),
+                }),
+            ],
+        }));
+    }
+
+    #[test]
+    fn test_parse_metadata_value() {
+        assert_eq!(parse_metadata_value("true"), MetadataValue::Bool(true));
+        assert_eq!(parse_metadata_value("123"), MetadataValue::Int(123));
+        assert_eq!(parse_metadata_value("3.14"), MetadataValue::Float(3.14));
+        assert_eq!(parse_metadata_value("a,b,c"), MetadataValue::StringArray(vec!["a".to_string(), "b".to_string(), "c".to_string()]));
+        assert_eq!(parse_metadata_value("[1,2,3]"), MetadataValue::IntArray(vec![1, 2, 3]));
+    }
+
+    #[test]
+    fn test_parse_metadata_set_value() {
+        assert_eq!(parse_metadata_set_value("[true,false]"), MetadataSetValue::Bool(vec![true, false]));
+        assert_eq!(parse_metadata_set_value("[1,2,3]"), MetadataSetValue::Int(vec![1, 2, 3]));
+        assert_eq!(parse_metadata_set_value("[3.14,2.71]"), MetadataSetValue::Float(vec![3.14, 2.71]));
+        assert_eq!(parse_metadata_set_value("[a,b,c]"), MetadataSetValue::Str(vec!["a".to_string(), "b".to_string(), "c".to_string()]));
+    }
+
+    #[test]
+    fn test_map_sql_comparison() {
+        assert_eq!(map_sql_comparison("IN", "1,2,3"), MetadataComparison::Set(SetOperator::In, MetadataSetValue::Int(vec![1, 2, 3])));
+        assert_eq!(map_sql_comparison("NOTIN", "a,b,c"), MetadataComparison::Set(SetOperator::NotIn, MetadataSetValue::Str(vec!["a".to_string(), "b".to_string(), "c".to_string()])));
+        assert_eq!(map_sql_comparison("CONTAINS", "value"), MetadataComparison::ArrayContains(ContainsOperator::Contains, MetadataValue::Str("value".to_string())));
+        assert_eq!(map_sql_comparison("NOTCONTAINS", "value"), MetadataComparison::ArrayContains(ContainsOperator::NotContains, MetadataValue::Str("value".to_string())));
+        assert_eq!(map_sql_comparison(">", "5"), MetadataComparison::Primitive(PrimitiveOperator::GreaterThan, MetadataValue::Int(5)));
+        assert_eq!(map_sql_comparison("<", "3.14"), MetadataComparison::Primitive(PrimitiveOperator::LessThan, MetadataValue::Float(3.14)));
+        assert_eq!(map_sql_comparison(">=", "true"), MetadataComparison::Primitive(PrimitiveOperator::GreaterThanOrEqual, MetadataValue::Bool(true)));
+        assert_eq!(map_sql_comparison("<=", "false"), MetadataComparison::Primitive(PrimitiveOperator::LessThanOrEqual, MetadataValue::Bool(false)));
+        assert_eq!(map_sql_comparison("!=", "value"), MetadataComparison::Primitive(PrimitiveOperator::NotEqual, MetadataValue::Str("value".to_string())));
+    }
+
+    #[test]
+    fn test_map_sql_to_document_op() {
+        assert_eq!(map_sql_to_document_op("CONTAINS"), DocumentOperator::Contains);
+        assert_eq!(map_sql_to_document_op("LIKE"), DocumentOperator::Contains);
+        assert_eq!(map_sql_to_document_op("="), DocumentOperator::Contains);
+        assert_eq!(map_sql_to_document_op("NOTCONTAINS"), DocumentOperator::NotContains);
+        assert_eq!(map_sql_to_document_op("NOTLIKE"), DocumentOperator::NotContains);
+        assert_eq!(map_sql_to_document_op("!="), DocumentOperator::NotContains);
+        assert_eq!(map_sql_to_document_op("REGEX"), DocumentOperator::Regex);
+        assert_eq!(map_sql_to_document_op("NOTREGEX"), DocumentOperator::NotRegex);
+    }
+
+    #[test]
+    fn test_extract_operator_and_value() {
+        let tokens = vec![
+            Token::Identifier("key".to_string()),
+            Token::Operator("=".to_string()),
+            Token::Literal("value".to_string()),
+        ];
+        let mut pos = 1; // skip "key"
+        assert_eq!(extract_operator(&tokens, &mut pos, "key").unwrap(), "=");
+        assert_eq!(extract_value(&tokens, &mut pos).unwrap(), "value");
+    }
+
+    #[test]
+    fn test_parse_factor_document() {
+        let tokens = vec![
+            Token::Identifier("document".to_string()),
+            Token::Operator("CONTAINS".to_string()),
+            Token::Literal("pattern".to_string()),
+        ];
+        let mut pos = 0;
+        let factor = parse_factor(&tokens, &mut pos).unwrap();
+        assert_eq!(factor, Where::Document(DocumentExpression {
+            operator: DocumentOperator::Contains,
+            pattern: "pattern".to_string(),
+        }));
+    }
+
+    #[test]
+    fn test_parse_factor_metadata() {
+        let tokens = vec![
+            Token::Identifier("key".to_string()),
+            Token::Operator(">".to_string()),
+            Token::Literal("5".to_string()),
+        ];
+        let mut pos = 0;
+        let factor = parse_factor(&tokens, &mut pos).unwrap();
+        assert_eq!(factor, Where::Metadata(MetadataExpression {
+            key: "key".to_string(),
+            comparison: MetadataComparison::Primitive(PrimitiveOperator::GreaterThan, MetadataValue::Int(5)),
+        }));
+    }
+
+    #[test]
+    fn test_parse_factor_parentheses() {
+        let tokens = vec![
+            Token::LParen,
+            Token::Identifier("key".to_string()),
+            Token::Operator("=".to_string()),
+            Token::Literal("value".to_string()),
+            Token::RParen,
+        ];
+        let mut pos = 0;
+        let factor = parse_factor(&tokens, &mut pos).unwrap();
+        assert_eq!(factor, Where::Metadata(MetadataExpression {
+            key: "key".to_string(),
+            comparison: MetadataComparison::Primitive(PrimitiveOperator::Equal, MetadataValue::Str("value".to_string())),
+        }));
+    }
+
+    #[test]
+    fn test_parse_term_and() {
+        let tokens = vec![
+            Token::Identifier("key1".to_string()),
+            Token::Operator("=".to_string()),
+            Token::Literal("value".to_string()),
+            Token::And,
+            Token::Identifier("key2".to_string()),
+            Token::Operator(">".to_string()),
+            Token::Literal("5".to_string()),
+        ];
+        let mut pos = 0;
+        let term = parse_term(&tokens, &mut pos).unwrap();
+        assert_eq!(term, Where::Composite(CompositeExpression {
+            operator: BooleanOperator::And,
+            children: vec![
+                Where::Metadata(MetadataExpression {
+                    key: "key1".to_string(),
+                    comparison: MetadataComparison::Primitive(PrimitiveOperator::Equal, MetadataValue::Str("value".to_string())),
+                }),
+                Where::Metadata(MetadataExpression {
+                    key: "key2".to_string(),
+                    comparison: MetadataComparison::Primitive(PrimitiveOperator::GreaterThan, MetadataValue::Int(5)),
+                }),
+            ],
+        }));
+    }
+
+    #[test]
+    fn test_parse_expression_or() {
+        let tokens = vec![
+            Token::Identifier("key1".to_string()),
+            Token::Operator("=".to_string()),
+            Token::Literal("value".to_string()),
+            Token::Or,
+            Token::Identifier("key2".to_string()),
+            Token::Operator(">".to_string()),
+            Token::Literal("5".to_string()),
+        ];
+        let mut pos = 0;
+        let expr = parse_expression(&tokens, &mut pos).unwrap();
+        assert_eq!(expr, Where::Composite(CompositeExpression {
+            operator: BooleanOperator::Or,
+            children: vec![
+                Where::Metadata(MetadataExpression {
+                    key: "key1".to_string(),
+                    comparison: MetadataComparison::Primitive(PrimitiveOperator::Equal, MetadataValue::Str("value".to_string())),
+                }),
+                Where::Metadata(MetadataExpression {
+                    key: "key2".to_string(),
+                    comparison: MetadataComparison::Primitive(PrimitiveOperator::GreaterThan, MetadataValue::Int(5)),
+                }),
+            ],
+        }));
+    }
+
+    #[test]
+    fn test_parse_where_complex() {
+        let input = "(key1 = 'value' AND key2 > 5) OR document CONTAINS 'pattern'";
+        let where_clause = parse_where(input).unwrap();
+        assert_eq!(where_clause, Where::Composite(CompositeExpression {
+            operator: BooleanOperator::Or,
+            children: vec![
+                Where::Composite(CompositeExpression {
+                    operator: BooleanOperator::And,
+                    children: vec![
+                        Where::Metadata(MetadataExpression {
+                            key: "key1".to_string(),
+                            comparison: MetadataComparison::Primitive(PrimitiveOperator::Equal, MetadataValue::Str("value".to_string())),
+                        }),
+                        Where::Metadata(MetadataExpression {
+                            key: "key2".to_string(),
+                            comparison: MetadataComparison::Primitive(PrimitiveOperator::GreaterThan, MetadataValue::Int(5)),
+                        }),
+                    ],
+                }),
+                Where::Document(DocumentExpression {
+                    operator: DocumentOperator::Contains,
+                    pattern: "pattern".to_string(),
+                }),
+            ],
+        }));
+    }
+
+    #[test]
+    fn test_parse_where_empty() {
+        let input = "";
+        let where_clause = parse_where(input);
+        assert!(where_clause.is_err());
+    }
+
+    #[test]
+    fn test_parse_where_unexpected_token() {
+        let input = "key1 = 'value' AND OR key2 > 5";
+        let where_clause = parse_where(input);
+        assert!(where_clause.is_err());
+    }
+
+    #[test]
+    fn test_parse_where_missing_parenthesis() {
+        let input = "(key1 = 'value' AND key2 > 5 OR document CONTAINS 'pattern'";
+        let where_clause = parse_where(input);
+        assert!(where_clause.is_err());
+    }
+
+    #[test]
+    fn test_parse_where_trailing_tokens() {
+        let input = "key1 = 'value' AND key2 > 5 extra";
+        let where_clause = parse_where(input);
+        assert!(where_clause.is_err());
+    }
+
+    #[test]
+    fn test_parse_where_invalid_operator() {
+        let input = "key1 === 'value'";
+        let where_clause = parse_where(input);
+        assert!(where_clause.is_err());
+    }
 }
