@@ -1,6 +1,6 @@
 use crate::agent::manager::{Manager, ManagerArgs};
 use crate::chroma::create::ChromaCreateArgs;
-use crate::chroma::delete::{chroma_delete, ChromaDeleteArgs};
+use crate::chroma::delete::ChromaDeleteArgs;
 use crate::chroma::get::GetArgs;
 use crate::chroma::search::SearchArgs;
 use crate::chroma::modify::ModifyArgs;
@@ -55,7 +55,7 @@ impl Args {
             Commands::ChromaCreate(args) => args.create().await,
             Commands::ChromaModify(args) => args.modify().await,
             Commands::ChromaLs(args) => chroma_ls(args).await,
-            Commands::ChromaDelete(args) => chroma_delete(args).await,
+            Commands::ChromaDelete(args) => args.delete().await,
             Commands::Manager(args) => Manager::execute_command(args).await,
         }
     }
