@@ -22,10 +22,6 @@ pub(crate) struct GetArgs {
     #[arg(short, long)]
     offset: Option<u32>,
 
-    /// Chroma database metadata, comma separated key:value pairs.
-    #[arg(short, long)]
-    metadata: Option<String>,
-
     #[command(flatten)]
     collection: ChromaCollectionConfigArgs,
 
