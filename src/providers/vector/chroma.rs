@@ -77,7 +77,10 @@ impl AsMut<Self> for ChromaResponse<'_> {
 
 impl ChromaResponse<'_> {
     pub(super) fn render(&mut self, options: &OutputArgs) -> Result<()> {
-        // 1. Handle Sorting
+        info!("{}", self.as_string(options)?);
+        Ok(())
+    }
+    fn as_string(&mut self, options: &OutputArgs) -> Result<String> {
         if options.sort {
             match self {
                 ChromaResponse::Get(r) => r.sort_by_ids(),
@@ -86,40 +89,36 @@ impl ChromaResponse<'_> {
             }
         }
 
-        // 2. Handle JSON (Granular control usually happens via `jq` or similar,
-        // but we respect the flags by logging what we're about to show)
         if options.json {
-            let json = serde_json::to_string_pretty(&self)
-                .map_err(|e| RuChatError::InternalError(e.to_string()))?;
-            info!("{json}");
-            return Ok(());
-        }
-
-        // 3. Tabular rendering logic
-        match self {
-            ChromaResponse::Get(r) => {
-                let rows = flatten_get(r);
-                print_table(rows, options, false, false);
-            },
-            ChromaResponse::Search(r) => {
-                for (i, _) in r.ids.iter().enumerate() {
-                    info!("\nSearch Result Set #{}", i);
-                    let rows = flatten_search(r, i);
-                    print_table(rows, options, true, false);
-                }
-            },
-            ChromaResponse::Query(r) => {
-                for (i, _) in r.ids.iter().enumerate() {
-                    info!("\nQuery Result Set #{}", i);
-                    let rows = flatten_query(r, i);
-                    print_table(rows, options, false, true);
+            serde_json::to_string_pretty(&self)
+                .map_err(|e| RuChatError::InternalError(e.to_string()))
+        } else {
+            let mut table = String::new();
+            match self {
+                ChromaResponse::Get(r) => {
+                    let rows = flatten_get(r);
+                    table.push_str(&create_table(rows, options, false, false)?);
+                },
+                ChromaResponse::Search(r) => {
+                    for (i, _) in r.ids.iter().enumerate() {
+                        info!("\nSearch Result Set #{}", i);
+                        let rows = flatten_search(r, i);
+                        table.push_str(&create_table(rows, options, true, false)?);
+                    }
+                },
+                ChromaResponse::Query(r) => {
+                    for (i, _) in r.ids.iter().enumerate() {
+                        info!("\nQuery Result Set #{}", i);
+                        let rows = flatten_query(r, i);
+                        table.push_str(&create_table(rows, options, false, true)?);
+                    }
                 }
             }
+            Ok(table)
         }
-        Ok(())
     }
 }
-fn print_table(rows: Vec<OutputRow>, options: &OutputArgs, is_search: bool, is_query: bool) {
+fn create_table(rows: Vec<OutputRow>, options: &OutputArgs, is_search: bool, is_query: bool) -> Result<String> {
 
     // 1. Build Dynamic Header
     let mut header = String::new();
@@ -136,9 +135,8 @@ fn print_table(rows: Vec<OutputRow>, options: &OutputArgs, is_search: bool, is_q
     if options.should_show("uri")     { header.push_str(&format!("{:<20} ", "URI")); }
     if options.should_show("meta")    { header.push_str("METADATA"); }
 
-    info!("{:-<120}", "");
-    info!("{}", header);
-    info!("{:-<120}", "");
+    let mut table = String::new();
+    table.push_str(&format!("{:-<120}{header}{:-<120}\n", "", ""));
 
     // 2. Render Rows
     for row in rows {
@@ -189,8 +187,9 @@ fn print_table(rows: Vec<OutputRow>, options: &OutputArgs, is_search: bool, is_q
             let trunc = if inc.len() > 12 { format!("{}...", &inc[..12]) } else { format!("{:<15}", inc) };
             line.push_str(&format!("{} ", trunc));
         }
-        info!("{}", line);
+        table.push_str(&line);
     }
+    return Ok(table);
 }
 fn flatten_get(r: &types::GetResponse) -> Vec<OutputRow> {
     (0..r.ids.len()).map(|i| OutputRow {
@@ -234,4 +233,191 @@ fn flatten_query(r: &types::QueryResponse, index: usize) -> Vec<OutputRow> {
         score: None,
         select: None,
     }).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use chroma::types::MetadataValue;
+    use chroma::types::Include;
+
+    #[test]
+    fn test_output_row_creation() {
+        let row = OutputRow {
+            id: "123".to_string(),
+            document: Some("This is a test document.".to_string()),
+            metadata: Some("{\"key\": \"value\"}".to_string()),
+            embedding: Some(vec![0.1, 0.2, 0.3]),
+            score: Some(0.95),
+            distance: Some(0.05),
+            uri: Some("http://example.com".to_string()),
+            include: Some("{\"extra\": \"info\"}".to_string()),
+            select: Some("{\"field\": \"data\"}".to_string()),
+        };
+
+        assert_eq!(row.id, "123");
+        assert_eq!(row.document.unwrap(), "This is a test document.");
+        assert_eq!(row.metadata.unwrap(), "{\"key\": \"value\"}");
+        assert_eq!(row.embedding.unwrap(), vec![0.1, 0.2, 0.3]);
+        assert_eq!(row.score.unwrap(), 0.95);
+        assert_eq!(row.distance.unwrap(), 0.05);
+        assert_eq!(row.uri.unwrap(), "http://example.com");
+        assert_eq!(row.include.unwrap(), "{\"extra\": \"info\"}");
+        assert_eq!(row.select.unwrap(), "{\"field\": \"data\"}");
+    }
+
+    #[test]
+    fn test_output_args_should_show() {
+        let options = OutputArgs {
+            json: false,
+            sort: false,
+            fields: vec!["id".to_string(), "doc".to_string()],
+            max_width: 80,
+        };
+
+        assert!(options.should_show("id"));
+        assert!(options.should_show("doc"));
+        assert!(!options.should_show("meta"));
+        assert!(!options.should_show("embed"));
+    }
+    #[test]
+    fn test_create_table() {
+        let rows = vec![
+            OutputRow {
+                id: "123".to_string(),
+                document: Some("This is a test document.".to_string()),
+                metadata: Some("{\"key\": \"value\"}".to_string()),
+                embedding: Some(vec![0.1, 0.2, 0.3]),
+                score: Some(0.95),
+                distance: Some(0.05),
+                uri: Some("http://example.com".to_string()),
+                include: Some("{\"extra\": \"info\"}".to_string()),
+                select: Some("{\"field\": \"data\"}".to_string()),
+            }
+        ];
+
+        let options = OutputArgs {
+            json: false,
+            sort: false,
+            fields: vec!["id".to_string(), "doc".to_string(), "meta".to_string()],
+            max_width: 80,
+        };
+
+        let table = create_table(rows, &options, false, false).unwrap();
+        assert!(table.contains("ID"));
+        assert!(table.contains("DOCUMENT"));
+        assert!(table.contains("METADATA"));
+        assert!(table.contains("123"));
+        assert!(table.contains("This is a test document."));
+        assert!(table.contains("{\"key\": \"value\"}"));
+    }
+    #[test]
+    fn test_create_table_with_score() {
+        let rows = vec![
+            OutputRow {
+                id: "123".to_string(),
+                document: Some("This is a test document.".to_string()),
+                metadata: None,
+                embedding: None,
+                score: Some(0.95),
+                distance: None,
+                uri: None,
+                include: None,
+                select: None,
+            }
+        ];
+
+        let options = OutputArgs {
+            json: false,
+            sort: false,
+            fields: vec!["id".to_string(), "doc".to_string(), "score".to_string()],
+            max_width: 80,
+        };
+
+        let table = create_table(rows, &options, true, false).unwrap();
+        assert!(table.contains("SCORE"));
+        assert!(table.contains("0.9500"));
+    }
+    #[test]
+    fn test_create_table_with_distance() {
+        let rows = vec![
+            OutputRow {
+                id: "123".to_string(),
+                document: Some("This is a test document.".to_string()),
+                metadata: None,
+                embedding: None,
+                score: None,
+                distance: Some(0.05),
+                uri: None,
+                include: None,
+                select: None,
+            }
+        ];
+
+        let options = OutputArgs {
+            json: false,
+            sort: false,
+            fields: vec!["id".to_string(), "doc".to_string(), "distance".to_string()],
+            max_width: 80,
+        };
+
+        let table = create_table(rows, &options, false, true).unwrap();
+        assert!(table.contains("DISTANCE"));
+        assert!(table.contains("0.0500"));
+    }
+    #[test]
+    fn test_create_table_with_uri() {
+        let rows = vec![
+            OutputRow {
+                id: "123".to_string(),
+                document: Some("This is a test document.".to_string()),
+                metadata: None,
+                embedding: None,
+                score: None,
+                distance: None,
+                uri: Some("http://example.com".to_string()),
+                include: None,
+                select: None,
+            }
+        ];
+
+        let options = OutputArgs {
+            json: false,
+            sort: false,
+            fields: vec!["id".to_string(), "doc".to_string(), "uri".to_string()],
+            max_width: 80,
+        };
+
+        let table = create_table(rows, &options, false, false).unwrap();
+        assert!(table.contains("URI"));
+        assert!(table.contains("http://example.com"));
+    }
+    #[test]
+    fn test_json_output() {
+        let meta = serde_json::json!({"key": "value"});
+        let meta_v: HashMap<String, MetadataValue> = serde_json::from_value(meta.clone()).unwrap();
+        let include = serde_json::json!({"extra": "info"});
+        let include_v: Include = serde_json::from_value(include.clone()).unwrap();
+        let mut response = ChromaResponse::Get(&mut types::GetResponse {
+            ids: vec!["123".to_string()],
+            documents: Some(vec![Some("This is a test document.".to_string())]),
+            metadatas: Some(vec![Some(meta_v)]),
+            embeddings: Some(vec![vec![0.1, 0.2, 0.3]]),
+            uris: Some(vec![Some("http://example.com".to_string())]),
+            include: vec![include_v],
+        });
+
+        let options = OutputArgs {
+            json: true,
+            sort: false,
+            fields: vec!["id".to_string(), "doc".to_string(), "meta".to_string()],
+            max_width: 80,
+        };
+
+        let json_str = response.as_string(&options).unwrap();
+        assert!(json_str.contains("\"ids\": [\"123\"]"));
+        assert!(json_str.contains("\"documents\": [[\"This is a test document.\"]]"));
+        assert!(json_str.contains("\"metadatas\": [[{\"key\": \"value\"}]]"));
+    }
 }
