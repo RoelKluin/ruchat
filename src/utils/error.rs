@@ -154,6 +154,11 @@ pub enum RuChatError {
     /// Error when an include field is invalid.
     #[error("Invalid include field: {0}")]
     InvalidIncludeField(String),
+
+    /// Error when metadata conversion fails.
+    #[error("Metadata conversion error: {0}")]
+    MetadataConversionError(String),
+
 }
 
 /// A type alias for `Result` that uses `RuChatError` as the error type.
