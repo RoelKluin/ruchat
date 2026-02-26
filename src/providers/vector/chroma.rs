@@ -3,6 +3,7 @@ mod collection;
 pub(crate) mod create;
 pub(crate) mod delete;
 pub(crate) mod get;
+pub(crate) mod search;
 pub(crate) mod ls;
 pub(crate) mod query;
 pub(crate) mod r#where;

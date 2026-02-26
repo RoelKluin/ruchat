@@ -60,6 +60,4 @@ impl GetArgs {
         info!("Get result: {:?}", res);
         Ok(())
     }
-
-
 }

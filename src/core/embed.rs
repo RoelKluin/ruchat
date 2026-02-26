@@ -2,11 +2,9 @@ use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs, UpdateMe
 use crate::ollama::OllamaArgs;
 use crate::RuChatError;
 use clap::Parser;
-use log::{info, warn};
 use md5::{Digest, Md5};
 use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
 use uuid::Builder;
-use chroma::types::UpdateMetadata;
 use std::collections::HashMap;
 use ollama_rs::generation::embeddings::request::EmbeddingsInput;
 
