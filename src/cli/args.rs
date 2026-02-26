@@ -3,6 +3,7 @@ use crate::chroma::create::ChromaCreateArgs;
 use crate::chroma::delete::{chroma_delete, ChromaDeleteArgs};
 use crate::chroma::get::GetArgs;
 use crate::chroma::search::SearchArgs;
+use crate::chroma::modify::ModifyArgs;
 use crate::chroma::ls::{chroma_ls, ChromaLsArgs};
 use crate::chroma::query::QueryArgs;
 use crate::core::embed::EmbedPromptArgs;
@@ -52,6 +53,7 @@ impl Args {
             Commands::ChromaGet(args) => args.get().await,
             Commands::ChromaSearch(args) => args.search().await,
             Commands::ChromaCreate(args) => args.create().await,
+            Commands::ChromaModify(args) => args.modify().await,
             Commands::ChromaLs(args) => chroma_ls(args).await,
             Commands::ChromaDelete(args) => chroma_delete(args).await,
             Commands::Manager(args) => Manager::execute_command(args).await,
@@ -90,6 +92,8 @@ pub(crate) enum Commands {
     ChromaGet(GetArgs),
     /// Search Chroma database using a query string.
     ChromaSearch(SearchArgs),
+    /// Modify Chroma database using a query string.
+    ChromaModify(ModifyArgs),
     /// Create Chroma database collections.
     ChromaCreate(ChromaCreateArgs),
     /// List Chroma database collections.
