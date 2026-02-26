@@ -1,7 +1,6 @@
-use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs};
+use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs, OutputArgs, ChromaResponse};
 use crate::{RuChatError, Result};
 use clap::Parser;
-use log::info;
 use chroma::types::SearchPayload;
 use chroma::types::{RankExpr, QueryVector, Key};
 use chroma_types::plan::ReadLevel;
@@ -31,6 +30,9 @@ pub(crate) struct SearchArgs {
 
     #[command(flatten)]
     client: ChromaClientConfigArgs,
+
+    #[command(flatten)]
+    output: OutputArgs,
 }
 
 impl SearchArgs {
@@ -56,29 +58,25 @@ impl SearchArgs {
         };
 
         // 2. Map the CLI string to the ReadLevel enum
-        if let Some(read_level) = self.read_level.as_ref() {
+        let mut search_result = if let Some(read_level) = self.read_level.as_ref() {
             let read_level = match read_level.to_lowercase().as_str() {
                 "index-only" | "indexonly" => ReadLevel::IndexOnly,
                 _ => ReadLevel::IndexAndWal, // Default to full consistency
             };
 
             // 3. Execute with options
-            let res = collection
+            collection
                 .search_with_options(vec![search_payload], read_level)
                 .await
-                .map_err(RuChatError::ChromaHttpClientError)?;
+                .map_err(RuChatError::ChromaHttpClientError)?
 
-            // 4. Output results
-            info!("Search #(ReadLevel: {:?}) results: {:?}", read_level, res);
         } else {
-            let res = collection
+            collection
                 .search(vec![search_payload])
                 .await
-                .map_err(RuChatError::ChromaHttpClientError)?;
-            info!("Search results: {:?}", res);
-        }
-
-        Ok(())
+                .map_err(RuChatError::ChromaHttpClientError)?
+        };
+        ChromaResponse::Search(&mut search_result).render(&self.output)
     }
 
     fn parse_payload(&self, input: &str) -> Result<SearchPayload> {

@@ -1,9 +1,9 @@
-use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs, IncludeArgs, WhereArgs};
+use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs, IncludeArgs, WhereArgs, OutputArgs, ChromaResponse};
 use crate::ollama::OllamaArgs;
 use crate::RuChatError;
 use anyhow::Result;
 use clap::Parser;
-use log::{info, warn};
+use log::warn;
 use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
 
 /// Command-line arguments for querying a Chroma database.
@@ -39,6 +39,9 @@ pub(crate) struct QueryArgs {
 
     #[command(flatten)]
     r#where: WhereArgs,
+
+    #[command(flatten)]
+    output: OutputArgs,
 }
 
 impl QueryArgs {
@@ -63,16 +66,14 @@ impl QueryArgs {
 
         let include = self.include.parse()?;
 
-        let query_result = collection.query(
+        let mut query_result = collection.query(
             query_embeddings,
             self.n_results,
             r#where,
             ids,
             include,
         ).await?;
-
-        info!("Query results: {:?}", query_result);
-        Ok(())
+        ChromaResponse::Query(&mut query_result).render(&self.output)
     }
 }
 

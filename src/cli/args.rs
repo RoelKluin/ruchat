@@ -5,7 +5,7 @@ use crate::chroma::fork::ForkArgs;
 use crate::chroma::get::GetArgs;
 use crate::chroma::search::SearchArgs;
 use crate::chroma::modify::ModifyArgs;
-use crate::chroma::ls::{chroma_ls, ChromaLsArgs};
+use crate::chroma::ls::ChromaLsArgs;
 use crate::chroma::query::QueryArgs;
 use crate::core::embed::EmbedPromptArgs;
 use crate::ollama::ask::AskArgs;
@@ -56,7 +56,7 @@ impl Args {
             Commands::ChromaFork(args) => args.fork().await,
             Commands::ChromaCreate(args) => args.create().await,
             Commands::ChromaModify(args) => args.modify().await,
-            Commands::ChromaLs(args) => chroma_ls(args).await,
+            Commands::ChromaLs(args) => args.ls().await,
             Commands::ChromaDelete(args) => args.delete().await,
             Commands::Manager(args) => Manager::execute_command(args).await,
         }

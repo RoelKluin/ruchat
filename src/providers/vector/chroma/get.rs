@@ -1,7 +1,6 @@
-use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs, IncludeArgs, WhereArgs};
+use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs, IncludeArgs, WhereArgs, OutputArgs, ChromaResponse};
 use crate::{RuChatError, Result};
 use clap::Parser;
-use log::info;
 
 /// Command-line arguments for geting a Chroma database.
 ///
@@ -33,6 +32,9 @@ pub(crate) struct GetArgs {
 
     #[command(flatten)]
     r#where: WhereArgs,
+
+    #[command(flatten)]
+    output: OutputArgs,
 }
 
 impl GetArgs {
@@ -47,13 +49,10 @@ impl GetArgs {
 
         let include_list = self.include.parse()?;
 
-        let get_result = collection.get(
+        let mut get_result = collection.get(
             ids, r#where, self.limit, self.offset, include_list,
         ).await
             .map_err(RuChatError::ChromaHttpClientError)?;
-
-        let res: Vec<_> = get_result.documents.unwrap_or_default();
-        info!("Get result: {:?}", res);
-        Ok(())
+        ChromaResponse::Get(&mut get_result).render(&self.output)
     }
 }
