@@ -1,6 +1,7 @@
 use crate::agent::manager::{Manager, ManagerArgs};
 use crate::chroma::create::ChromaCreateArgs;
 use crate::chroma::delete::ChromaDeleteArgs;
+use crate::chroma::fork::ForkArgs;
 use crate::chroma::get::GetArgs;
 use crate::chroma::search::SearchArgs;
 use crate::chroma::modify::ModifyArgs;
@@ -52,6 +53,7 @@ impl Args {
             Commands::ChromaQuery(args) => args.query().await,
             Commands::ChromaGet(args) => args.get().await,
             Commands::ChromaSearch(args) => args.search().await,
+            Commands::ChromaFork(args) => args.fork().await,
             Commands::ChromaCreate(args) => args.create().await,
             Commands::ChromaModify(args) => args.modify().await,
             Commands::ChromaLs(args) => chroma_ls(args).await,
@@ -92,6 +94,8 @@ pub(crate) enum Commands {
     ChromaGet(GetArgs),
     /// Search Chroma database using a query string.
     ChromaSearch(SearchArgs),
+    /// Fork a Chroma database collection.
+    ChromaFork(ForkArgs),
     /// Modify Chroma database using a query string.
     ChromaModify(ModifyArgs),
     /// Create Chroma database collections.

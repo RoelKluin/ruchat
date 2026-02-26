@@ -5,6 +5,7 @@ pub(crate) mod delete;
 pub(crate) mod get;
 pub(crate) mod search;
 pub(crate) mod modify;
+pub(crate) mod fork;
 pub(crate) mod ls;
 pub(crate) mod query;
 pub(crate) mod r#where;
