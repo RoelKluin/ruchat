@@ -1,5 +1,5 @@
 // src/chroma/parser.rs
-use crate::{RuChatError, Result};
+use crate::{Result, RuChatError};
 use chroma::types::IncludeList;
 use clap::Parser;
 
@@ -11,7 +11,9 @@ pub(crate) struct IncludeArgs {
 }
 
 fn parse_include(include: &str) -> Result<IncludeList> {
-    serde_json::from_str(include).map_err(|e| RuChatError::InvalidIncludeList(format!("Error {e} while parsing '{include}'")))
+    serde_json::from_str(include).map_err(|e| {
+        RuChatError::InvalidIncludeList(format!("Error {e} while parsing '{include}'"))
+    })
 }
 
 impl IncludeArgs {
@@ -21,7 +23,7 @@ impl IncludeArgs {
 }
 
 #[cfg(test)]
-mod tests{
+mod tests {
     use super::*;
     use chroma::types::Include;
 
@@ -34,7 +36,13 @@ mod tests{
             Include::Metadata,
             Include::Uri,
         ]);
-        eprintln!("Testing valid include list {}", serde_json::to_string(&include_list).unwrap());
-        assert_eq!(parse_include(r#"["distances","documents","embeddings","metadatas","uris"]"#).unwrap(), include_list);
+        eprintln!(
+            "Testing valid include list {}",
+            serde_json::to_string(&include_list).unwrap()
+        );
+        assert_eq!(
+            parse_include(r#"["distances","documents","embeddings","metadatas","uris"]"#).unwrap(),
+            include_list
+        );
     }
 }

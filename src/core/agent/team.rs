@@ -1,5 +1,5 @@
-use crate::agent::worker::Agent;
 use crate::Result;
+use crate::agent::worker::Agent;
 use ollama_rs::Ollama;
 use serde::{Deserialize, Serialize};
 

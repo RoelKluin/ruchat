@@ -3,9 +3,9 @@ mod event_result;
 mod history;
 mod pos;
 use crate::core::chat::tree::ConversationTree;
-use crate::{Result, RuChatError};
 use crate::ollama::OllamaArgs;
 use crate::ollama::chat::event_result::EventResult;
+use crate::{Result, RuChatError};
 use bufcursor::BufCursor;
 use clap::{ArgAction, Parser};
 use crossterm::{

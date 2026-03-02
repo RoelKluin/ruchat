@@ -1,9 +1,11 @@
-use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs, OutputArgs, ChromaResponse};
-use crate::{RuChatError, Result};
-use clap::Parser;
+use crate::chroma::{
+    ChromaClientConfigArgs, ChromaCollectionConfigArgs, ChromaResponse, OutputArgs,
+};
+use crate::{Result, RuChatError};
 use chroma::types::SearchPayload;
-use chroma::types::{RankExpr, QueryVector, Key};
+use chroma::types::{Key, QueryVector, RankExpr};
 use chroma_types::plan::ReadLevel;
+use clap::Parser;
 
 /// Command-line arguments for searching a Chroma collection.
 #[derive(Parser, Debug, Clone, PartialEq)]
@@ -37,7 +39,10 @@ pub(crate) struct SearchArgs {
 
 impl SearchArgs {
     pub(crate) async fn search(&self) -> Result<()> {
-        let client = self.client.create_client().map_err(RuChatError::ChromaError)?;
+        let client = self
+            .client
+            .create_client()
+            .map_err(RuChatError::ChromaError)?;
         let collection = self.collection.get_collection(&client, "default").await?;
 
         // 1. Resolve the SearchPayload (Basic KNN or JSON-based)
@@ -54,7 +59,9 @@ impl SearchArgs {
                 })
                 .limit(self.limit, 0)
         } else {
-            return Err(RuChatError::InternalError("Provide --payload or --query".into()));
+            return Err(RuChatError::InternalError(
+                "Provide --payload or --query".into(),
+            ));
         };
 
         // 2. Map the CLI string to the ReadLevel enum
@@ -69,7 +76,6 @@ impl SearchArgs {
                 .search_with_options(vec![search_payload], read_level)
                 .await
                 .map_err(RuChatError::ChromaHttpClientError)?
-
         } else {
             collection
                 .search(vec![search_payload])

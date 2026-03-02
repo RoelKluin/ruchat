@@ -1,5 +1,5 @@
-use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs, MetadataArgs};
 use crate::Result;
+use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs, MetadataArgs};
 use clap::Parser;
 
 /// Command-line arguments for creating data in a Chroma database.
@@ -28,7 +28,11 @@ impl ChromaCreateArgs {
     pub(crate) async fn create(&self) -> Result<()> {
         let client = self.client.create_client()?;
         let name = self.collection.name();
-        let schema = self.schema.as_ref().map(|s| serde_json::from_str(s)).transpose()?;
+        let schema = self
+            .schema
+            .as_ref()
+            .map(|s| serde_json::from_str(s))
+            .transpose()?;
         let metadata = self.metadata.parse()?;
 
         client.create_collection(name, schema, metadata).await?;

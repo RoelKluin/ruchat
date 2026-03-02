@@ -1,6 +1,9 @@
-use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs, IncludeArgs, WhereArgs, OutputArgs, ChromaResponse};
-use crate::ollama::OllamaArgs;
 use crate::RuChatError;
+use crate::chroma::{
+    ChromaClientConfigArgs, ChromaCollectionConfigArgs, ChromaResponse, IncludeArgs, OutputArgs,
+    WhereArgs,
+};
+use crate::ollama::OllamaArgs;
 use anyhow::Result;
 use clap::Parser;
 use log::warn;
@@ -50,30 +53,30 @@ impl QueryArgs {
         let collection = self.collection.get_collection(&client, "default").await?;
 
         let (ollama, models) = self.ollama.init("all-minilm:l6-v2").await?;
-        let model = models.last().ok_or(RuChatError::ModelNotFound("all-minilm:l6-v2".to_string()))?;
+        let model = models
+            .last()
+            .ok_or(RuChatError::ModelNotFound("all-minilm:l6-v2".to_string()))?;
         if model != "all-minilm:l6-v2" && !model.contains("embed") {
             warn!("Model {model} might not be an embeddings model");
         }
-        let request = GenerateEmbeddingsRequest::new(model.to_string(), vec![self.query.as_str()].into());
+        let request =
+            GenerateEmbeddingsRequest::new(model.to_string(), vec![self.query.as_str()].into());
         let res = ollama.generate_embeddings(request).await?;
 
         let query_embeddings = res.embeddings;
-        
+
         let r#where = self.r#where.parse()?;
 
-        let ids = self.ids.as_ref()
+        let ids = self
+            .ids
+            .as_ref()
             .map(|s| s.split(',').map(|id| id.trim().to_string()).collect());
 
         let include = self.include.parse()?;
 
-        let mut query_result = collection.query(
-            query_embeddings,
-            self.n_results,
-            r#where,
-            ids,
-            include,
-        ).await?;
+        let mut query_result = collection
+            .query(query_embeddings, self.n_results, r#where, ids, include)
+            .await?;
         ChromaResponse::Query(&mut query_result).render(&self.output)
     }
 }
-

@@ -1,10 +1,10 @@
 use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs};
-use crate::{RuChatError, Result};
+use crate::{Result, RuChatError};
 use clap::Parser;
 use log::info;
 
 /// Command-line arguments for forking a Chroma collection.
-/// 
+///
 /// Creates a shallow copy of an existing collection under a new name.
 #[derive(Parser, Debug, Clone, PartialEq)]
 pub(crate) struct ForkArgs {
@@ -21,8 +21,11 @@ pub(crate) struct ForkArgs {
 
 impl ForkArgs {
     pub(crate) async fn fork(&self) -> Result<()> {
-        let client = self.client.create_client().map_err(RuChatError::ChromaError)?;
-        
+        let client = self
+            .client
+            .create_client()
+            .map_err(RuChatError::ChromaError)?;
+
         // Get the source collection handle
         let collection = self.collection.get_collection(&client, "default").await?;
 

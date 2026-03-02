@@ -138,7 +138,6 @@ pub enum RuChatError {
     #[error("No answer found for question_id {0} and answer_id {1}")]
     HistoryError(usize, usize),
 
-
     /// Error when the provided string is neither a file nor parseable metadata.
     #[error("Provided string is neither a file or parseable '{0}'")]
     MetadataFileOrParseError(String),
@@ -158,7 +157,6 @@ pub enum RuChatError {
     /// Error when metadata conversion fails.
     #[error("Metadata conversion error: {0}")]
     MetadataConversionError(String),
-
 }
 
 /// A type alias for `Result` that uses `RuChatError` as the error type.

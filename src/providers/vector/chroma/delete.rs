@@ -1,5 +1,5 @@
 use crate::chroma::{ChromaClientConfigArgs, WhereArgs};
-use crate::{RuChatError, Result};
+use crate::{Result, RuChatError};
 use clap::Parser;
 use log::info;
 
@@ -25,10 +25,15 @@ pub(crate) struct ChromaDeleteArgs {
 
 impl ChromaDeleteArgs {
     pub(crate) async fn delete(&self) -> Result<()> {
-        let client = self.client_config.create_client().map_err(RuChatError::ChromaError)?;
+        let client = self
+            .client_config
+            .create_client()
+            .map_err(RuChatError::ChromaError)?;
 
         // Parse optional target filters
-        let ids: Option<Vec<String>> = self.ids.as_ref()
+        let ids: Option<Vec<String>> = self
+            .ids
+            .as_ref()
             .map(|s| s.split(',').map(|id| id.trim().to_string()).collect());
 
         let where_clause = self.r#where.parse()?;
@@ -58,7 +63,9 @@ impl ChromaDeleteArgs {
 
             info!("Deleted entire collection: {}", self.collection);
         } else {
-            info!("Use --force to delete the entire collection, or provide --ids or --where to delete specific records");
+            info!(
+                "Use --force to delete the entire collection, or provide --ids or --where to delete specific records"
+            );
         }
         Ok(())
     }

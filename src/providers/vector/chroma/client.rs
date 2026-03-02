@@ -1,6 +1,6 @@
 use anyhow::Result;
-use chroma::client::{ChromaAuthMethod, ChromaHttpClientOptions, ChromaRetryOptions};
 use chroma::ChromaHttpClient;
+use chroma::client::{ChromaAuthMethod, ChromaHttpClientOptions, ChromaRetryOptions};
 use clap::Parser;
 use http::{HeaderName, HeaderValue};
 use std::time::Duration;

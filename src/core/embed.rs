@@ -1,14 +1,14 @@
 use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs, UpdateMetadataArrayArgs};
 use crate::ollama::OllamaArgs;
-use crate::{RuChatError, Result};
+use crate::{Result, RuChatError};
+use chroma::types::{Metadata, MetadataValue, UpdateMetadata};
 use clap::{Parser, ValueEnum};
 use log::info;
 use md5::{Digest, Md5};
 use ollama_rs::generation::embeddings::request::{EmbeddingsInput, GenerateEmbeddingsRequest};
-use uuid::Builder;
 use std::collections::HashMap;
-use chroma::types::{UpdateMetadata, Metadata, MetadataValue};
 use std::result::Result as StdResult;
+use uuid::Builder;
 
 /// The mode of operation for record synchronization.
 #[derive(ValueEnum, Debug, Clone, PartialEq, Copy)]
@@ -56,10 +56,17 @@ pub(crate) struct EmbedArgs {
 impl EmbedPromptArgs {
     pub(crate) async fn embed(self) -> Result<()> {
         let (ollama, models) = self.embed_args.ollama_args.init("all-minilm:l6-v2").await?;
-        let model = models.last().ok_or_else(|| RuChatError::InternalError("No model found".into()))?.to_string();
+        let model = models
+            .last()
+            .ok_or_else(|| RuChatError::InternalError("No model found".into()))?
+            .to_string();
 
         let client = self.embed_args.client_config.create_client()?;
-        let collection = self.embed_args.collection_config.get_collection(&client, "default").await?;
+        let collection = self
+            .embed_args
+            .collection_config
+            .get_collection(&client, "default")
+            .await?;
 
         // 1. Processing and Slicing (Your existing logic)
         let raw_metadata = self.embed_args.metadata.parse()?;
@@ -81,8 +88,14 @@ impl EmbedPromptArgs {
         } else {
             for meta in metadata_items {
                 let meta_value = serde_json::to_value(&meta).unwrap_or_default();
-                let start = meta_value.get("start").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
-                let end = meta_value.get("end").and_then(|v| v.as_u64()).unwrap_or(line_pool.len() as u64) as u32;
+                let start = meta_value
+                    .get("start")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(1) as u32;
+                let end = meta_value
+                    .get("end")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(line_pool.len() as u64) as u32;
 
                 let slice_start = (start.saturating_sub(1)) as usize;
                 let slice_end = (end as usize).min(line_pool.len());
@@ -95,18 +108,31 @@ impl EmbedPromptArgs {
         // 2. Generate IDs and Embeddings
         let mut chunk_ids = Vec::new();
         for content in &chunk_texts {
-            let hasher = Md5::new_with_prefix(format!("{model}:{}:{}", self.embed_args.id.as_deref().unwrap_or_default(), content));
+            let hasher = Md5::new_with_prefix(format!(
+                "{model}:{}:{}",
+                self.embed_args.id.as_deref().unwrap_or_default(),
+                content
+            ));
             let digest = hasher.finalize();
-            let id = Builder::from_md5_bytes(digest.into()).into_uuid().hyphenated().to_string();
+            let id = Builder::from_md5_bytes(digest.into())
+                .into_uuid()
+                .hyphenated()
+                .to_string();
             chunk_ids.push(id);
         }
 
-        let request = GenerateEmbeddingsRequest::new(model, EmbeddingsInput::Multiple(chunk_texts.clone()));
+        let request =
+            GenerateEmbeddingsRequest::new(model, EmbeddingsInput::Multiple(chunk_texts.clone()));
         let embed_res = ollama.generate_embeddings(request).await?;
         let embeddings = embed_res.embeddings;
 
-        let docs_to_send: Option<Vec<Option<String>>> = Some(chunk_texts.into_iter().map(Some).collect());
-        let metadatas_to_send: Option<Vec<Option<UpdateMetadata>>> = if chunk_metadatas.is_empty() { None } else { Some(chunk_metadatas) };
+        let docs_to_send: Option<Vec<Option<String>>> =
+            Some(chunk_texts.into_iter().map(Some).collect());
+        let metadatas_to_send: Option<Vec<Option<UpdateMetadata>>> = if chunk_metadatas.is_empty() {
+            None
+        } else {
+            Some(chunk_metadatas)
+        };
 
         // 3. Unified Dispatch
         match self.mode {
@@ -118,7 +144,9 @@ impl EmbedPromptArgs {
                                 meta_opt
                                     .map(|meta| {
                                         meta.into_iter()
-                                            .map(|(k, v)| MetadataValue::try_from(&v).map(|mv| (k, mv)))
+                                            .map(|(k, v)| {
+                                                MetadataValue::try_from(&v).map(|mv| (k, mv))
+                                            })
                                             .collect::<StdResult<Metadata, _>>()
                                     })
                                     .transpose()
@@ -127,19 +155,31 @@ impl EmbedPromptArgs {
                     })
                     .transpose()
                     .map_err(|e| RuChatError::MetadataConversionError(e.to_string()))?;
-                collection.add(chunk_ids, embeddings, docs_to_send, None, metadatas_to_send).await
+                collection
+                    .add(chunk_ids, embeddings, docs_to_send, None, metadatas_to_send)
+                    .await
                     .map_err(RuChatError::ChromaHttpClientError)?;
                 info!("Added records");
             }
             UpsertMode::Update => {
                 // Map embeddings for Update (Update accepts Option<Vec<Option<Vec<f32>>>>)
                 let update_embeddings = Some(embeddings.into_iter().map(Some).collect());
-                collection.update(chunk_ids, update_embeddings, docs_to_send, None, metadatas_to_send).await
+                collection
+                    .update(
+                        chunk_ids,
+                        update_embeddings,
+                        docs_to_send,
+                        None,
+                        metadatas_to_send,
+                    )
+                    .await
                     .map_err(RuChatError::ChromaHttpClientError)?;
                 info!("Updated Records");
             }
             UpsertMode::Upsert => {
-                collection.upsert(chunk_ids, embeddings, docs_to_send, None, metadatas_to_send).await
+                collection
+                    .upsert(chunk_ids, embeddings, docs_to_send, None, metadatas_to_send)
+                    .await
                     .map_err(RuChatError::ChromaHttpClientError)?;
                 info!("Upserted records");
             }

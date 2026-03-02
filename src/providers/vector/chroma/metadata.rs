@@ -1,9 +1,9 @@
 use crate::{Result, RuChatError};
-use std::fs;
-use std::path::Path;
+use chroma::types::{Metadata, UpdateMetadata};
 use clap::Parser;
 use serde::de::DeserializeOwned;
-use chroma::types::{Metadata, UpdateMetadata};
+use std::fs;
+use std::path::Path;
 
 #[derive(Parser, Debug, Clone, PartialEq)]
 pub(crate) struct MetadataArgs {
@@ -15,7 +15,10 @@ pub(crate) struct MetadataArgs {
 impl MetadataArgs {
     /// Parses the metadata argument and returns an optional map of metadata.
     pub(crate) fn parse(&self) -> Result<Option<Metadata>> {
-        self.metadata.as_ref().map(|s| parse_metadata::<Metadata>(s)).transpose()
+        self.metadata
+            .as_ref()
+            .map(|s| parse_metadata::<Metadata>(s))
+            .transpose()
     }
 }
 
@@ -23,13 +26,16 @@ impl MetadataArgs {
 pub(crate) struct UpdateMetadataArrayArgs {
     /// An JSON string or a file path to JSON metadata
     #[arg(short, long)]
-    metadata: Option<String>
+    metadata: Option<String>,
 }
 
 impl UpdateMetadataArrayArgs {
     /// Parses the update metadata argument and returns a map of metadata.
     pub(crate) fn parse(&self) -> Result<Option<Vec<Option<UpdateMetadata>>>> {
-        self.metadata.as_ref().map(|s| parse_metadata::<Vec<Option<UpdateMetadata>>>(s)).transpose()
+        self.metadata
+            .as_ref()
+            .map(|s| parse_metadata::<Vec<Option<UpdateMetadata>>>(s))
+            .transpose()
     }
 }
 
@@ -41,9 +47,7 @@ impl UpdateMetadataArrayArgs {
 /// # Returns
 ///
 /// A `Result` containing an optional map of metadata or a `RuChatError`.
-fn parse_metadata<T>(
-    metadata: &str,
-) -> Result<T>
+fn parse_metadata<T>(metadata: &str) -> Result<T>
 where
     T: DeserializeOwned,
 {
@@ -55,14 +59,13 @@ where
     // If that fails, try to treat it as a file path
     if Path::new(metadata).exists() {
         let file_contents = fs::read_to_string(metadata)
-            .map_err(|e|  RuChatError::MetadataFileReadError(metadata.to_string(), e))?;
+            .map_err(|e| RuChatError::MetadataFileReadError(metadata.to_string(), e))?;
 
         let parsed = serde_json::from_str::<T>(&file_contents)
             .map_err(|e| RuChatError::MetadataParseError(metadata.to_string(), e))?;
 
         Ok(parsed)
     } else {
-
         // If it's neither valid JSON nor a valid file path, return an error
         Err(RuChatError::MetadataFileOrParseError(metadata.to_string()))
     }

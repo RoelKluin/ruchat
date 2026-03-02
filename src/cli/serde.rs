@@ -1,5 +1,5 @@
-use crate::agent::manager::Manager; // generic approach is better, but explicit is easier here
 use crate::RuChatError;
+use crate::agent::manager::Manager; // generic approach is better, but explicit is easier here
 use serde_json::Value;
 use std::path::Path;
 use tokio::fs;

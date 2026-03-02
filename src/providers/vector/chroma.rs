@@ -2,25 +2,25 @@ mod client;
 mod collection;
 pub(crate) mod create;
 pub(crate) mod delete;
-pub(crate) mod get;
-pub(crate) mod search;
-pub(crate) mod modify;
 pub(crate) mod fork;
-pub(crate) mod ls;
-pub(crate) mod query;
-pub(crate) mod r#where;
+pub(crate) mod get;
 pub(crate) mod include;
+pub(crate) mod ls;
 pub(crate) mod metadata;
+pub(crate) mod modify;
+pub(crate) mod query;
+pub(crate) mod search;
+pub(crate) mod r#where;
 
+use crate::{Result, RuChatError};
+use chroma::types;
 pub(crate) use client::ChromaClientConfigArgs;
 pub(crate) use collection::ChromaCollectionConfigArgs;
-pub(crate) use r#where::WhereArgs;
 pub(crate) use include::IncludeArgs;
+use log::{info, warn};
 pub(crate) use metadata::{MetadataArgs, UpdateMetadataArrayArgs};
 use serde::Serialize;
-use chroma::types;
-use crate::{Result, RuChatError};
-use log::{info, warn};
+pub(crate) use r#where::WhereArgs;
 
 #[derive(clap::Args, Debug, Clone, PartialEq)]
 pub(crate) struct OutputArgs {
@@ -62,11 +62,11 @@ struct OutputRow {
     document: Option<String>,
     metadata: Option<String>,
     embedding: Option<Vec<f32>>,
-    score: Option<f32>,     // for search results
-    distance: Option<f32>,  // for query results
-    uri: Option<String>,    // for query results
-    include: Option<String>,// for query results and get results, json string of the include field
-    select: Option<String>, // for search results, json string of the select field
+    score: Option<f32>,      // for search results
+    distance: Option<f32>,   // for query results
+    uri: Option<String>,     // for query results
+    include: Option<String>, // for query results and get results, json string of the include field
+    select: Option<String>,  // for search results, json string of the select field
 }
 
 impl AsMut<Self> for ChromaResponse<'_> {
@@ -98,14 +98,14 @@ impl ChromaResponse<'_> {
                 ChromaResponse::Get(r) => {
                     let rows = flatten_get(r);
                     table.push_str(&create_table(rows, options, false, false)?);
-                },
+                }
                 ChromaResponse::Search(r) => {
                     for (i, _) in r.ids.iter().enumerate() {
                         info!("\nSearch Result Set #{}", i);
                         let rows = flatten_search(r, i);
                         table.push_str(&create_table(rows, options, true, false)?);
                     }
-                },
+                }
                 ChromaResponse::Query(r) => {
                     for (i, _) in r.ids.iter().enumerate() {
                         info!("\nQuery Result Set #{}", i);
@@ -118,13 +118,23 @@ impl ChromaResponse<'_> {
         }
     }
 }
-fn create_table(rows: Vec<OutputRow>, options: &OutputArgs, is_search: bool, is_query: bool) -> Result<String> {
-
+fn create_table(
+    rows: Vec<OutputRow>,
+    options: &OutputArgs,
+    is_search: bool,
+    is_query: bool,
+) -> Result<String> {
     // 1. Build Dynamic Header
     let mut header = String::new();
-    if options.should_show("id")    { header.push_str(&format!("{:<36} ", "ID")); }
-    if options.should_show("doc")   { header.push_str(&format!("{:<30} ", "DOCUMENT")); }
-    if options.should_show("embed") { header.push_str(&format!("{:<12} ", "EMBEDDING")); }
+    if options.should_show("id") {
+        header.push_str(&format!("{:<36} ", "ID"));
+    }
+    if options.should_show("doc") {
+        header.push_str(&format!("{:<30} ", "DOCUMENT"));
+    }
+    if options.should_show("embed") {
+        header.push_str(&format!("{:<12} ", "EMBEDDING"));
+    }
 
     if is_search && options.should_show("score") {
         header.push_str(&format!("{:<10} ", "SCORE"));
@@ -132,8 +142,12 @@ fn create_table(rows: Vec<OutputRow>, options: &OutputArgs, is_search: bool, is_
     if is_query && options.should_show("distance") {
         header.push_str(&format!("{:<10} ", "DISTANCE"));
     }
-    if options.should_show("uri")     { header.push_str(&format!("{:<20} ", "URI")); }
-    if options.should_show("meta")    { header.push_str("METADATA"); }
+    if options.should_show("uri") {
+        header.push_str(&format!("{:<20} ", "URI"));
+    }
+    if options.should_show("meta") {
+        header.push_str("METADATA");
+    }
 
     let mut table = String::new();
     table.push_str(&format!("{:-<120}{header}{:-<120}\n", "", ""));
@@ -148,12 +162,18 @@ fn create_table(rows: Vec<OutputRow>, options: &OutputArgs, is_search: bool, is_
 
         if options.should_show("doc") {
             let doc = row.document.unwrap_or_else(|| "-".to_string());
-            let truncated = if doc.len() > 27 { format!("{}...", &doc[..24]) } else { format!("{:<27}", doc) };
+            let truncated = if doc.len() > 27 {
+                format!("{}...", &doc[..24])
+            } else {
+                format!("{:<27}", doc)
+            };
             line.push_str(&format!("{} ", truncated));
         }
 
         if options.should_show("embed") {
-            let emb_str = row.embedding.map_or("None".to_string(), |e| format!("[dim: {}]", e.len()));
+            let emb_str = row
+                .embedding
+                .map_or("None".to_string(), |e| format!("[dim: {}]", e.len()));
             line.push_str(&format!("{:<12} ", emb_str));
         }
 
@@ -167,80 +187,143 @@ fn create_table(rows: Vec<OutputRow>, options: &OutputArgs, is_search: bool, is_
 
         if options.should_show("uri") {
             let uri = row.uri.unwrap_or_else(|| "-".to_string());
-            line.push_str(&format!("{:<20} ", if uri.len() > 17 { format!("{}...", &uri[..17]) } else { uri }));
+            line.push_str(&format!(
+                "{:<20} ",
+                if uri.len() > 17 {
+                    format!("{}...", &uri[..17])
+                } else {
+                    uri
+                }
+            ));
         }
 
-        if options.should_show("meta") {
-            if let Some(m) = row.metadata {
-                let truncated = if m.len() > 40 { format!("{}...", &m[..37]) } else { m };
-                line.push_str(&truncated);
-            }
+        if options.should_show("meta")
+            && let Some(m) = row.metadata
+        {
+            let truncated = if m.len() > 40 {
+                format!("{}...", &m[..37])
+            } else {
+                m
+            };
+            line.push_str(&truncated);
         }
         if options.should_show("select") {
             let sel = row.select.unwrap_or_else(|| "-".to_string());
-            let trunc = if sel.len() > 12 { format!("{}...", &sel[..12]) } else { format!("{:<15}", sel) };
+            let trunc = if sel.len() > 12 {
+                format!("{}...", &sel[..12])
+            } else {
+                format!("{:<15}", sel)
+            };
             line.push_str(&format!("{} ", trunc));
         }
 
         if options.should_show("include") {
             let inc = row.include.unwrap_or_else(|| "-".to_string());
-            let trunc = if inc.len() > 12 { format!("{}...", &inc[..12]) } else { format!("{:<15}", inc) };
+            let trunc = if inc.len() > 12 {
+                format!("{}...", &inc[..12])
+            } else {
+                format!("{:<15}", inc)
+            };
             line.push_str(&format!("{} ", trunc));
         }
         table.push_str(&line);
     }
-    return Ok(table);
+    Ok(table)
 }
 fn flatten_get(r: &types::GetResponse) -> Vec<OutputRow> {
-    (0..r.ids.len()).map(|i| OutputRow {
-        id: r.ids[i].clone(),
-        document: r.documents.as_ref().and_then(|d| d[i].clone()),
-        metadata: r.metadatas.as_ref().and_then(|m| m[i].as_ref().map(|map| format!("{:?}", map))),
-        embedding: r.embeddings.as_ref().and_then(|e| e.get(i).cloned()),
-        score: None,
-        distance: None,
-        select: None,
-        uri: r.uris.as_ref().and_then(|u| u[i].clone()),
-        include: r.include.get(i).map(|inc| format!("{:?}", inc)),
-    }).collect()
+    (0..r.ids.len())
+        .map(|i| OutputRow {
+            id: r.ids[i].clone(),
+            document: r.documents.as_ref().and_then(|d| d[i].clone()),
+            metadata: r
+                .metadatas
+                .as_ref()
+                .and_then(|m| m[i].as_ref().map(|map| format!("{:?}", map))),
+            embedding: r.embeddings.as_ref().and_then(|e| e.get(i).cloned()),
+            score: None,
+            distance: None,
+            select: None,
+            uri: r.uris.as_ref().and_then(|u| u[i].clone()),
+            include: r.include.get(i).map(|inc| format!("{:?}", inc)),
+        })
+        .collect()
 }
 
 fn flatten_search(r: &types::SearchResponse, index: usize) -> Vec<OutputRow> {
     let ids = &r.ids[index];
-    (0..ids.len()).map(|i| OutputRow {
-        id: ids[i].clone(),
-        document: r.documents.get(index).and_then(|d| d.as_ref().and_then(|docs| docs[i].clone())),
-        metadata: r.metadatas.get(index).and_then(|m| m.as_ref().and_then(|metas| metas[i].as_ref().map(|m| format!("{:?}", m)))),
-        embedding: r.embeddings.get(index).and_then(|e| e.as_ref().and_then(|embs| embs[i].clone())),
-        score: r.scores.get(index).and_then(|s| s.as_ref().and_then(|sv| sv[i])),
-        select: r.select.get(index).and_then(|s| serde_json::to_string(&s).ok()),
-        distance: None,
-        uri: None,
-        include: None,
-    }).collect()
+    (0..ids.len())
+        .map(|i| OutputRow {
+            id: ids[i].clone(),
+            document: r
+                .documents
+                .get(index)
+                .and_then(|d| d.as_ref().and_then(|docs| docs[i].clone())),
+            metadata: r.metadatas.get(index).and_then(|m| {
+                m.as_ref()
+                    .and_then(|metas| metas[i].as_ref().map(|m| format!("{:?}", m)))
+            }),
+            embedding: r
+                .embeddings
+                .get(index)
+                .and_then(|e| e.as_ref().and_then(|embs| embs[i].clone())),
+            score: r
+                .scores
+                .get(index)
+                .and_then(|s| s.as_ref().and_then(|sv| sv[i])),
+            select: r
+                .select
+                .get(index)
+                .and_then(|s| serde_json::to_string(&s).ok()),
+            distance: None,
+            uri: None,
+            include: None,
+        })
+        .collect()
 }
 
 fn flatten_query(r: &types::QueryResponse, index: usize) -> Vec<OutputRow> {
     let ids = &r.ids[index];
-    (0..ids.len()).map(|i| OutputRow {
-        id: ids[i].clone(),
-        document: r.documents.as_ref().and_then(|d| d.get(index)).and_then(|docs| docs[i].clone()),
-        metadata: r.metadatas.as_ref().and_then(|m| m.get(index)).and_then(|metas| metas[i].as_ref().map(|m| format!("{:?}", m))),
-        embedding: r.embeddings.as_ref().and_then(|e| e.get(index)).and_then(|embs| embs[i].clone()),
-        uri: r.uris.as_ref().and_then(|u| u.get(index)).and_then(|uris| uris[i].clone()),
-        distance: r.distances.as_ref().and_then(|d| d.get(index)).and_then(|dist| dist[i]),
-        include: r.include.get(index).map(|inc| format!("{:?}", inc)), // Adjusted per types
-        score: None,
-        select: None,
-    }).collect()
+    (0..ids.len())
+        .map(|i| OutputRow {
+            id: ids[i].clone(),
+            document: r
+                .documents
+                .as_ref()
+                .and_then(|d| d.get(index))
+                .and_then(|docs| docs[i].clone()),
+            metadata: r
+                .metadatas
+                .as_ref()
+                .and_then(|m| m.get(index))
+                .and_then(|metas| metas[i].as_ref().map(|m| format!("{:?}", m))),
+            embedding: r
+                .embeddings
+                .as_ref()
+                .and_then(|e| e.get(index))
+                .and_then(|embs| embs[i].clone()),
+            uri: r
+                .uris
+                .as_ref()
+                .and_then(|u| u.get(index))
+                .and_then(|uris| uris[i].clone()),
+            distance: r
+                .distances
+                .as_ref()
+                .and_then(|d| d.get(index))
+                .and_then(|dist| dist[i]),
+            include: r.include.get(index).map(|inc| format!("{:?}", inc)), // Adjusted per types
+            score: None,
+            select: None,
+        })
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
-    use chroma::types::MetadataValue;
     use chroma::types::Include;
+    use chroma::types::MetadataValue;
+    use std::collections::HashMap;
 
     #[test]
     fn test_output_row_creation() {
@@ -283,19 +366,17 @@ mod tests {
     }
     #[test]
     fn test_create_table() {
-        let rows = vec![
-            OutputRow {
-                id: "123".to_string(),
-                document: Some("This is a test document.".to_string()),
-                metadata: Some("{\"key\": \"value\"}".to_string()),
-                embedding: Some(vec![0.1, 0.2, 0.3]),
-                score: Some(0.95),
-                distance: Some(0.05),
-                uri: Some("http://example.com".to_string()),
-                include: Some("{\"extra\": \"info\"}".to_string()),
-                select: Some("{\"field\": \"data\"}".to_string()),
-            }
-        ];
+        let rows = vec![OutputRow {
+            id: "123".to_string(),
+            document: Some("This is a test document.".to_string()),
+            metadata: Some("{\"key\": \"value\"}".to_string()),
+            embedding: Some(vec![0.1, 0.2, 0.3]),
+            score: Some(0.95),
+            distance: Some(0.05),
+            uri: Some("http://example.com".to_string()),
+            include: Some("{\"extra\": \"info\"}".to_string()),
+            select: Some("{\"field\": \"data\"}".to_string()),
+        }];
 
         let options = OutputArgs {
             json: false,
@@ -314,19 +395,17 @@ mod tests {
     }
     #[test]
     fn test_create_table_with_score() {
-        let rows = vec![
-            OutputRow {
-                id: "123".to_string(),
-                document: Some("This is a test document.".to_string()),
-                metadata: None,
-                embedding: None,
-                score: Some(0.95),
-                distance: None,
-                uri: None,
-                include: None,
-                select: None,
-            }
-        ];
+        let rows = vec![OutputRow {
+            id: "123".to_string(),
+            document: Some("This is a test document.".to_string()),
+            metadata: None,
+            embedding: None,
+            score: Some(0.95),
+            distance: None,
+            uri: None,
+            include: None,
+            select: None,
+        }];
 
         let options = OutputArgs {
             json: false,
@@ -341,19 +420,17 @@ mod tests {
     }
     #[test]
     fn test_create_table_with_distance() {
-        let rows = vec![
-            OutputRow {
-                id: "123".to_string(),
-                document: Some("This is a test document.".to_string()),
-                metadata: None,
-                embedding: None,
-                score: None,
-                distance: Some(0.05),
-                uri: None,
-                include: None,
-                select: None,
-            }
-        ];
+        let rows = vec![OutputRow {
+            id: "123".to_string(),
+            document: Some("This is a test document.".to_string()),
+            metadata: None,
+            embedding: None,
+            score: None,
+            distance: Some(0.05),
+            uri: None,
+            include: None,
+            select: None,
+        }];
 
         let options = OutputArgs {
             json: false,
@@ -368,19 +445,17 @@ mod tests {
     }
     #[test]
     fn test_create_table_with_uri() {
-        let rows = vec![
-            OutputRow {
-                id: "123".to_string(),
-                document: Some("This is a test document.".to_string()),
-                metadata: None,
-                embedding: None,
-                score: None,
-                distance: None,
-                uri: Some("http://example.com".to_string()),
-                include: None,
-                select: None,
-            }
-        ];
+        let rows = vec![OutputRow {
+            id: "123".to_string(),
+            document: Some("This is a test document.".to_string()),
+            metadata: None,
+            embedding: None,
+            score: None,
+            distance: None,
+            uri: Some("http://example.com".to_string()),
+            include: None,
+            select: None,
+        }];
 
         let options = OutputArgs {
             json: false,

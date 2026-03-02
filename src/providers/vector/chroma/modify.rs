@@ -1,12 +1,12 @@
 use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs};
-use crate::{RuChatError, Result};
+use crate::{Result, RuChatError};
+use chroma_types::Metadata;
 use clap::Parser;
 use log::info;
-use chroma_types::Metadata;
 use serde_json;
 
 /// Command-line arguments for modifying a Chroma collection.
-/// 
+///
 /// Allows renaming a collection or updating its metadata.
 #[derive(Parser, Debug, Clone, PartialEq)]
 pub(crate) struct ModifyArgs {
@@ -28,8 +28,11 @@ pub(crate) struct ModifyArgs {
 
 impl ModifyArgs {
     pub(crate) async fn modify(&self) -> Result<()> {
-        let client = self.client.create_client().map_err(RuChatError::ChromaError)?;
-        
+        let client = self
+            .client
+            .create_client()
+            .map_err(RuChatError::ChromaError)?;
+
         // Note: modify() requires a mutable reference to the collection handle
         let mut collection = self.collection.get_collection(&client, "default").await?;
 

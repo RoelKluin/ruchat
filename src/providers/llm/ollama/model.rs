@@ -1,5 +1,5 @@
-use crate::{Result, RuChatError};
 use crate::options::get_options;
+use crate::{Result, RuChatError};
 use clap::Parser;
 use ollama_rs::generation::completion::request::GenerationRequest;
 use ollama_rs::{Ollama, models::ModelOptions};
