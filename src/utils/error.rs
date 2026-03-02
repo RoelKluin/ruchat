@@ -157,6 +157,10 @@ pub enum RuChatError {
     /// Error when metadata conversion fails.
     #[error("Metadata conversion error: {0}")]
     MetadataConversionError(String),
+
+    /// Error when an agent is missing.
+    #[error("Missing agent: {0}")]
+    MissingAgent(String),
 }
 
 /// A type alias for `Result` that uses `RuChatError` as the error type.

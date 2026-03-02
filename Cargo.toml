@@ -9,6 +9,7 @@ version = "0.1.2"
 
 [dependencies]
 anyhow = "^1.0.100"
+async-stream = "0.3.6"
 async-trait = "^0.1.89"
 chroma = "0.13.0"
 chroma-types = "0.13.1"
@@ -16,10 +17,11 @@ clap = { version = "^4.5.54", features = ["derive"] }
 crossterm = "^0.29.0"
 env_logger = "^0.11.8"
 fs2 = "^0.4.3"
+futures-util = "0.3.32"
 http = "^1.4.0"
 log = "^0.4.29"
 md-5 = "^0.10.6"
-ollama-rs = { version = "^0.3.3", features = ["stream", "headers", "tool-implementations", "macros", "modelfile"] }
+ollama-rs = { version = "^0.3.4", features = ["stream", "headers", "tool-implementations", "macros", "modelfile"] }
 reqwest = "^0.13.1"
 schemars = "^1.2.0"
 serde = { version = "^1.0.228", features = ["derive"] }

@@ -5,6 +5,14 @@ use crate::{Result, RuChatError};
 use clap::Parser;
 use ollama_rs::{Ollama, generation::completion::request::GenerationRequest, models::ModelOptions};
 use tokio_stream::StreamExt;
+use tokio_stream::Stream;
+use std::pin::Pin;
+use ollama_rs::generation::completion::GenerationResponse;
+use crate::orchestrator::{Orchestrator, AgentConfig};
+use futures_util::TryStreamExt;
+use std::collections::HashMap;
+
+type LlamaStream = Pin<Box<dyn Stream<Item = Result<Vec<GenerationResponse>>> + Send>>;
 
 const DEFAULT_MODEL: &str = "qwen2.5vl:latest";
 
@@ -14,6 +22,8 @@ const DEFAULT_MODEL: &str = "qwen2.5vl:latest";
 /// to a model, including model details, prompt, and input options.
 #[derive(Parser, Debug, Clone, Default, PartialEq)]
 pub(crate) struct AskArgs {
+    is_agentic: bool,
+
     /// Request a certain output format, the default leaves the text as is.
     #[arg(short, long, default_value_t = String::from("text"))]
     output_format: String,
@@ -97,11 +107,24 @@ impl AskArgs {
             prompt.push_str(" output format.\n");
         }
         let (ollama, model) = self.ollama.init("").await?;
-        let request = self
-            .ollama
-            .build_generation_request(model[0].clone(), prompt)
-            .await?;
-        let mut stream = ollama.generate_stream(request).await?;
+
+        let mut stream: LlamaStream = if self.is_agentic {
+            let mut config = HashMap::new();
+            config.insert("Architect".to_string(), AgentConfig::new(model[0].clone(), 0.7, "You are an Architect. Plan the solution.".into()));
+            config.insert("Worker".to_string(), AgentConfig::new(model[0].clone(), 0.7, "You are a Worker. Implement the code.".into()));
+            config.insert("Critic".to_string(), AgentConfig::new(model[0].clone(), 0.7, "You are a Critic. Respond with APPROVED or feedback.".into()));
+            let orchestrator = Orchestrator::new(config, ollama)?;
+            Box::pin(orchestrator.run_task_stream(prompt, 3))
+        } else {
+            // ... existing single-shot logic ...
+            let request = self
+                .ollama
+                .build_generation_request(model[0].clone(), prompt)
+                .await?;
+             Box::pin(ollama.generate_stream(request).await
+                .map(|res| res.map_err(RuChatError::OllamaError))
+                .map_err(RuChatError::OllamaError)?)
+        };
         while let Some(res) = stream.next().await {
             let responses = res?;
             for resp in responses {
