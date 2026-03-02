@@ -8,14 +8,25 @@ use ollama_rs::generation::completion::GenerationResponseStream;
 use ollama_rs::error::OllamaError;
 use ollama_rs::{Ollama, generation::completion::request::GenerationRequest};
 pub struct Agent {
-    pub name: String,
-    pub model: String,
-    pub options: ModelOptions,
-    pub system_prompt: String,
+    model: String,
+    options: ModelOptions,
+    system_prompt: String,
 }
 
 impl Agent {
-    pub async fn query_stream(
+    pub(crate) fn new(
+        model: String,
+        options: ModelOptions,
+        system_prompt: String,
+    ) -> Self {
+        Self {
+            model,
+            options,
+            system_prompt,
+        }
+    }
+
+    pub(crate) async fn query_stream(
         &self,
         ollama: &Ollama,
         context: &str,

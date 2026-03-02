@@ -46,12 +46,11 @@ impl Orchestrator {
         let mut agent: HashMap<String, Agent> = HashMap::new();
         for role in ["Architect", "Worker", "Critic"] {
             if let Some(agent_config) = config.get(role) {
-                agent.insert(role.to_string(), Agent {
-                    name: role.to_string(),
-                    model: agent_config.model.clone(),
-                    options: ModelOptions::default().temperature(agent_config.temperature),
-                    system_prompt: agent_config.init_prompt.clone(),
-                });
+                agent.insert(role.to_string(), Agent::new(
+                    agent_config.model.clone(),
+                    ModelOptions::default().temperature(agent_config.temperature),
+                    agent_config.init_prompt.clone(),
+                ));
             } else if role != "Critic" {
                 return Err(RuChatError::MissingAgent(role.to_string()));
             }
@@ -90,7 +89,7 @@ impl Orchestrator {
                     }
                     yield chunk;
                 }
-                if let Some(ref critic) = self.agent.get("Critic") {
+                if let Some(critic) = self.agent.get("Critic") {
                     let mut review = String::new();
                     let mut review_stream = critic.query_stream(&self.ollama, &worker_output, "Review for safety and correctness.").await
                         .map_err(RuChatError::OllamaError)?;
