@@ -9,7 +9,6 @@ version = "0.1.2"
 
 [dependencies]
 anyhow = "^1.0.100"
-async-stream = "0.3.6"
 async-trait = "^0.1.89"
 chroma = "0.13.0"
 chroma-types = "0.13.1"

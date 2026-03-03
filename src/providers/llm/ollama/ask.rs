@@ -8,9 +8,10 @@ use tokio_stream::StreamExt;
 use tokio_stream::Stream;
 use std::pin::Pin;
 use ollama_rs::generation::completion::GenerationResponse;
-use crate::orchestrator::{Orchestrator, AgentConfig};
+use crate::orchestrator::Orchestrator;
 use futures_util::TryStreamExt;
 use std::collections::HashMap;
+use serde_json::json;
 
 type LlamaStream = Pin<Box<dyn Stream<Item = Result<Vec<GenerationResponse>>> + Send>>;
 
@@ -110,11 +111,11 @@ impl AskArgs {
 
         let mut stream: LlamaStream = if self.is_agentic {
             let mut config = HashMap::new();
-            config.insert("Architect".to_string(), AgentConfig::new(model[0].clone(), 0.7, "You are an Architect. Plan the solution.".into()));
-            config.insert("Worker".to_string(), AgentConfig::new(model[0].clone(), 0.7, "You are a Worker. Implement the code.".into()));
-            config.insert("Critic".to_string(), AgentConfig::new(model[0].clone(), 0.7, "You are a Critic. Respond with APPROVED or feedback.".into()));
-            let orchestrator = Orchestrator::new(config, ollama)?;
-            Box::pin(orchestrator.run_task_stream(prompt, 3))
+            config.insert("Architect".to_string(), json!({"model":model[0].clone(),"temperature":0.0,"system":"Plan the solution for the Worker agent to implement"}));
+            config.insert("Worker".to_string(), json!({"model":model[0].clone(),"temperature":0.7,"system":"Follow the Architect agent's plan precisely"}));
+            config.insert("Critic".to_string(), json!({"model":model[0].clone(),"temperature":0.0,"system":"Respond with APPROVED or give feedback"}));
+            let orchestrator = Orchestrator::new(config, ollama).await?;
+            Box::pin(orchestrator.run_task_stream(prompt))
         } else {
             // ... existing single-shot logic ...
             let request = self

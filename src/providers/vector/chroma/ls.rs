@@ -3,7 +3,6 @@ use crate::{Result, RuChatError};
 use chroma::types::IndexStatusResponse;
 use clap::Parser;
 use serde::Serialize;
-use serde_json;
 
 /// Formatting helper to group collection data for JSON output
 #[derive(Serialize)]

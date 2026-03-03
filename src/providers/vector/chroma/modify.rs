@@ -3,7 +3,6 @@ use crate::{Result, RuChatError};
 use chroma_types::Metadata;
 use clap::Parser;
 use log::info;
-use serde_json;
 
 /// Command-line arguments for modifying a Chroma collection.
 ///

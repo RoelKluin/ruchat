@@ -2,7 +2,7 @@ use crate::options::get_options;
 use crate::{Result, RuChatError};
 use clap::Parser;
 use ollama_rs::generation::completion::request::GenerationRequest;
-use ollama_rs::{Ollama, models::ModelOptions};
+use ollama_rs::Ollama;
 
 #[derive(Parser, Debug, Clone, Default, PartialEq)]
 pub(crate) struct ModelArgs {
@@ -43,16 +43,18 @@ impl ModelArgs {
     pub(super) fn get_nr_of_models(&self) -> usize {
         self.model.len()
     }
-    pub(crate) async fn get_options(&self) -> Result<ModelOptions> {
-        get_options(self.options.as_deref()).await
-    }
     pub(crate) async fn build_generation_request(
         &self,
         model: String,
         prompt: String,
     ) -> Result<GenerationRequest<'_>> {
-        let options = self.get_options().await?;
-        Ok(GenerationRequest::new(model, prompt).options(options))
+        match self.options {
+            None => Ok(GenerationRequest::new(model, prompt)),
+            Some(ref opts) => {
+                let (options, _etc) = get_options(opts).await?;
+                Ok(GenerationRequest::new(model, prompt).options(options))
+            }
+        }
     }
 }
 

@@ -1,23 +1,28 @@
-use crate::agent::Agent;
+use crate::agent::{Agent, Context};
 use crate::{Result, RuChatError};
 use std::process::Command;
-use async_stream::try_stream;
 use tokio_stream::{Stream, StreamExt};
+use tokio::sync::mpsc;
+use tokio_stream::wrappers::ReceiverStream;
 use ollama_rs::generation::completion::GenerationResponse;
 use ollama_rs::Ollama;
-use ollama_rs::models::ModelOptions;
 use std::collections::HashMap;
+use serde_json::Value;
 
-pub(crate) struct AgentConfig {
-    model: String,
-    temperature: f32,
-    init_prompt: String,
-}
+// Define what the UI receives
+pub type OrchestratorResult = Result<Vec<GenerationResponse>>;
 
-impl AgentConfig {
-    pub(crate) fn new(model: String, temperature: f32, init_prompt: String) -> Self {
-        Self { model, temperature, init_prompt }
-    }
+pub(crate) fn get_agent_color(role: &str) -> String {
+    let color = match role.to_lowercase().as_str() {
+        "architect" => "\x1b[1;32m",
+        "worker"    => "\x1b[1;34m",
+        "validator" => "\x1b[1;33m",
+        "critic"    => "\x1b[1;31m",
+        "summary"   => "\x1b[1;35m",
+        "performance"=> "\x1b[1;94m",
+        _           => "\x1b[0m",
+    };
+    color.to_string()
 }
 
 pub(crate) enum TaskType {
@@ -35,81 +40,83 @@ pub(crate) enum Validation {
 
 pub(crate) struct Orchestrator {
     agent: HashMap<String, Agent>,
+    config: HashMap<String, Value>,
     ollama: Ollama,
 }
 
 impl Orchestrator {
-    pub(crate) fn new(
-        config: HashMap<String, AgentConfig>,
+    pub(crate) async fn new(
+        mut config: HashMap<String, Value>,
         ollama: Ollama
     ) -> Result<Self> {
         let mut agent: HashMap<String, Agent> = HashMap::new();
         for role in ["Architect", "Worker", "Critic"] {
-            if let Some(agent_config) = config.get(role) {
-                agent.insert(role.to_string(), Agent::new(
-                    agent_config.model.clone(),
-                    ModelOptions::default().temperature(agent_config.temperature),
-                    agent_config.init_prompt.clone(),
-                ));
+            if let Some(options) = config.remove(role) {
+                if let Some(options_str) = options.as_str() {
+                    let agent_instance = Agent::new(role, options_str).await?;
+                    agent.insert(role.to_string(), agent_instance);
+                } else {
+                    return Err(RuChatError::Is(format!("Options for {role} must be a string")));
+                }
             } else if role != "Critic" {
                 return Err(RuChatError::MissingAgent(role.to_string()));
             }
         }
-        Ok(Self { agent, ollama })
+        Ok(Self { agent, config, ollama })
     }
-    pub(crate) fn run_task_stream(
-        self,
+
+    fn get_str(&self, key: &str) -> Result<&str> {
+        self.config.get(key).and_then(|s| s.as_str()).ok_or(RuChatError::Is(format!("No {key}: &str in agent config")))
+    }
+    fn get_u64(&self, key: &str) -> Result<u64> {
+        self.config.get(key).and_then(|s| s.as_u64()).ok_or(RuChatError::Is(format!("No {key}: u64 in agent config")))
+    }
+
+    pub(crate) fn run_task_stream(mut self, goal: String) -> impl Stream<Item = OrchestratorResult> {
+        let (tx, rx) = mpsc::channel(100);
+
+        tokio::spawn(async move {
+            if let Err(e) = self.execute_orchestration(goal, tx.clone()).await {
+                let _ = tx.send(Err(e)).await;
+            }
+        });
+
+        ReceiverStream::new(rx)
+    }
+    async fn execute_orchestration(
+        &mut self,
         goal: String,
-        iterations: usize
-    ) -> impl Stream<Item = Result<Vec<GenerationResponse>>> {
-        try_stream! {
-            let mut current_context = goal;
-            let mut history = String::new();
+        tx: mpsc::Sender<Result<Vec<GenerationResponse>>>
+    ) -> Result<()> {
+        let iteration = self.get_u64("iteration").and_then(|i| usize::try_from(i).map_err(RuChatError::TryFromIntError))?;
+        let mut context = Context::new(goal);
 
-            'iteration: for i in 1..=iterations {
-                let mut plan = String::new();
-                let architect = self.agent.get("Architect").ok_or_else(|| RuChatError::MissingAgent("Architect".to_string()))?;
-                let mut arch_stream = architect.query_stream(&self.ollama, &history, &current_context).await
-                    .map_err(RuChatError::OllamaError)?;
-                while let Some(res) = arch_stream.next().await {
-                    let chunk = res.map_err(RuChatError::OllamaError)?;
-                    for resp in &chunk {
-                        plan.push_str(&resp.response);
-                    }
-                    yield chunk; // Streaming Architect's thoughts to the UI
-                }
+        for _ in 0..iteration {
+            for role in ["Architect", "Worker", "Critic"] {
+                if let Some(agent) = self.agent.get_mut(role) {
 
-                let mut worker_output = String::new();
-                let worker = self.agent.get("Worker").ok_or_else(|| RuChatError::MissingAgent("Worker".to_string()))?;
-                let mut work_stream = worker.query_stream(&self.ollama, "Plan text...", "Execute").await?;
-                while let Some(res) = work_stream.next().await {
-                    let chunk = res?;
-                    for resp in &chunk {
-                        worker_output.push_str(&resp.response);
-                    }
-                    yield chunk;
-                }
-                if let Some(critic) = self.agent.get("Critic") {
-                    let mut review = String::new();
-                    let mut review_stream = critic.query_stream(&self.ollama, &worker_output, "Review for safety and correctness.").await
-                        .map_err(RuChatError::OllamaError)?;
-                    while let Some(resp) = review_stream.next().await {
-                        let review_chunk = resp?;
-                        for r in &review_chunk {
-                            if review.contains("APPROVED") {
-                                break 'iteration;
-                            }
-                            review.push_str(&r.response);
+                    // Initialize the stream from the LLM
+                    let mut stream = agent.query_stream(&self.ollama, &context).await?;
+
+                    context.output.clear();
+
+                    // Pipe tokens from the LLM stream to the Orchestrator channel
+                    while let Some(res) = stream.next().await {
+                        let chunk = res.map_err(RuChatError::OllamaError)?;
+                        for resp in &chunk {
+                            context.output.push_str(&resp.response);
                         }
+                        tx.send(Ok(chunk)).await.map_err(|e| RuChatError::Is(format!("Failed to send response: {e}")))?;
                     }
-                    current_context = format!("CRITIQUE: {}\nAdjust and retry.", review);
-                    history.push_str(&format!("\nRound {}:\nPlan: {}\nResult: {}\n", i, plan, worker_output));
-                } else {
-                    break;
+                    if !agent.update(&mut context) {
+                        return Ok(());
+                    }
                 }
             }
         }
+        Ok(())
     }
+
     async fn execute_shell_script(&self, script: &str) -> Result<Validation> {
         // Logic to run sed and awk script and capture output
         match Command::new("bash")

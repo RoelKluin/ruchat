@@ -1,6 +1,7 @@
 use crate::{Result, RuChatError};
 use ollama_rs::models::ModelOptions;
 use serde_json::Value;
+use std::collections::HashMap;
 
 /// Reads a JSON file containing model options.
 ///
@@ -35,24 +36,23 @@ async fn read_options_file(options: &str) -> Result<Value> {
 /// # Returns
 ///
 /// A `Result` containing the `ModelOptions` or a `RuChatError`.
-pub(crate) async fn get_options(options: Option<&str>) -> Result<ModelOptions> {
-    if let Some(options_path) = options {
-        let mut defaults = serde_json::to_value(ModelOptions::default())?;
+pub(crate) async fn get_options(options: &str) -> Result<(ModelOptions, HashMap<String, Value>)> {
+    let mut remain = HashMap::new();
+    let mut defaults = serde_json::to_value(ModelOptions::default())?;
 
-        if let Value::Object(ref mut defaults) = defaults {
-            let updates = read_options_file(options_path).await?;
-            if let Value::Object(config_updates) = updates {
-                for (k, v) in config_updates.into_iter() {
-                    if defaults.contains_key(&k) && !v.is_null() {
-                        defaults[&k] = v.clone();
-                    }
+    if let Value::Object(ref mut defaults) = defaults {
+        let updates = read_options_file(options).await?;
+        if let Value::Object(config_updates) = updates {
+            for (k, v) in config_updates.into_iter() {
+                if defaults.contains_key(&k) && !v.is_null() {
+                    defaults[&k] = v.clone();
+                } else {
+                    remain.insert(k, v);
                 }
             }
         }
-        serde_json::from_value(defaults).map_err(RuChatError::SerdeError)
-    } else {
-        Ok(ModelOptions::default())
     }
+    serde_json::from_value(defaults).map_err(RuChatError::SerdeError).map(|opts| (opts, remain))
 }
 
 #[cfg(test)]
@@ -73,12 +73,12 @@ mod tests {
     async fn test_get_options_with_file() {
         let path = "test_options.json";
         fs::write(path, r#"{"option1": "value1"}"#).unwrap();
-        assert!(get_options(Some(path)).await.is_ok());
+        assert!(get_options(path).await.is_ok());
         fs::remove_file(path).unwrap();
     }
 
     #[tokio::test]
     async fn test_get_options_without_file() {
-        assert!(get_options(None).await.is_ok());
+        assert!(get_options("{}").await.is_ok());
     }
 }

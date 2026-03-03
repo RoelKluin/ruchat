@@ -1,4 +1,6 @@
 use thiserror::Error;
+use std::result::Result as StdResult;
+use ollama_rs::generation::completion::GenerationResponse;
 
 /// An enumeration of possible errors in the RuChat application.
 ///
@@ -161,6 +163,14 @@ pub enum RuChatError {
     /// Error when an agent is missing.
     #[error("Missing agent: {0}")]
     MissingAgent(String),
+
+    /// Error when sending a message through a channel fails.
+    #[error("Channel send error: {0}")]
+    ChannelError(#[from] tokio::sync::mpsc::error::SendError<StdResult<Vec<GenerationResponse>, Box<RuChatError>>>),
+
+    /// A general error for any other issues that don't fit into the above categories.
+    #[error("Error: {0}")]
+    Is(String),
 }
 
 /// A type alias for `Result` that uses `RuChatError` as the error type.
