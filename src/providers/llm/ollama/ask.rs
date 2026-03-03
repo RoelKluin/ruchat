@@ -111,9 +111,9 @@ impl AskArgs {
 
         let mut stream: LlamaStream = if self.is_agentic {
             let mut config = HashMap::new();
-            config.insert("Architect".to_string(), json!({"model":model[0].clone(),"temperature":0.0,"system":"Plan the solution for the Worker agent to implement"}));
-            config.insert("Worker".to_string(), json!({"model":model[0].clone(),"temperature":0.7,"system":"Follow the Architect agent's plan precisely"}));
-            config.insert("Critic".to_string(), json!({"model":model[0].clone(),"temperature":0.0,"system":"Respond with APPROVED or give feedback"}));
+            config.insert("Architect".to_string(), json!({"model":model[0].clone(),"temperature":0.0,"task":"Plan the solution for the Worker agent to implement"}));
+            config.insert("Worker".to_string(), json!({"model":model[0].clone(),"temperature":0.7,"task":"Follow the Architect agent's plan precisely"}));
+            config.insert("Critic".to_string(), json!({"model":model[0].clone(),"temperature":0.0,"task":"Respond with APPROVED or give feedback"}));
             let orchestrator = Orchestrator::new(config, ollama).await?;
             Box::pin(orchestrator.run_task_stream(prompt))
         } else {

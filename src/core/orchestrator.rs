@@ -88,35 +88,63 @@ impl Orchestrator {
         goal: String,
         tx: mpsc::Sender<Result<Vec<GenerationResponse>>>
     ) -> Result<()> {
-        let iteration = self.get_u64("iteration").and_then(|i| usize::try_from(i).map_err(RuChatError::TryFromIntError))?;
-        let mut context = Context::new(goal);
+        let iteration = self.get_u64("iteration")?;
+        let mut ctx = Context::new(goal);
 
-        for _ in 0..iteration {
-            for role in ["Architect", "Worker", "Critic"] {
-                if let Some(agent) = self.agent.get_mut(role) {
+        for round in 0..iteration {
+            self.run_role("Architect", round, &mut ctx, &tx).await?;
 
-                    // Initialize the stream from the LLM
-                    let mut stream = agent.query_stream(&self.ollama, &context).await?;
+            // 2. Worker Phase
+            self.run_role("Worker", round, &mut ctx, &tx).await?;
 
-                    context.output.clear();
+            // 3. Multi-Critic Debate (Bash: if [[ -n critic_perf_init ]])
+            // We check if multiple critics exist in the agent hashmap
+            let mut approved = true;
 
-                    // Pipe tokens from the LLM stream to the Orchestrator channel
-                    while let Some(res) = stream.next().await {
-                        let chunk = res.map_err(RuChatError::OllamaError)?;
-                        for resp in &chunk {
-                            context.output.push_str(&resp.response);
-                        }
-                        tx.send(Ok(chunk)).await.map_err(|e| RuChatError::Is(format!("Failed to send response: {e}")))?;
-                    }
-                    if !agent.update(&mut context) {
+            // Parallel or Sequential Debate logic
+            for role in ["Safety Critic", "Performance Critic", "Critic"] {
+                if self.agent.contains_key(role) {
+                    let should_continue = self.run_role(role, round, &mut ctx, &tx).await?;
+                    if !should_continue {
+                        // This is the "APPROVED" signal
                         return Ok(());
+                    } else {
+                        approved = false;
                     }
                 }
             }
+
+            if approved { break; }
+        }
+        // Final Summarization (Bash: Finalizing documentation)
+        if let Some(_summarizer) = self.agent.get_mut("Summarizer") {
+            self.run_role("Summarizer", 1, &mut ctx, &tx).await?;
         }
         Ok(())
     }
+    // Helper to keep execute_orchestration readable
+    async fn run_role(
+        &mut self,
+        role: &str,
+        round: u64,
+        ctx: &mut Context,
+        tx: &mpsc::Sender<Result<Vec<GenerationResponse>>>
+    ) -> Result<bool> {
+        if let Some(agent) = self.agent.get_mut(role) {
+            let mut stream = agent.query_stream(&self.ollama, round, ctx).await?;
+            ctx.output.clear();
 
+            while let Some(res) = stream.next().await {
+                let chunk = res.map_err(RuChatError::OllamaError)?;
+                for resp in &chunk {
+                    ctx.output.push_str(&resp.response);
+                }
+                tx.send(Ok(chunk)).await.map_err(|e| RuChatError::Is(e.to_string()))?;
+            }
+            return Ok(agent.update(ctx));
+        }
+        Ok(true)
+    }
     async fn execute_shell_script(&self, script: &str) -> Result<Validation> {
         // Logic to run sed and awk script and capture output
         match Command::new("bash")
