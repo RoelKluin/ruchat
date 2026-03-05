@@ -110,10 +110,34 @@ impl AskArgs {
         let (ollama, model) = self.ollama.init("").await?;
 
         let mut stream: LlamaStream = if self.is_agentic {
-            let mut config = HashMap::new();
-            config.insert("Architect".to_string(), json!({"model":model[0].clone(),"temperature":0.0,"task":"Plan the solution for the Worker agent to implement"}));
-            config.insert("Worker".to_string(), json!({"model":model[0].clone(),"temperature":0.7,"task":"Follow the Architect agent's plan precisely"}));
-            config.insert("Critic".to_string(), json!({"model":model[0].clone(),"temperature":0.0,"task":"Respond with APPROVED or give feedback"}));
+            let config = json!({
+                "iterations": 3,
+                "Architect": {
+                    "model": model[0].clone(),
+                    "status_msg": "Architecting technical blueprint...",
+                    "temperature": 0.0,
+                    "task": "Plan the solution for the Worker agent to implement",
+                    "dense_signal": "Use markdown headers."
+                },
+                "Worker": {
+                    "model": model[0].clone(),
+                    "temperature": 0.7,
+                    "task": "Follow the Architect agent's plan precisely",
+                    "dense_signal": "OUTPUT RAW CODE ONLY. NO CHAT."
+                },
+                "Critic": {
+                    "model": model[0].clone(),
+                    "temperature": 0.0,
+                    "task": "Respond with APPROVED or give feedback",
+                    "dense_signal": "Explain your reasoning then end with APPROVED or REJECTED.",
+                    "approval_signal": "APPROVED"
+                },
+                "Summarizer": {
+                    "model": model[0].clone(),
+                    "temperature": 0.0,
+                    "task": "Summarize the following history of changes and feedback into a dense technical state"
+                }
+            });
             let orchestrator = Orchestrator::new(config, ollama).await?;
             Box::pin(orchestrator.run_task_stream(prompt))
         } else {
@@ -127,11 +151,24 @@ impl AskArgs {
                 .map_err(RuChatError::OllamaError)?)
         };
         while let Some(res) = stream.next().await {
-            let responses = res?;
-            for resp in responses {
-                cio.write_line(&resp.response).await?;
+            match res {
+                Ok(responses) => {
+                    for resp in responses {
+                        cio.write_line(&resp.response).await?;
+                    }
+                }
+                Err(RuChatError::ColorChange(ansi_code)) => {
+                    // Write the color code directly to the output without a newline
+                    cio.write_line(&ansi_code).await?;
+                }
+                Err(RuChatError::StatusUpdate(msg)) => {
+                    // Print a dim status message that gets overwritten by the next line
+                    cio.write_line(&format!("\x1b[2m   ... {} \x1b[0m\r", msg)).await?;
+                }
+                Err(e) => return Err(e), // Real errors still break the loop
             }
         }
+        cio.write_line("\x1b[0m").await?;
         Ok(())
     }
 }

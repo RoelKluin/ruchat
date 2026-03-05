@@ -3,22 +3,22 @@ pub(crate) mod team;
 pub(crate) mod worker;
 
 pub(crate) use team::Team;
-use ollama_rs::models::ModelOptions;
-use ollama_rs::generation::completion::GenerationResponseStream;
-use ollama_rs::{Ollama, generation::completion::request::GenerationRequest};
+use ollama_rs::{Ollama, models::ModelOptions};
+use ollama_rs::generation::completion::{GenerationResponse, request::GenerationRequest};
 use std::collections::HashMap;
-use crate::{Result, RuChatError};
-use crate::options::get_options;
+use crate::{Result, RuChatError, options::get_options};
 use serde_json::Value;
+use tokio_stream::StreamExt;
+use tokio::sync::mpsc;
 
-pub(crate) fn get_agent_color(role: &str) -> &str {
-    match role.to_lowercase().as_str() {
-        "architect" => "\x1b[1;32m",
-        "worker"    => "\x1b[1;34m",
-        "validator" => "\x1b[1;33m",
-        "critic"    => "\x1b[1;31m",
-        "performance critic"=> "\x1b[1;94m",
-        "summarizer"   => "\x1b[1;35m",
+fn get_agent_color(role: &str) -> &str {
+    match role {
+        "ARCHITECT" => "\x1b[1;32m",
+        "WORKER"    => "\x1b[1;34m",
+        "VALIDATOR" => "\x1b[1;33m",
+        "CRITIC"    => "\x1b[1;31m",
+        "PERFORMANCE CRITIC"=> "\x1b[1;94m",
+        "SUMMARIZER"   => "\x1b[1;35m",
         _           => "\x1b[0m",
     }
 }
@@ -29,19 +29,25 @@ pub(crate) struct Context {
     pub(crate) history: String,
     pub(crate) output: String,
     pub(crate) context: String,
+    pub(crate) rejections: String,
 }
 
 impl Context {
     pub(crate) fn new(goal: String) -> Self {
         Self {
             goal: format!("Goal: {goal}\n\n"),
+
             history: String::new(),
             output: String::new(),
             context: String::new(),
+            rejections: String::new(),
         }
     }
     pub(crate) fn get_goal(&self) -> &str {
         &self.goal
+    }
+    pub(crate) fn is_approved(&self) -> bool {
+        self.rejections.is_empty()
     }
 }
 
@@ -55,96 +61,100 @@ impl Agent {
         let (options, mut config) = get_options(options).await?;
         config.insert("role".to_string(), Value::String(role.to_string()));
 
-        let task = config.get_mut("task").ok_or(RuChatError::Is("Missing task description in agent config".to_string()))?;
-        let task_str = task.as_str().ok_or(RuChatError::Is("Task description must be a string".to_string()))?.to_string();
-        *task = Value::String(format!("SYSTEM: You are the {role} agent. TASK: {task_str}.\n\n"));
-
         Ok(Self { options, config })
     }
-    pub(crate) fn update(&self, context: &mut Context) -> bool {
-        let role = self.get_str("role").unwrap_or("unknown");
-        let output = context.output.clone();
-        let color = get_agent_color(role);
 
-        match role {
-            "Architect" => {
-                // The Architect's output becomes the plan for the Worker
-                context.history.push_str(&format!("### Architect Plan\n{color}{output}{NC}\n\n"));
-                context.context = format!("PLAN:\n{output}");
-                true
-            }
-            "Worker" => {
-                // The Worker's output is what the Critic reviews
-                context.history.push_str(&format!("### Worker Implementation\n{color}{output}{NC}\n\n"));
-                context.context = format!("IMPLEMENTATION TO REVIEW:\n{output}");
-                true
-            }
-            "Validator" => {
-                context.history.push_str(&format!("### Validation Report\n{color}{output}{NC}\n\n"));
-                if output.contains("PASSED") {
-                    true
-                } else {
-                    context.context = format!("VALIDATION FAILURE:\n{output}");
-                    true
-                }
-            }
-            "Critic" | "Performance Critic" | "Safety Critic" => {
-                context.history.push_str(&format!("### {} Review\n{color}{output}{NC}\n\n", role.to_uppercase()));
-                if output.contains("APPROVED") {
-                    false // Signal to stop if approved
-                } else {
-                    context.context = format!("CRITIC REJECTION: {output}");
-                    true
-                }
-            }
-            _ => true,
-        }
-    }
     pub(crate) fn get_str(&self, key: &str) -> Result<&str> {
         self.config.get(key).and_then(|s| s.as_str()).ok_or(RuChatError::Is(format!("No {key} in agent config")))
+    }
+    fn build_prompt_by_role(&self, role: &str, system: &str, ctx: &Context) -> String {
+        match role {
+            "ARCHITECT" => format!(
+                "{system}\nGOAL: {}\nHISTORY: {}\nREJECTIONS: {}\nTASK: Plan implementation.",
+                ctx.get_goal(), ctx.history, ctx.rejections
+            ),
+            "WORKER" => format!(
+                "{system}\nGOAL: {}\nPLAN TO FOLLOW: {}",
+                ctx.get_goal(), ctx.context // context is the plan
+            ),
+            "SUMMARIZER" => format!(
+                "{system}\nRAW HISTORY TO COMPRESS: {}",
+                ctx.history
+            ),
+            _ => format!(
+                "{system}\nGOAL: {}\nCODE/WORK TO REVIEW: {}",
+                ctx.get_goal(), ctx.context // context is worker implementation
+            ),
+        }
     }
     pub(crate) async fn query_stream(
         &mut self,
         ollama: &Ollama,
         round: u64,
-        ctx: &Context,
-    ) -> Result<GenerationResponseStream> {
-        let role = self.get_str("role")?.to_lowercase();
+        ctx: &mut Context,
+        tx: &mpsc::Sender<Result<Vec<GenerationResponse>>>
+    ) -> Result<()> {
+        let role = self.get_str("role")?.to_uppercase();
+        let role = role.as_str();
 
-        // Define Dense Signal Instructions (Bash: DENSE_SIGNAL)
-        let dense_signal = "Instruction: Use Delimiters (###) for sections. Avoid pleasantries. If providing code, provide ONLY code.";
-
-        // Determine if we use INIT or REINIT (Bash: OPTS[role_init] = role_reinit)
-        let system_instruction = if round == 1 {
-            format!("System: You are the {} agent. {}. {}",
-                role.to_uppercase(),
+        let system = if round == 1 {
+            let dense_signal = "Instruction: Use Delimiters (###) for sections. Avoid pleasantries. If providing code, provide ONLY code.";
+            format!("SYSTEM: You are the {role} agent. TASK: {}. {}",
                 self.get_str("task")?,
                 dense_signal)
         } else {
-            format!("System: Continue your role as {}. Focus on high-signal density.", role.to_uppercase())
+            format!("System: Continue your role as {role}. Focus on high-signal density.")
         };
 
-        // Assemble the payload (Bash: ARCHITECT_INIT + Context + Task)
-        let full_prompt = match role.as_str() {
-            "architect" => format!(
-                "{}\nGOAL: {}\n\nHISTORY:\n{}\n\nTASK: {}",
-                system_instruction, ctx.get_goal(), ctx.history, ctx.context
-            ),
-            "worker" => format!(
-                "{}\nPLAN TO EXECUTE:\n{}\n\nHISTORY:\n{}",
-                system_instruction, ctx.context, ctx.history
-            ),
-            "critic" | "safety critic" | "performance critic" => format!(
-                "{}\nGOAL: {}\n\nWORKER OUTPUT TO REVIEW:\n{}",
-                system_instruction, ctx.get_goal(), ctx.context
-            ),
-            _ => format!("{}\nCONTEXT:\n{}", system_instruction, ctx.context),
-        };
+        // Assemble the payload
+        let full_prompt = self.build_prompt_by_role(role, &system, ctx);
 
         let model = self.get_str("model")?;
         let request = GenerationRequest::new(model.to_string(), full_prompt)
             .options(self.options.clone());
 
-        ollama.generate_stream(request).await.map_err(RuChatError::OllamaError)
+        if let Ok(msg) = self.get_str("status_msg") {
+            tx.send(Err(RuChatError::StatusUpdate(msg.to_string()))).await
+                .map_err(|e| RuChatError::Is(e.to_string()))?;
+        }
+        // Inject the color change into the stream
+        tx.send(Err(RuChatError::ColorChange(get_agent_color(role).to_string())))
+            .await
+            .map_err(|e| RuChatError::Is(e.to_string()))?;
+
+        let mut stream = ollama.generate_stream(request).await.map_err(RuChatError::OllamaError)?;
+        if  self.get_str("status_msg").is_ok() {
+            // Clear the status message after the first chunk arrives
+            tx.send(Err(RuChatError::StatusUpdate("\x1b[2K".to_string()))).await
+                .map_err(|e| RuChatError::Is(e.to_string()))?;
+        }
+
+        ctx.output.clear();
+        while let Some(res) = stream.next().await {
+            let chunk = res.map_err(RuChatError::OllamaError)?;
+            for resp in &chunk {
+                ctx.output.push_str(&resp.response);
+            }
+            tx.send(Ok(chunk)).await.map_err(|e| RuChatError::Is(e.to_string()))?;
+        }
+        tx.send(Err(RuChatError::ColorChange(NC.to_string())))
+            .await
+            .map_err(|e| RuChatError::Is(e.to_string()))?;
+        let output = &ctx.output;
+
+        ctx.history.push_str(&format!("### {role} response:\n{output}\n\n"));
+
+        match role {
+            "ARCHITECT" => ctx.context = format!("PLAN:\n{output}"),
+            "WORKER"    => ctx.context = format!("IMPLEMENTATION:\n{output}"),
+            "SUMMARIZER" => ctx.history = format!("SUMMARY OF PREVIOUS EVENTS: {}\n", output),
+            _ => {
+                let signal = self.get_str("approval_signal").unwrap_or("APPROVED");
+                if !output.contains(signal) {
+                    ctx.rejections.push_str(&format!("- {role}: {output}\n"));
+                }
+            }
+        }
+        Ok(())
     }
 }

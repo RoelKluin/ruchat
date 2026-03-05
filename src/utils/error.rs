@@ -171,6 +171,16 @@ pub enum RuChatError {
     /// A general error for any other issues that don't fit into the above categories.
     #[error("Error: {0}")]
     Is(String),
+
+    // below here are not usually an error, can be used to signal a color change in the output.
+    #[error("An {0}Error\x1b[0m occurred")]
+    ColorChange(String), // The payload is the ANSI code
+
+    #[error("{0}")]
+    StatusUpdate(String), // e.g., "Architect is thinking..." or "Worker is coding..."
+
+    #[error("Progress: {0:.2}%")]
+    Progress(f32),
 }
 
 /// A type alias for `Result` that uses `RuChatError` as the error type.
