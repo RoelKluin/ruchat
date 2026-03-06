@@ -1,4 +1,3 @@
-use crate::Result;
 use crate::agent::manager::{Manager, ManagerArgs};
 use crate::chroma::create::ChromaCreateArgs;
 use crate::chroma::delete::ChromaDeleteArgs;
@@ -7,14 +6,16 @@ use crate::chroma::get::GetArgs;
 use crate::chroma::ls::ChromaLsArgs;
 use crate::chroma::modify::ModifyArgs;
 use crate::chroma::query::QueryArgs;
+use crate::chroma::retrieve::RetrieveArgs;
 use crate::chroma::search::SearchArgs;
 use crate::core::embed::EmbedPromptArgs;
-use crate::ollama::OllamaArgs;
-use crate::ollama::ServerArgs;
 use crate::ollama::ask::AskArgs;
 use crate::ollama::chat::ChatArgs;
 use crate::ollama::func::func;
 use crate::ollama::func::func_struct;
+use crate::ollama::OllamaArgs;
+use crate::ollama::ServerArgs;
+use crate::Result;
 use clap::{Parser, Subcommand};
 
 /// Main command line interface for RuChat.
@@ -50,6 +51,7 @@ impl Args {
             Commands::Func(args) => func(args).await,
             Commands::FuncStruct(args) => func_struct(args).await,
             Commands::Embed(args) => args.embed().await,
+            Commands::Retrieve(args) => args.retrieve().await,
             Commands::ChromaQuery(args) => args.query().await,
             Commands::ChromaGet(args) => args.get().await,
             Commands::ChromaSearch(args) => args.search().await,
@@ -88,6 +90,8 @@ pub(crate) enum Commands {
     FuncStruct(OllamaArgs),
     /// Use embedding model to create embeddings in Chroma.
     Embed(EmbedPromptArgs),
+    /// Retrieve from Chroma database using a query string.
+    Retrieve(RetrieveArgs),
     /// Query Chroma database.
     ChromaQuery(QueryArgs),
     /// Get from Chroma database.

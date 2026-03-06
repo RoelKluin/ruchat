@@ -4,6 +4,7 @@ pub(crate) mod create;
 pub(crate) mod delete;
 pub(crate) mod fork;
 pub(crate) mod get;
+pub(crate) mod retrieve;
 pub(crate) mod include;
 pub(crate) mod ls;
 pub(crate) mod metadata;
