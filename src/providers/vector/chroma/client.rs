@@ -25,6 +25,7 @@ pub(crate) struct ChromaClientConfigArgs {
     #[arg(short = 'd', long, default_value = "default")]
     pub chroma_database: Option<String>,
 }
+
 impl ChromaClientConfigArgs {
     /// Access a running Chroma server to store and retrieve data for embeddings.
     ///
@@ -59,6 +60,21 @@ impl ChromaClientConfigArgs {
         } else {
             // Defaults to http://localhost:8000
             Ok(ChromaHttpClient::new(Default::default()))
+        }
+    }
+}
+
+impl Default for ChromaClientConfigArgs {
+    fn default() -> Self {
+        Self {
+            chroma_server: "http://localhost:8000".to_string(),
+            chroma_token: None,
+            max_retries: 3,
+            min_delay: 100,
+            max_delay: 10,
+            jitter: true,
+            tenant_id: Some("default_tenant".to_string()),
+            chroma_database: Some("default".to_string()),
         }
     }
 }

@@ -9,6 +9,7 @@ use ollama_rs::Ollama;
 use serde_json::Value;
 use crate::providers::vector::chroma::ChromaClientConfigArgs;
 use chroma::ChromaHttpClient;
+use crate::providers::vector::chroma::query::Query;
 
 // Define what the UI receives
 pub type OrchestratorResult = Result<Vec<GenerationResponse>>;
@@ -120,8 +121,9 @@ impl Orchestrator {
                 
                 // Ask the LLM to formulate the query
                 librarian.query_stream(ollama, round, ctx, &tx).await?;
-                
-                ctx.documents = librarian.retrieve_and_generate(client, ollama, ctx.output.as_str()).await?;
+
+                let q = serde_json::from_str(ctx.output.as_str()).map_err(RuChatError::SerdeError)?;
+                ctx.documents = librarian.retrieve_and_generate(client, ollama, q).await?;
             }
             self.worker.query_stream(ollama, round, ctx, &tx).await?;
 

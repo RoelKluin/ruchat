@@ -46,3 +46,11 @@ impl ChromaCollectionConfigArgs {
         self.collection.as_str()
     }
 }
+
+impl Default for ChromaCollectionConfigArgs {
+    fn default() -> Self {
+        Self {
+            collection: "default".to_string(),
+        }
+    }
+}

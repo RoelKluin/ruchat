@@ -12,6 +12,22 @@ use tokio_stream::StreamExt;
 use tokio::sync::mpsc;
 use crate::providers::vector::chroma::query::Query;
 use chroma::ChromaHttpClient;
+use crate::core::embed::{EmbedArgs, UpsertMode};
+
+struct ToolCall {
+    name: String,
+    content: String,
+}
+impl ToolCall {
+    fn parse(output: &str) -> Option<Self> {
+        // Simple string parsing to detect TOOL CALLS in the format: ### TOOL CALL: TOOL_NAME\nCONTENT\n### END TOOL CALL
+        let re = regex::Regex::new(r"### TOOL CALL: (\w+)\n(.*?)\n### END TOOL CALL").ok()?;
+        re.captures(output).and_then(|caps| Some(Self {
+            name: caps.get(1)?.as_str().to_string(),
+            content: caps.get(2)?.as_str().to_string(),
+        }))
+    }
+}
 
 fn get_agent_color(role: &str) -> &str {
     match role {
@@ -57,14 +73,16 @@ impl Context {
 pub struct Agent {
     options: ModelOptions,
     config: HashMap<String, Value>,
+    embed_args: Option<EmbedArgs>
 }
 
 impl Agent {
     pub(crate) async fn new(role: &str, options: &str) -> Result<Self> {
         let (options, mut config) = get_options(options).await?;
         config.insert("role".to_string(), Value::String(role.to_string()));
+        let embed_args = config.remove("embed_args").and_then(|v| serde_json::from_value(v).ok());
 
-        Ok(Self { options, config })
+        Ok(Self { options, config, embed_args })
     }
     pub(crate) fn remove_str(&mut self, key: &str) -> Result<String> {
         self.config.remove(key).and_then(|s| s.as_str().map(|s| s.to_string())).ok_or(RuChatError::Is(format!("No {key} in agent config")))
@@ -73,9 +91,8 @@ impl Agent {
     pub(crate) fn get_str(&self, key: &str) -> Result<&str> {
         self.config.get(key).and_then(|s| s.as_str()).ok_or(RuChatError::Is(format!("No {key} in agent config")))
     }
-    pub (crate) async fn retrieve_and_generate(&self, client: &ChromaHttpClient, ollama: &Ollama, query: &str) -> Result<String> {
+    pub (crate) async fn retrieve_and_generate(&self, client: &ChromaHttpClient, ollama: &Ollama, q: Query) -> Result<String> {
         let model = self.get_str("model")?;
-        let q: Query = serde_json::from_str(query).map_err(RuChatError::SerdeError)?;
         q.query(client, ollama, model).await
     }
     fn build_prompt_by_role(&self, role: &str, system: &str, ctx: &Context) -> String {
@@ -98,6 +115,17 @@ impl Agent {
             ),
         }
     }
+    fn parse_tool_call(&self, output: &str) -> Option<ToolCall> {
+        ToolCall::parse(output)
+    }
+    async fn embed(&self, prompt: &str, mode: UpsertMode) -> Result<()> {
+        if let Some(args) = self.embed_args.as_ref() {
+            args.embed(prompt, mode).await
+        } else {
+            EmbedArgs::default().embed(prompt, mode).await
+        }
+    }
+
     pub(crate) async fn query_stream(
         &mut self,
         ollama: &Ollama,
@@ -152,7 +180,15 @@ impl Agent {
             .await
             .map_err(|e| RuChatError::Is(e.to_string()))?;
         let output = &ctx.output;
-
+        if let Some(tool_call) = self.parse_tool_call(&output) {
+            match tool_call.name.as_str() {
+                "MEMORIZE" => {
+                    self.embed(tool_call.content.as_str(), UpsertMode::Upsert).await?;
+                    ctx.history.push_str("\n### SYSTEM: Information successfully committed to long-term memory.");
+                }
+                _ => { /* Handle other tools like shell execution */ }
+            }
+        }
         ctx.history.push_str(&format!("### {role} response:\n{output}\n\n"));
 
         match role {

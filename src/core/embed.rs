@@ -9,9 +9,10 @@ use ollama_rs::generation::embeddings::request::{EmbeddingsInput, GenerateEmbedd
 use std::collections::HashMap;
 use std::result::Result as StdResult;
 use uuid::Builder;
+use serde::Deserialize;
 
 /// The mode of operation for record synchronization.
-#[derive(ValueEnum, Debug, Clone, PartialEq, Copy)]
+#[derive(ValueEnum, Debug, Clone, PartialEq, Copy, Deserialize)]
 pub(crate) enum UpsertMode {
     /// Only insert new records. Fails if IDs exist.
     Add,
@@ -21,20 +22,7 @@ pub(crate) enum UpsertMode {
     Upsert,
 }
 
-#[derive(Parser, Debug, Clone, PartialEq)]
-pub(crate) struct EmbedPromptArgs {
-    /// The text content to be embedded.
-    prompt: String,
-
-    /// The operation to perform.
-    #[arg(short, long, value_enum, default_value = "upsert")]
-    mode: UpsertMode,
-
-    #[command(flatten)]
-    embed_args: EmbedArgs,
-}
-
-#[derive(Parser, Debug, Clone, PartialEq)]
+#[derive(Parser, Debug, Clone, PartialEq, Deserialize)]
 pub(crate) struct EmbedArgs {
     /// Optional prefix or base ID for the generated chunk IDs.
     #[arg(short, long)]
@@ -52,36 +40,46 @@ pub(crate) struct EmbedArgs {
     #[command(flatten)]
     metadata: UpdateMetadataArrayArgs,
 }
+impl Default for EmbedArgs {
+    fn default() -> Self {
+        Self {
+            id: None,
+            ollama_args: OllamaArgs::default(),
+            client_config: ChromaClientConfigArgs::default(),
+            collection_config: ChromaCollectionConfigArgs::default(),
+            metadata: UpdateMetadataArrayArgs::default(),
+        }
+    }
+}
 
-impl EmbedPromptArgs {
-    pub(crate) async fn embed(self) -> Result<()> {
-        let (ollama, models) = self.embed_args.ollama_args.init("all-minilm:l6-v2").await?;
+impl EmbedArgs {
+    pub(crate) async fn embed(&self, prompt: &str, mode: UpsertMode) -> Result<()> {
+        let (ollama, models) = self.ollama_args.init("all-minilm:l6-v2").await?;
         let model = models
             .last()
             .ok_or_else(|| RuChatError::InternalError("No model found".into()))?
             .to_string();
 
-        let client = self.embed_args.client_config.create_client()?;
+        let client = self.client_config.create_client()?;
         let collection = self
-            .embed_args
             .collection_config
             .get_collection(&client, "default")
             .await?;
 
         // 1. Processing and Slicing (Your existing logic)
-        let raw_metadata = self.embed_args.metadata.parse()?;
+        let raw_metadata = self.metadata.parse()?;
         let metadata_items: Vec<HashMap<String, _>> = raw_metadata
             .unwrap_or_default()
             .into_iter()
             .flatten()
             .collect();
 
-        let line_pool: Vec<&str> = self.prompt.lines().collect();
+        let line_pool: Vec<&str> = prompt.lines().collect();
         let mut chunk_texts: Vec<String> = Vec::new();
         let mut chunk_metadatas: Vec<Option<UpdateMetadata>> = Vec::new();
 
         if metadata_items.len() < 2 {
-            chunk_texts.push(self.prompt.clone());
+            chunk_texts.push(prompt.to_string());
             if !metadata_items.is_empty() {
                 chunk_metadatas.push(Some(metadata_items[0].clone()));
             }
@@ -110,7 +108,7 @@ impl EmbedPromptArgs {
         for content in &chunk_texts {
             let hasher = Md5::new_with_prefix(format!(
                 "{model}:{}:{}",
-                self.embed_args.id.as_deref().unwrap_or_default(),
+                self.id.as_deref().unwrap_or_default(),
                 content
             ));
             let digest = hasher.finalize();
@@ -135,7 +133,7 @@ impl EmbedPromptArgs {
         };
 
         // 3. Unified Dispatch
-        match self.mode {
+        match mode {
             UpsertMode::Add => {
                 let metadatas_to_send: Option<Vec<Option<Metadata>>> = metadatas_to_send
                     .map(|vec| {
@@ -186,5 +184,24 @@ impl EmbedPromptArgs {
         }
 
         Ok(())
+    }
+}
+
+#[derive(Parser, Debug, Clone, PartialEq, Deserialize)]
+pub(crate) struct EmbedPromptArgs {
+    /// The text content to be embedded.
+    prompt: String,
+
+    /// The operation to perform.
+    #[arg(short, long, value_enum, default_value = "upsert")]
+    mode: UpsertMode,
+
+    #[command(flatten)]
+    args: EmbedArgs,
+}
+
+impl EmbedPromptArgs {
+    pub(crate) async fn embed(&self) -> Result<()> {
+        self.args.embed(self.prompt.as_str(), self.mode).await
     }
 }

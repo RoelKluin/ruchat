@@ -21,6 +21,7 @@ http = "^1.4.0"
 log = "^0.4.29"
 md-5 = "^0.10.6"
 ollama-rs = { version = "^0.3.4", features = ["stream", "headers", "tool-implementations", "macros", "modelfile"] }
+regex = "1.12.3"
 reqwest = "^0.13.2"
 schemars = "^1.2.1"
 serde = { version = "^1.0.228", features = ["derive"] }
