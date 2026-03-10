@@ -5,6 +5,12 @@ use ollama_rs::generation::completion::request::GenerationRequest;
 use ollama_rs::Ollama;
 use serde::Deserialize;
 
+pub(crate) fn get_dynamic_history_limit(model_name: &str) -> u64 {
+    if model_name.contains("qwen2.5") { 128_000 }
+    else if model_name.contains("llama3") { 8_192 }
+    else { 4_096 } // Safe fallback
+}
+
 #[derive(Parser, Debug, Clone, Default, PartialEq, Deserialize)]
 pub(crate) struct ModelArgs {
     /// Model to (down)load and use.

@@ -11,6 +11,7 @@ use serde_json::Value;
 use tokio_stream::StreamExt;
 use tokio::sync::mpsc;
 use crate::providers::vector::chroma::query::Query;
+use crate::providers::llm::ollama::get_dynamic_history_limit;
 use chroma::ChromaHttpClient;
 use crate::core::embed::{EmbedArgs, UpsertMode};
 
@@ -95,6 +96,10 @@ impl Agent {
         let model = self.get_str("model")?;
         q.query(client, ollama, model).await
     }
+    pub(crate) fn get_dynamic_history_limit(&self) -> u64 {
+        get_dynamic_history_limit(self.get_str("model").unwrap_or(""))
+    }
+
     fn build_prompt_by_role(&self, role: &str, system: &str, ctx: &Context) -> String {
         match role {
             "ARCHITECT" => format!(

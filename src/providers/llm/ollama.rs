@@ -9,7 +9,7 @@ use ollama_rs::Ollama;
 use ollama_rs::generation::completion::request::GenerationRequest;
 use serde::Deserialize;
 
-pub(crate) use model::ModelArgs;
+pub(crate) use model::{ModelArgs, get_dynamic_history_limit};
 pub(crate) use server::ServerArgs;
 
 #[derive(Parser, Debug, Clone, Default, PartialEq, Deserialize)]

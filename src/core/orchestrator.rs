@@ -107,7 +107,7 @@ impl Orchestrator {
         tx: mpsc::Sender<Result<Vec<GenerationResponse>>>
     ) -> Result<()> {
         let iterations = self.config.get("iterations").and_then(|v| v.as_u64()).unwrap_or(3);
-        let history_limit = self.config.get("history_limit").and_then(|v| v.as_u64()).unwrap_or(20000);
+        let history_limit = self.config.get("history_limit").and_then(|v| v.as_u64());
         let mut ctx = Context::new(goal);
         let ollama = &self.ollama;
         let client = self.client.as_ref();
@@ -134,7 +134,7 @@ impl Orchestrator {
             if ctx.is_approved() {
                 break;
             } else {
-                if ctx.history.len() as u64 > history_limit && let Some(summarizer) = self.summarizer.as_mut() {
+                if let Some(summarizer) = self.summarizer.as_mut() && ctx.history.len() as u64 > history_limit.unwrap_or(summarizer.get_dynamic_history_limit()) {
                     summarizer.query_stream(ollama, round, ctx, &tx).await?;
                 }
                 ctx.history.push_str("\nREJECTIONS: ");
