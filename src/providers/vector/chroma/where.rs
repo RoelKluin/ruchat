@@ -8,8 +8,9 @@ use chroma::types::{
 use clap::Parser;
 use std::fmt::Display;
 use std::result::Result as StdResult;
+use serde::Deserialize;
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Deserialize)]
 enum Token {
     Identifier(String),
     Operator(String),
@@ -33,7 +34,7 @@ impl Display for Token {
     }
 }
 
-#[derive(Parser, Debug, Clone, PartialEq)]
+#[derive(Parser, Debug, Clone, PartialEq, Deserialize)]
 pub struct WhereArgs {
     /// The metadata query string, e.g. "key1 = 'value' AND key2 > 5".
     #[arg(short, long)]

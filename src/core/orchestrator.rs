@@ -7,6 +7,8 @@ use tokio_stream::wrappers::ReceiverStream;
 use ollama_rs::generation::completion::GenerationResponse;
 use ollama_rs::Ollama;
 use serde_json::Value;
+use crate::providers::vector::chroma::ChromaClientConfigArgs;
+use chroma::ChromaHttpClient;
 
 // Define what the UI receives
 pub type OrchestratorResult = Result<Vec<GenerationResponse>>;
@@ -27,12 +29,14 @@ pub(crate) enum Validation {
 pub(crate) struct Orchestrator {
     // Core pipeline
     architect: Agent,
+    librarian: Option<Agent>,
     worker: Agent,
     // Consensus pipeline: All of these must return their specific approval signal
     critics: Vec<Agent>,
     summarizer: Option<Agent>,
     config: Value,
     ollama: Ollama,
+    client: Option<ChromaHttpClient>,
 }
 
 impl Orchestrator {
@@ -42,6 +46,15 @@ impl Orchestrator {
     ) -> Result<Self> {
         // 1. Extract Core Agents
         let architect = Self::build_agent(&mut config, "Architect", true).await?;
+        let mut librarian = None;
+        let mut client = None;
+        if let Ok(mut lib) = Self::build_agent(&mut config, "Librarian", false).await {
+            client = Some(lib.remove_str("chroma_client")
+                .and_then(|s| serde_json::from_str(&s).map_err(RuChatError::SerdeError))
+                .and_then(|c: ChromaClientConfigArgs| c.create_client().map_err(RuChatError::ChromaError))?);
+
+            librarian = Some(lib);
+        }
         let worker = Self::build_agent(&mut config, "Worker", true).await?;
 
         // 2. Extract Critics (can be a list or individual named keys in JSON)
@@ -58,7 +71,7 @@ impl Orchestrator {
             Err(_) => None,
         };
 
-        Ok(Self { architect, worker, critics, config, ollama, summarizer })
+        Ok(Self { architect, librarian, worker, critics, config, ollama, summarizer, client })
     }
     async fn build_agent(config: &mut Value, role: &str, required: bool) -> Result<Agent> {
         if let Some(agent_val) = config.get(role) {
@@ -93,12 +106,23 @@ impl Orchestrator {
         tx: mpsc::Sender<Result<Vec<GenerationResponse>>>
     ) -> Result<()> {
         let iterations = self.config.get("iterations").and_then(|v| v.as_u64()).unwrap_or(3);
+        let history_limit = self.config.get("history_limit").and_then(|v| v.as_u64()).unwrap_or(20000);
         let mut ctx = Context::new(goal);
         let ollama = &self.ollama;
+        let client = self.client.as_ref();
 
         for round in 1..=iterations {
             let ctx = &mut ctx;
             self.architect.query_stream(ollama, round, ctx, &tx).await?;
+
+            if round == 1 && let Some(librarian) = self.librarian.as_mut() {
+                let client = client.ok_or(RuChatError::Is("Librarian provided without chroma client config".into()))?;
+                
+                // Ask the LLM to formulate the query
+                librarian.query_stream(ollama, round, ctx, &tx).await?;
+                
+                ctx.documents = librarian.retrieve_and_generate(client, ollama, ctx.output.as_str()).await?;
+            }
             self.worker.query_stream(ollama, round, ctx, &tx).await?;
 
             for critic in &mut self.critics {
@@ -108,9 +132,11 @@ impl Orchestrator {
             if ctx.is_approved() {
                 break;
             } else {
-                if let Some(summarizer) = self.summarizer.as_mut() {
+                if ctx.history.len() as u64 > history_limit && let Some(summarizer) = self.summarizer.as_mut() {
                     summarizer.query_stream(ollama, round, ctx, &tx).await?;
                 }
+                ctx.history.push_str("\nREJECTIONS: ");
+                ctx.history.push_str(&ctx.rejections);
                 ctx.rejections.clear();
             }
         }

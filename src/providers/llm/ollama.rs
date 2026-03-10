@@ -7,11 +7,12 @@ use crate::Result;
 use clap::Parser;
 use ollama_rs::Ollama;
 use ollama_rs::generation::completion::request::GenerationRequest;
+use serde::Deserialize;
 
 pub(crate) use model::ModelArgs;
 pub(crate) use server::ServerArgs;
 
-#[derive(Parser, Debug, Clone, Default, PartialEq)]
+#[derive(Parser, Debug, Clone, Default, PartialEq, Deserialize)]
 pub(crate) struct OllamaArgs {
     #[command(flatten)]
     server: ServerArgs,

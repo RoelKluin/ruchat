@@ -10,6 +10,8 @@ use crate::{Result, RuChatError, options::get_options};
 use serde_json::Value;
 use tokio_stream::StreamExt;
 use tokio::sync::mpsc;
+use crate::providers::vector::chroma::query::Query;
+use chroma::ChromaHttpClient;
 
 fn get_agent_color(role: &str) -> &str {
     match role {
@@ -30,17 +32,18 @@ pub(crate) struct Context {
     pub(crate) output: String,
     pub(crate) context: String,
     pub(crate) rejections: String,
+    pub(crate) documents: String,
 }
 
 impl Context {
     pub(crate) fn new(goal: String) -> Self {
         Self {
             goal: format!("Goal: {goal}\n\n"),
-
             history: String::new(),
             output: String::new(),
             context: String::new(),
             rejections: String::new(),
+            documents: String::new(),
         }
     }
     pub(crate) fn get_goal(&self) -> &str {
@@ -63,19 +66,27 @@ impl Agent {
 
         Ok(Self { options, config })
     }
+    pub(crate) fn remove_str(&mut self, key: &str) -> Result<String> {
+        self.config.remove(key).and_then(|s| s.as_str().map(|s| s.to_string())).ok_or(RuChatError::Is(format!("No {key} in agent config")))
+    }
 
     pub(crate) fn get_str(&self, key: &str) -> Result<&str> {
         self.config.get(key).and_then(|s| s.as_str()).ok_or(RuChatError::Is(format!("No {key} in agent config")))
     }
+    pub (crate) async fn retrieve_and_generate(&self, client: &ChromaHttpClient, ollama: &Ollama, query: &str) -> Result<String> {
+        let model = self.get_str("model")?;
+        let q: Query = serde_json::from_str(query).map_err(RuChatError::SerdeError)?;
+        q.query(client, ollama, model).await
+    }
     fn build_prompt_by_role(&self, role: &str, system: &str, ctx: &Context) -> String {
         match role {
             "ARCHITECT" => format!(
-                "{system}\nGOAL: {}\nHISTORY: {}\nREJECTIONS: {}\nTASK: Plan implementation.",
-                ctx.get_goal(), ctx.history, ctx.rejections
+                "{system}\nGOAL: {}\nHISTORY: {}\nTASK: Plan implementation.",
+                ctx.get_goal(), ctx.history
             ),
             "WORKER" => format!(
-                "{system}\nGOAL: {}\nPLAN TO FOLLOW: {}",
-                ctx.get_goal(), ctx.context // context is the plan
+                "{system}\nDOCUMENTS: {}\nPLAN: {}\nGOAL: {}",
+                ctx.documents, ctx.context, ctx.get_goal()
             ),
             "SUMMARIZER" => format!(
                 "{system}\nRAW HISTORY TO COMPRESS: {}",

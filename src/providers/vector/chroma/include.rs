@@ -2,8 +2,9 @@
 use crate::{Result, RuChatError};
 use chroma::types::IncludeList;
 use clap::Parser;
+use serde::Deserialize;
 
-#[derive(Parser, Debug, Clone, PartialEq)]
+#[derive(Parser, Debug, Clone, PartialEq, Deserialize)]
 pub(crate) struct IncludeArgs {
     /// comma seperated string of include fields: "distance,document,embedding,metadata,uri"
     #[arg(short, long)]

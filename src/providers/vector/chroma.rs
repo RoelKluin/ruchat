@@ -21,30 +21,31 @@ use log::{info, warn};
 pub(crate) use metadata::{MetadataArgs, UpdateMetadataArrayArgs};
 use serde::Serialize;
 pub(crate) use r#where::WhereArgs;
+use serde::Deserialize;
 
-#[derive(clap::Args, Debug, Clone, PartialEq)]
-pub(crate) struct OutputArgs {
-    /// Output in JSON format.
+#[derive(clap::Args, Debug, Clone, PartialEq, Deserialize)]
+pub(super) struct OutputArgs {
+    /// Output in JSON format instead of a human-readable table.
     #[arg(short, long)]
-    pub json: bool,
+    json: bool,
 
     /// Sort the results by ID before displaying.
     #[arg(short, long)]
-    pub sort: bool,
+    sort: bool,
 
     /// Specify which fields to display (comma-separated:
     /// id,doc,meta,embed,score,uri,distance,include,select).
     /// Defaults to "id,doc,meta".
     #[arg(short, long, value_delimiter = ',', default_value = "id,doc,meta")]
-    pub fields: Vec<String>,
+    fields: Vec<String>,
 
     /// Maximum width for the document column to prevent text wrapping issues.
     #[arg(long, default_value_t = 80)]
-    pub max_width: usize,
+    max_width: usize,
 }
 
 impl OutputArgs {
-    pub fn should_show(&self, field: &str) -> bool {
+    fn should_show(&self, field: &str) -> bool {
         self.fields.contains(&field.to_string())
     }
 }
@@ -80,7 +81,7 @@ impl ChromaResponse<'_> {
         info!("{}", self.as_string(options)?);
         Ok(())
     }
-    fn as_string(&mut self, options: &OutputArgs) -> Result<String> {
+    pub(crate) fn as_string(&mut self, options: &OutputArgs) -> Result<String> {
         if options.sort {
             match self {
                 ChromaResponse::Get(r) => r.sort_by_ids(),

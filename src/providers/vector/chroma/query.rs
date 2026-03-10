@@ -1,21 +1,18 @@
-use crate::RuChatError;
+use crate::{RuChatError, Result};
 use crate::chroma::{
     ChromaClientConfigArgs, ChromaCollectionConfigArgs, ChromaResponse, IncludeArgs, OutputArgs,
     WhereArgs,
 };
 use crate::ollama::OllamaArgs;
-use anyhow::Result;
 use clap::Parser;
-use log::warn;
+use log::{warn, info};
 use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
+use serde::Deserialize;
+use ollama_rs::Ollama;
+use chroma::ChromaHttpClient;
 
-/// Command-line arguments for querying a Chroma database.
-///
-/// This struct defines the arguments required to perform a query
-/// in a Chroma database, including model details, query parameters,
-/// and database connection information.
-#[derive(Parser, Debug, Clone, PartialEq)]
-pub(crate) struct QueryArgs {
+#[derive(Parser, Debug, Clone, PartialEq, Deserialize)]
+pub(crate) struct Query {
     /// The query string to search for in the database.
     #[arg(short, long)]
     query: String,
@@ -32,12 +29,6 @@ pub(crate) struct QueryArgs {
     collection: ChromaCollectionConfigArgs,
 
     #[command(flatten)]
-    client: ChromaClientConfigArgs,
-
-    #[command(flatten)]
-    ollama: OllamaArgs,
-
-    #[command(flatten)]
     include: IncludeArgs,
 
     #[command(flatten)]
@@ -47,15 +38,10 @@ pub(crate) struct QueryArgs {
     output: OutputArgs,
 }
 
-impl QueryArgs {
-    pub(crate) async fn query(&self) -> Result<(), RuChatError> {
-        let client = self.client.create_client()?;
+impl Query {
+    pub(crate) async fn query(&self, client: &ChromaHttpClient, ollama: &Ollama, model: &str) -> Result<String> {
         let collection = self.collection.get_collection(&client, "default").await?;
 
-        let (ollama, models) = self.ollama.init("all-minilm:l6-v2").await?;
-        let model = models
-            .last()
-            .ok_or(RuChatError::ModelNotFound("all-minilm:l6-v2".to_string()))?;
         if model != "all-minilm:l6-v2" && !model.contains("embed") {
             warn!("Model {model} might not be an embeddings model");
         }
@@ -77,6 +63,44 @@ impl QueryArgs {
         let mut query_result = collection
             .query(query_embeddings, self.n_results, r#where, ids, include)
             .await?;
-        ChromaResponse::Query(&mut query_result).render(&self.output)
+        ChromaResponse::Query(&mut query_result).as_string(&self.output)
+    }
+}
+
+/// Command-line arguments for querying a Chroma database.
+///
+/// This struct defines the arguments required to perform a query
+/// in a Chroma database, including model details, query parameters,
+/// and database connection information.
+#[derive(Parser, Debug, Clone, PartialEq, Deserialize)]
+pub(crate) struct QueryArgs {
+    #[command(flatten)]
+    client: ChromaClientConfigArgs,
+
+    #[command(flatten)]
+    ollama: OllamaArgs,
+
+    #[command(flatten)]
+    query: Query,
+}
+
+impl TryFrom<String> for QueryArgs {
+    type Error = RuChatError;
+
+    fn try_from(value: String) -> Result<Self> {
+        serde_json::from_str(&value).map_err(|e| RuChatError::SerdeError(e))
+    }
+}
+
+impl QueryArgs {
+    pub(crate) async fn query(&self) -> Result<()> {
+        let client = self.client.create_client()?;
+
+        let (ollama, models) = self.ollama.init("all-minilm:l6-v2").await?;
+        let model = models
+            .last()
+            .ok_or(RuChatError::ModelNotFound("all-minilm:l6-v2".to_string()))?;
+        info!("{}", self.query.query(&client, &ollama, model).await?);
+        Ok(())
     }
 }

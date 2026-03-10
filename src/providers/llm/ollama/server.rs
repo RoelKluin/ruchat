@@ -1,8 +1,9 @@
 use crate::{Result, RuChatError};
 use clap::Parser;
 use ollama_rs::Ollama;
+use serde::Deserialize;
 
-#[derive(Parser, Debug, Default, PartialEq, Clone)]
+#[derive(Parser, Debug, Default, PartialEq, Clone, Deserialize)]
 pub(crate) struct ServerArgs {
     /// Address and port of the ollama server.
     #[arg(short, long, default_value = "http://localhost:11434")]

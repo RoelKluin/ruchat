@@ -2,8 +2,9 @@ use crate::{Result, RuChatError};
 use chroma::types::{Metadata, Schema};
 use chroma::{ChromaCollection, ChromaHttpClient};
 use clap::Parser;
+use serde::Deserialize;
 
-#[derive(Parser, Debug, Clone, PartialEq)]
+#[derive(Parser, Debug, Clone, PartialEq, Deserialize)]
 pub(crate) struct ChromaCollectionConfigArgs {
     #[arg(short = 'c', long, default_value = "")]
     collection: String,

@@ -10,8 +10,6 @@ use std::pin::Pin;
 use ollama_rs::generation::completion::GenerationResponse;
 use crate::orchestrator::Orchestrator;
 use futures_util::TryStreamExt;
-use std::collections::HashMap;
-use serde_json::json;
 
 type LlamaStream = Pin<Box<dyn Stream<Item = Result<Vec<GenerationResponse>>> + Send>>;
 
@@ -23,7 +21,10 @@ const DEFAULT_MODEL: &str = "qwen2.5vl:latest";
 /// to a model, including model details, prompt, and input options.
 #[derive(Parser, Debug, Clone, Default, PartialEq)]
 pub(crate) struct AskArgs {
-    is_agentic: bool,
+    /// Optional JSON string to configure agentic behavior. If provided, this will orchestrate
+    /// multiple agents based on the specified configuration instead of a single-shot generation.
+    #[arg(short, long, default_value_t = String::new())]
+    agentic: String,
 
     /// Request a certain output format, the default leaves the text as is.
     #[arg(short, long, default_value_t = String::from("text"))]
@@ -109,35 +110,9 @@ impl AskArgs {
         }
         let (ollama, model) = self.ollama.init("").await?;
 
-        let mut stream: LlamaStream = if self.is_agentic {
-            let config = json!({
-                "iterations": 3,
-                "Architect": {
-                    "model": model[0].clone(),
-                    "status_msg": "Architecting technical blueprint...",
-                    "temperature": 0.0,
-                    "task": "Plan the solution for the Worker agent to implement",
-                    "dense_signal": "Use markdown headers."
-                },
-                "Worker": {
-                    "model": model[0].clone(),
-                    "temperature": 0.7,
-                    "task": "Follow the Architect agent's plan precisely",
-                    "dense_signal": "OUTPUT RAW CODE ONLY. NO CHAT."
-                },
-                "Critic": {
-                    "model": model[0].clone(),
-                    "temperature": 0.0,
-                    "task": "Respond with APPROVED or give feedback",
-                    "dense_signal": "Explain your reasoning then end with APPROVED or REJECTED.",
-                    "approval_signal": "APPROVED"
-                },
-                "Summarizer": {
-                    "model": model[0].clone(),
-                    "temperature": 0.0,
-                    "task": "Summarize the following history of changes and feedback into a dense technical state"
-                }
-            });
+        let mut stream: LlamaStream = if !self.agentic.is_empty() {
+            let config = serde_json::from_str::<serde_json::Value>(&self.agentic)
+                .map_err(RuChatError::SerdeError)?;
             let orchestrator = Orchestrator::new(config, ollama).await?;
             Box::pin(orchestrator.run_task_stream(prompt))
         } else {
@@ -170,5 +145,58 @@ impl AskArgs {
         }
         cio.write_line("\x1b[0m").await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_ask_args_default() {
+        let args = AskArgs::default();
+        assert_eq!(args.agentic, "");
+        assert_eq!(args.output_format, "text");
+    }
+
+    #[tokio::test]
+    async fn test_agentic() {
+        let agentic = json!({
+                "iterations": 3,
+                "Architect": {
+                    "model": "qwen2.5:latest",
+                    "status_msg": "Architecting technical blueprint...",
+                    "temperature": 0.0,
+                    "task": "Plan the solution for the Worker agent to implement",
+                    "dense_signal": "Use markdown headers."
+                },
+                "Worker": {
+                    "model": "qwen2.5:latest",
+                    "temperature": 0.7,
+                    "task": "Follow the Architect agent's plan precisely",
+                    "dense_signal": "OUTPUT RAW CODE ONLY. NO CHAT."
+                },
+                "Critic": {
+                    "model": "qwen2.5:latest",
+                    "temperature": 0.0,
+                    "task": "Respond with APPROVED or give feedback",
+                    "dense_signal": "Explain your reasoning then end with APPROVED or REJECTED.",
+                    "approval_signal": "APPROVED"
+                },
+                "Summarizer": {
+                    "model": "qwen2.5:latest",
+                    "temperature": 0.0,
+                    "task": "Summarize the following history of changes and feedback into a dense technical state"
+                }
+            }).to_string();
+        let args = AskArgs {
+            agentic,
+            output_format: "text".to_string(),
+            prompt: PromptArgs::default(),
+            ollama: OllamaArgs::default(),
+        };
+        assert!(args.ask("").await.is_ok());
+        assert_eq!(args.output_format, "text");
+        assert!(!args.agentic.is_empty());
     }
 }

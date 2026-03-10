@@ -3,8 +3,9 @@ use crate::{Result, RuChatError};
 use clap::Parser;
 use ollama_rs::generation::completion::request::GenerationRequest;
 use ollama_rs::Ollama;
+use serde::Deserialize;
 
-#[derive(Parser, Debug, Clone, Default, PartialEq)]
+#[derive(Parser, Debug, Clone, Default, PartialEq, Deserialize)]
 pub(crate) struct ModelArgs {
     /// Model to (down)load and use.
     #[arg(short, long)]

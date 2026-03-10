@@ -4,8 +4,9 @@ use chroma::client::{ChromaAuthMethod, ChromaHttpClientOptions, ChromaRetryOptio
 use clap::Parser;
 use http::{HeaderName, HeaderValue};
 use std::time::Duration;
+use serde::Deserialize;
 
-#[derive(Parser, Debug, Clone, PartialEq)]
+#[derive(Parser, Debug, Clone, PartialEq, Deserialize)]
 pub(crate) struct ChromaClientConfigArgs {
     #[arg(short = 'C', long, default_value = "http://localhost:8000")]
     pub chroma_server: String,
