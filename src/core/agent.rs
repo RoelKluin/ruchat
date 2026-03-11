@@ -16,9 +16,9 @@ use crate::providers::vector::chroma::query::Query;
 use crate::providers::llm::ollama::get_dynamic_history_limit;
 use chroma::ChromaHttpClient;
 use crate::core::embed::{EmbedArgs, UpsertMode};
-use crate::core::orchestrator::TaskType;
 use protocol::ToolCall;
 use types::Context;
+use crate::core::orchestrator::TaskType;
 
 fn get_agent_color(role: &str) -> &str {
     match role {

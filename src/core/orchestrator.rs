@@ -1,3 +1,5 @@
+pub(super) mod task;
+
 use crate::agent::Agent;
 use crate::{Result, RuChatError};
 use std::process::Command;
@@ -11,24 +13,11 @@ use crate::providers::vector::chroma::ChromaClientConfigArgs;
 use chroma::ChromaHttpClient;
 use crate::core::embed::UpsertMode;
 use log::info;
-use crate::agent::protocol::{Tool, ToolCall};
+use crate::agent::protocol::{Tool, ToolCall, Validation};
 use crate::agent::types::Context;
+pub(super) use task::TaskType;
 // Define what the UI receives
 pub type OrchestratorResult = Result<Vec<GenerationResponse>>;
-
-#[derive(Debug, Clone)]
-pub(crate) enum TaskType {
-    RustRefactor,
-    GitBisect,
-    ShellAutomation,
-    DebugCore,
-}
-
-pub(crate) enum Validation {
-    Success,
-    Failure(String),
-    Skip,
-}
 
 pub(crate) struct Orchestrator {
     // Core pipeline

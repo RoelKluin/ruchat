@@ -25,3 +25,10 @@ impl ToolCall {
     }
 }
 
+pub(crate) enum Validation {
+    Success,
+    Failure(String),
+    Skip,
+}
+
+
