@@ -171,6 +171,10 @@ pub enum RuChatError {
         tokio::sync::mpsc::error::SendError<StdResult<Vec<GenerationResponse>, Box<RuChatError>>>,
     ),
 
+    /// Error when a role is invalid.
+    #[error("Invalid role: {0}")]
+    InvalidRole(String),
+
     /// A general error for any other issues that don't fit into the above categories.
     #[error("Error: {0}")]
     Is(String),

@@ -3,6 +3,7 @@ pub(crate) mod protocol;
 pub(crate) mod team;
 pub(crate) mod types;
 pub(crate) mod worker;
+mod role;
 
 use crate::core::embed::{EmbedArgs, UpsertMode};
 use crate::core::orchestrator::TaskType;
@@ -19,6 +20,8 @@ pub(crate) use team::Team;
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 use types::Context;
+use role::Role;
+use std::str::FromStr;
 
 fn get_agent_color(role: &str) -> &str {
     match role {
@@ -179,8 +182,8 @@ impl Agent {
         ctx: &mut Context,
         tx: &mpsc::Sender<Result<Vec<GenerationResponse>>>,
     ) -> Result<()> {
-        let role = self.get_str("role")?.to_uppercase();
-        let role = role.as_str();
+        let role = self.get_str("role")?.to_lowercase();
+        let role = Role::from_str(role.as_str())?;
 
         let system = if round == 1 {
             let dense_signal = "Instruction: Use Delimiters (###) for sections. Avoid pleasantries. If providing code, provide ONLY code.";
@@ -194,7 +197,7 @@ impl Agent {
         };
 
         // Assemble the payload
-        let full_prompt = self.build_prompt_by_role(role, &system, ctx);
+        let full_prompt = role.build_prompt(&system, ctx, self.get_str("task_hint").ok());
 
         let model = self.get_str("model")?;
         let request =
@@ -207,7 +210,7 @@ impl Agent {
         }
         // Inject the color change into the stream
         tx.send(Err(RuChatError::ColorChange(
-            get_agent_color(role).to_string(),
+            role.get_color().to_string(),
         )))
         .await
         .map_err(|e| RuChatError::Is(e.to_string()))?;
@@ -237,21 +240,7 @@ impl Agent {
             .await
             .map_err(|e| RuChatError::Is(e.to_string()))?;
         self.parse_tool_call(ctx).await?;
-        let output = &ctx.output;
-        ctx.history
-            .push_str(&format!("### {role} response:\n{output}\n\n"));
-
-        match role {
-            "ARCHITECT" => ctx.context = format!("PLAN:\n{output}"),
-            "WORKER" => ctx.context = format!("IMPLEMENTATION:\n{output}"),
-            "SUMMARIZER" => ctx.history = format!("SUMMARY OF PREVIOUS EVENTS: {}\n", output),
-            _ => {
-                let signal = self.get_str("approval_signal").unwrap_or("APPROVED");
-                if !output.contains(signal) {
-                    ctx.rejections.push_str(&format!("- {role}: {output}\n"));
-                }
-            }
-        }
+        role.update_context(ctx, self.get_str("approval_signal").unwrap_or("APPROVED"));
         Ok(())
     }
     pub(super) async fn execute_and_verify(&self, ctx: &mut Context) -> Result<Validation> {
