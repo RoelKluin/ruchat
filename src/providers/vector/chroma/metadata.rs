@@ -1,10 +1,10 @@
 use crate::{Result, RuChatError};
 use chroma::types::{Metadata, UpdateMetadata};
 use clap::Parser;
+use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use std::fs;
 use std::path::Path;
-use serde::Deserialize;
 
 #[derive(Parser, Debug, Clone, PartialEq)]
 pub(crate) struct MetadataArgs {

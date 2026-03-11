@@ -36,7 +36,10 @@ pub(crate) async fn commit_feature_branch(ctx: &Context) -> Result<()> {
     run_git_command(vec!["commit", "-m", &format!("AI Success: {}", goal)]).await?;
     run_git_command(vec!["checkout", "-"]).await?; // Return to main
 
-    info!("🚀 Changes logged in featured_changes.md and committed to {}", branch_name);
+    info!(
+        "🚀 Changes logged in featured_changes.md and committed to {}",
+        branch_name
+    );
     Ok(())
 }
 

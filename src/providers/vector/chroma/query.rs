@@ -1,15 +1,15 @@
-use crate::{RuChatError, Result};
 use crate::chroma::{
     ChromaClientConfigArgs, ChromaCollectionConfigArgs, ChromaResponse, IncludeArgs, OutputArgs,
     WhereArgs,
 };
 use crate::ollama::OllamaArgs;
+use crate::{Result, RuChatError};
+use chroma::ChromaHttpClient;
 use clap::Parser;
-use log::{warn, info};
+use log::{info, warn};
+use ollama_rs::Ollama;
 use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
 use serde::Deserialize;
-use ollama_rs::Ollama;
-use chroma::ChromaHttpClient;
 
 #[derive(Parser, Debug, Clone, PartialEq, Deserialize)]
 pub(crate) struct Query {
@@ -39,7 +39,12 @@ pub(crate) struct Query {
 }
 
 impl Query {
-    pub(crate) async fn query(&self, client: &ChromaHttpClient, ollama: &Ollama, model: &str) -> Result<String> {
+    pub(crate) async fn query(
+        &self,
+        client: &ChromaHttpClient,
+        ollama: &Ollama,
+        model: &str,
+    ) -> Result<String> {
         let collection = self.collection.get_collection(client, "default").await?;
 
         if model != "all-minilm:l6-v2" && !model.contains("embed") {

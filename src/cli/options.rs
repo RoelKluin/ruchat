@@ -52,7 +52,9 @@ pub(crate) async fn get_options(options: &str) -> Result<(ModelOptions, HashMap<
             }
         }
     }
-    serde_json::from_value(defaults).map_err(RuChatError::SerdeError).map(|opts| (opts, remain))
+    serde_json::from_value(defaults)
+        .map_err(RuChatError::SerdeError)
+        .map(|opts| (opts, remain))
 }
 
 #[cfg(test)]

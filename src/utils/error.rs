@@ -1,6 +1,6 @@
-use thiserror::Error;
-use std::result::Result as StdResult;
 use ollama_rs::generation::completion::GenerationResponse;
+use std::result::Result as StdResult;
+use thiserror::Error;
 
 /// An enumeration of possible errors in the RuChat application.
 ///
@@ -166,7 +166,10 @@ pub enum RuChatError {
 
     /// Error when sending a message through a channel fails.
     #[error("Channel send error: {0}")]
-    ChannelError(#[from] tokio::sync::mpsc::error::SendError<StdResult<Vec<GenerationResponse>, Box<RuChatError>>>),
+    ChannelError(
+        #[from]
+        tokio::sync::mpsc::error::SendError<StdResult<Vec<GenerationResponse>, Box<RuChatError>>>,
+    ),
 
     /// A general error for any other issues that don't fit into the above categories.
     #[error("Error: {0}")]

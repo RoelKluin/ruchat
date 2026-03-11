@@ -19,9 +19,9 @@ pub(crate) use collection::ChromaCollectionConfigArgs;
 pub(crate) use include::IncludeArgs;
 use log::{info, warn};
 pub(crate) use metadata::{MetadataArgs, UpdateMetadataArrayArgs};
+use serde::Deserialize;
 use serde::Serialize;
 pub(crate) use r#where::WhereArgs;
-use serde::Deserialize;
 
 #[derive(clap::Args, Debug, Clone, PartialEq, Deserialize)]
 pub(super) struct OutputArgs {

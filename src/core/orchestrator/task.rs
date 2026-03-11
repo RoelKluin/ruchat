@@ -40,4 +40,3 @@ impl<'de> Deserialize<'de> for TaskType {
         })
     }
 }
-

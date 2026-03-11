@@ -3,8 +3,8 @@ use chroma::ChromaHttpClient;
 use chroma::client::{ChromaAuthMethod, ChromaHttpClientOptions, ChromaRetryOptions};
 use clap::Parser;
 use http::{HeaderName, HeaderValue};
-use std::time::Duration;
 use serde::Deserialize;
+use std::time::Duration;
 
 #[derive(Parser, Debug, Clone, PartialEq, Deserialize)]
 pub(crate) struct ChromaClientConfigArgs {

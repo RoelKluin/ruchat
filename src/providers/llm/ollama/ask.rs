@@ -1,15 +1,15 @@
 use crate::cli::prompt::PromptArgs;
 use crate::io::Io;
 use crate::ollama::OllamaArgs;
+use crate::orchestrator::Orchestrator;
 use crate::{Result, RuChatError};
 use clap::Parser;
-use ollama_rs::{Ollama, generation::completion::request::GenerationRequest, models::ModelOptions};
-use tokio_stream::StreamExt;
-use tokio_stream::Stream;
-use std::pin::Pin;
-use ollama_rs::generation::completion::GenerationResponse;
-use crate::orchestrator::Orchestrator;
 use futures_util::TryStreamExt;
+use ollama_rs::generation::completion::GenerationResponse;
+use ollama_rs::{Ollama, generation::completion::request::GenerationRequest, models::ModelOptions};
+use std::pin::Pin;
+use tokio_stream::Stream;
+use tokio_stream::StreamExt;
 
 type LlamaStream = Pin<Box<dyn Stream<Item = Result<Vec<GenerationResponse>>> + Send>>;
 
@@ -121,9 +121,13 @@ impl AskArgs {
                 .ollama
                 .build_generation_request(model[0].clone(), prompt)
                 .await?;
-             Box::pin(ollama.generate_stream(request).await
-                .map(|res| res.map_err(RuChatError::OllamaError))
-                .map_err(RuChatError::OllamaError)?)
+            Box::pin(
+                ollama
+                    .generate_stream(request)
+                    .await
+                    .map(|res| res.map_err(RuChatError::OllamaError))
+                    .map_err(RuChatError::OllamaError)?,
+            )
         };
         while let Some(res) = stream.next().await {
             match res {
@@ -138,7 +142,8 @@ impl AskArgs {
                 }
                 Err(RuChatError::StatusUpdate(msg)) => {
                     // Print a dim status message that gets overwritten by the next line
-                    cio.write_line(&format!("\x1b[2m   ... {} \x1b[0m\r", msg)).await?;
+                    cio.write_line(&format!("\x1b[2m   ... {} \x1b[0m\r", msg))
+                        .await?;
                 }
                 Err(e) => return Err(e), // Real errors still break the loop
             }

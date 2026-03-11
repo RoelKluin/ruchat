@@ -1,17 +1,17 @@
 use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs, UpdateMetadataArrayArgs};
 use crate::ollama::OllamaArgs;
 use crate::{Result, RuChatError};
+use chroma::types::UpdateMetadataValue;
 use chroma::types::{Metadata, MetadataValue, UpdateMetadata};
+use chrono::Utc;
 use clap::{Parser, ValueEnum};
 use log::info;
 use md5::{Digest, Md5};
 use ollama_rs::generation::embeddings::request::{EmbeddingsInput, GenerateEmbeddingsRequest};
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::result::Result as StdResult;
 use uuid::Builder;
-use serde::Deserialize;
-use chrono::Utc;
-use chroma::types::UpdateMetadataValue;
 
 /// The mode of operation for record synchronization.
 #[derive(ValueEnum, Debug, Clone, PartialEq, Copy, Deserialize)]
@@ -76,7 +76,6 @@ impl EmbedArgs {
             }
         } else {
             for meta in metadata_items {
-
                 let mut meta_value = serde_json::to_value(&meta).unwrap_or_default();
                 if let Some(v) = meta_value.get_mut("created_at") {
                     *v = serde_json::json!(Utc::now().to_rfc3339());
@@ -118,8 +117,10 @@ impl EmbedArgs {
                 .to_string();
             chunk_ids.push(id);
         }
-        let request =
-            GenerateEmbeddingsRequest::new(model.clone(), EmbeddingsInput::Multiple(chunk_texts.clone()));
+        let request = GenerateEmbeddingsRequest::new(
+            model.clone(),
+            EmbeddingsInput::Multiple(chunk_texts.clone()),
+        );
         let embed_res = ollama.generate_embeddings(request).await?;
         let embeddings = embed_res.embeddings;
 
@@ -130,14 +131,23 @@ impl EmbedArgs {
 
         for (i, id) in chunk_ids.iter().enumerate() {
             // Deduplication check: only act if record is missing or we are in Upsert mode
-            let exists = collection.get(Some(vec![id.clone()]), None, None, None, None).await.is_ok();
+            let exists = collection
+                .get(Some(vec![id.clone()]), None, None, None, None)
+                .await
+                .is_ok();
 
             if mode == UpsertMode::Upsert || !exists {
                 let mut meta = chunk_metadatas[i].clone().unwrap_or_default();
 
                 // FIX 2: Correct Metadata value types
-                meta.insert("created_at".to_string(), UpdateMetadataValue::Str(chrono::Utc::now().to_rfc3339()));
-                meta.insert("model_origin".to_string(), UpdateMetadataValue::Str(model.clone()));
+                meta.insert(
+                    "created_at".to_string(),
+                    UpdateMetadataValue::Str(chrono::Utc::now().to_rfc3339()),
+                );
+                meta.insert(
+                    "model_origin".to_string(),
+                    UpdateMetadataValue::Str(model.clone()),
+                );
 
                 final_ids.push(id.to_string());
                 final_embeddings.push(embeddings[i].clone());
@@ -147,7 +157,15 @@ impl EmbedArgs {
         }
 
         if !final_ids.is_empty() {
-            collection.upsert(final_ids, final_embeddings, Some(final_docs), None, Some(final_metadatas)).await?;
+            collection
+                .upsert(
+                    final_ids,
+                    final_embeddings,
+                    Some(final_docs),
+                    None,
+                    Some(final_metadatas),
+                )
+                .await?;
         }
 
         let docs_to_send: Option<Vec<Option<String>>> =

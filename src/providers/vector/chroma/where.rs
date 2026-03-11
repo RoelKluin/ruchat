@@ -6,9 +6,9 @@ use chroma::types::{
     SetOperator, SparseVector, Where,
 };
 use clap::Parser;
+use serde::Deserialize;
 use std::fmt::Display;
 use std::result::Result as StdResult;
-use serde::Deserialize;
 
 #[derive(Debug, PartialEq, Clone, Deserialize)]
 enum Token {
