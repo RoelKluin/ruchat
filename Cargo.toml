@@ -12,6 +12,7 @@ anyhow = "^1.0.102"
 async-trait = "^0.1.89"
 chroma = "0.13.1"
 chroma-types = "0.13.1"
+chrono = "0.4.44"
 clap = { version = "^4.5.60", features = ["derive"] }
 crossterm = "^0.29.0"
 env_logger = "^0.11.9"

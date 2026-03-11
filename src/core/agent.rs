@@ -1,6 +1,8 @@
 pub(crate) mod manager;
 pub(crate) mod team;
 pub(crate) mod worker;
+pub(crate) mod protocol;
+pub(crate) mod types;
 
 pub(crate) use team::Team;
 use ollama_rs::{Ollama, models::ModelOptions};
@@ -14,21 +16,9 @@ use crate::providers::vector::chroma::query::Query;
 use crate::providers::llm::ollama::get_dynamic_history_limit;
 use chroma::ChromaHttpClient;
 use crate::core::embed::{EmbedArgs, UpsertMode};
-
-struct ToolCall {
-    name: String,
-    content: String,
-}
-impl ToolCall {
-    fn parse(output: &str) -> Option<Self> {
-        // Simple string parsing to detect TOOL CALLS in the format: ### TOOL CALL: TOOL_NAME\nCONTENT\n### END TOOL CALL
-        let re = regex::Regex::new(r"### TOOL CALL: (\w+)\n(.*?)\n### END TOOL CALL").ok()?;
-        re.captures(output).and_then(|caps| Some(Self {
-            name: caps.get(1)?.as_str().to_string(),
-            content: caps.get(2)?.as_str().to_string(),
-        }))
-    }
-}
+use crate::core::orchestrator::TaskType;
+use protocol::ToolCall;
+use types::Context;
 
 fn get_agent_color(role: &str) -> &str {
     match role {
@@ -43,38 +33,10 @@ fn get_agent_color(role: &str) -> &str {
 }
 const NC: &str = "\x1b[0m";
 
-pub(crate) struct Context {
-    goal: String,
-    pub(crate) history: String,
-    pub(crate) output: String,
-    pub(crate) context: String,
-    pub(crate) rejections: String,
-    pub(crate) documents: String,
-}
-
-impl Context {
-    pub(crate) fn new(goal: String) -> Self {
-        Self {
-            goal: format!("Goal: {goal}\n\n"),
-            history: String::new(),
-            output: String::new(),
-            context: String::new(),
-            rejections: String::new(),
-            documents: String::new(),
-        }
-    }
-    pub(crate) fn get_goal(&self) -> &str {
-        &self.goal
-    }
-    pub(crate) fn is_approved(&self) -> bool {
-        self.rejections.is_empty()
-    }
-}
-
-pub struct Agent {
+pub(crate) struct Agent {
     options: ModelOptions,
     config: HashMap<String, Value>,
-    embed_args: Option<EmbedArgs>
+    pub(super) embed_args: Option<EmbedArgs>
 }
 
 impl Agent {
@@ -84,6 +46,22 @@ impl Agent {
         let embed_args = config.remove("embed_args").and_then(|v| serde_json::from_value(v).ok());
 
         Ok(Self { options, config, embed_args })
+    }
+// src/core/agent.rs
+
+    pub(crate) fn apply_task_context(&mut self, task: TaskType) {
+        let instruction = match task {
+            TaskType::RustRefactor => "Focus on memory safety and idiomatic Result usage.",
+            TaskType::GitBisect => "Methodically narrow down the commit range using exit codes.",
+            TaskType::ShellAutomation => "Write POSIX compliant scripts with verbose logging.",
+            TaskType::DebugCore => "Check for race conditions and verify thread safety.",
+            /*TaskType::RustRefactor2 => "Focus on ownership, lifetimes, and idiomatic patterns.",
+            TaskType::GitBisect2 => "Analyze commit history to find regression points.",
+            TaskType::ShellAutomation2 => "Write robust bash scripts with error handling (set -e).",
+            TaskType::DebugCore2 => "Inspect stack traces and memory logs for bottlenecks.",*/
+        };
+        // Insert into internal config so build_prompt_by_role can see it
+        self.config.insert("task_hint".to_string(), serde_json::Value::String(instruction.to_string()));
     }
     pub(crate) fn remove_str(&mut self, key: &str) -> Result<String> {
         self.config.remove(key).and_then(|s| s.as_str().map(|s| s.to_string())).ok_or(RuChatError::Is(format!("No {key} in agent config")))
@@ -101,29 +79,48 @@ impl Agent {
     }
 
     fn build_prompt_by_role(&self, role: &str, system: &str, ctx: &Context) -> String {
+        let hint = self.get_str("task_hint").unwrap_or_default();
+        let hint_section = if hint.is_empty() {
+            String::new()
+        } else {
+            format!("\nCONTEXTUAL HINT: {hint}")
+        };
+
         match role {
             "ARCHITECT" => format!(
-                "{system}\nGOAL: {}\nHISTORY: {}\nTASK: Plan implementation.",
+                "{system}{hint_section}\nGOAL: {}\nHISTORY: {}\nTASK: Plan implementation.",
                 ctx.get_goal(), ctx.history
             ),
             "WORKER" => format!(
-                "{system}\nDOCUMENTS: {}\nPLAN: {}\nGOAL: {}",
+                "{system}{hint_section}\nDOCUMENTS: {}\nPLAN: {}\nGOAL: {}",
                 ctx.documents, ctx.context, ctx.get_goal()
             ),
             "SUMMARIZER" => format!(
                 "{system}\nRAW HISTORY TO COMPRESS: {}",
                 ctx.history
             ),
+            "LIBRARIAN" => format!(
+                "{system}{hint_section}\nGOAL: {goal}\nTASK: Formulate a JSON Query. \
+                You can query collections: 'technical_docs', 'project_memory', or 'web_cache'.\n\
+                OUTPUT FORMAT: {{\"query_texts\": [\"...\"], \"n_results\": 5, \"collection\": \"...\"}}",
+                goal = ctx.get_goal()
+            ),
+            "VALIDATOR" => format!(
+                "{system}\nWORKER_OUTPUT: {}\nTASK: Identify technical flaws or incomplete logic. \
+                If flawed, respond with 'REJECTED: [reason]'. If perfect, respond with 'VALIDATED'.",
+                ctx.output
+            ),
             _ => format!(
-                "{system}\nGOAL: {}\nCODE/WORK TO REVIEW: {}",
-                ctx.get_goal(), ctx.context // context is worker implementation
+                "{system}{hint_section}\nGOAL: {}\nCODE/WORK TO REVIEW: {}",
+                ctx.get_goal(), ctx.context
             ),
         }
     }
+
     fn parse_tool_call(&self, output: &str) -> Option<ToolCall> {
         ToolCall::parse(output)
     }
-    async fn embed(&self, prompt: &str, mode: UpsertMode) -> Result<()> {
+    pub(super) async fn embed(&self, prompt: &str, mode: UpsertMode) -> Result<()> {
         if let Some(args) = self.embed_args.as_ref() {
             args.embed(prompt, mode).await
         } else {
