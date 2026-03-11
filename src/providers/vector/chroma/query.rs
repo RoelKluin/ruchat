@@ -40,7 +40,7 @@ pub(crate) struct Query {
 
 impl Query {
     pub(crate) async fn query(&self, client: &ChromaHttpClient, ollama: &Ollama, model: &str) -> Result<String> {
-        let collection = self.collection.get_collection(&client, "default").await?;
+        let collection = self.collection.get_collection(client, "default").await?;
 
         if model != "all-minilm:l6-v2" && !model.contains("embed") {
             warn!("Model {model} might not be an embeddings model");
@@ -88,7 +88,7 @@ impl TryFrom<String> for QueryArgs {
     type Error = RuChatError;
 
     fn try_from(value: String) -> Result<Self> {
-        serde_json::from_str(&value).map_err(|e| RuChatError::SerdeError(e))
+        serde_json::from_str(&value).map_err(RuChatError::SerdeError)
     }
 }
 

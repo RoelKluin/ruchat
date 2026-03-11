@@ -23,7 +23,7 @@ impl MetadataArgs {
     }
 }
 
-#[derive(Parser, Debug, Clone, PartialEq, Deserialize)]
+#[derive(Parser, Debug, Clone, PartialEq, Deserialize, Default)]
 pub(crate) struct UpdateMetadataArrayArgs {
     /// An JSON string or a file path to JSON metadata
     #[arg(short, long)]
@@ -37,12 +37,6 @@ impl UpdateMetadataArrayArgs {
             .as_ref()
             .map(|s| parse_metadata::<Vec<Option<UpdateMetadata>>>(s))
             .transpose()
-    }
-}
-
-impl Default for UpdateMetadataArrayArgs {
-    fn default() -> Self {
-        UpdateMetadataArrayArgs { metadata: None }
     }
 }
 

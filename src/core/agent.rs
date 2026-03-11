@@ -16,9 +16,9 @@ use crate::providers::vector::chroma::query::Query;
 use crate::providers::llm::ollama::get_dynamic_history_limit;
 use chroma::ChromaHttpClient;
 use crate::core::embed::{EmbedArgs, UpsertMode};
-use protocol::ToolCall;
 use types::Context;
 use crate::core::orchestrator::TaskType;
+use protocol::{Tool, ToolCall, Validation};
 
 fn get_agent_color(role: &str) -> &str {
     match role {
@@ -40,28 +40,28 @@ pub(crate) struct Agent {
 }
 
 impl Agent {
-    pub(crate) async fn new(role: &str, options: &str) -> Result<Self> {
-        let (options, mut config) = get_options(options).await?;
-        config.insert("role".to_string(), Value::String(role.to_string()));
-        let embed_args = config.remove("embed_args").and_then(|v| serde_json::from_value(v).ok());
+    pub(crate) async fn new(config: &mut Value, role: &str, required: bool, task_type: Option<&TaskType>) -> Result<Self> {
+        if let Some(agent_val) = config.get(role) {
+            // Check if it's a raw JSON string (from CLI) or an Object (from json! macro)
+            let options_str = if agent_val.is_string() {
+                agent_val.as_str().unwrap().to_string()
+            } else {
+                agent_val.to_string()
+            };
+            let (options, mut config) = get_options(&options_str).await?;
+            config.insert("role".to_string(), Value::String(role.to_string()));
+            if let Some(task) = task_type {
+                config.insert("task_hint".to_string(), serde_json::Value::String(task.to_string()));
+            }
 
-        Ok(Self { options, config, embed_args })
-    }
-// src/core/agent.rs
+            let embed_args = config.remove("embed_args").and_then(|v| serde_json::from_value(v).ok());
 
-    pub(crate) fn apply_task_context(&mut self, task: TaskType) {
-        let instruction = match task {
-            TaskType::RustRefactor => "Focus on memory safety and idiomatic Result usage.",
-            TaskType::GitBisect => "Methodically narrow down the commit range using exit codes.",
-            TaskType::ShellAutomation => "Write POSIX compliant scripts with verbose logging.",
-            TaskType::DebugCore => "Check for race conditions and verify thread safety.",
-            /*TaskType::RustRefactor2 => "Focus on ownership, lifetimes, and idiomatic patterns.",
-            TaskType::GitBisect2 => "Analyze commit history to find regression points.",
-            TaskType::ShellAutomation2 => "Write robust bash scripts with error handling (set -e).",
-            TaskType::DebugCore2 => "Inspect stack traces and memory logs for bottlenecks.",*/
-        };
-        // Insert into internal config so build_prompt_by_role can see it
-        self.config.insert("task_hint".to_string(), serde_json::Value::String(instruction.to_string()));
+            Ok(Self { options, config, embed_args })
+        } else if required {
+            Err(RuChatError::MissingAgent(role.to_string()))
+        } else {
+            Err(RuChatError::Is("Optional agent missing".into()))
+        }
     }
     pub(crate) fn remove_str(&mut self, key: &str) -> Result<String> {
         self.config.remove(key).and_then(|s| s.as_str().map(|s| s.to_string())).ok_or(RuChatError::Is(format!("No {key} in agent config")))
@@ -117,15 +117,21 @@ impl Agent {
         }
     }
 
-    fn parse_tool_call(&self, output: &str) -> Option<ToolCall> {
-        ToolCall::parse(output)
+    async fn parse_tool_call(&self, ctx: &mut Context) -> Result<()> {
+        if let Some(tool_call) = ToolCall::parse(&ctx.output) &&
+            tool_call.name.as_str() == "MEMORIZE"{
+                self.embed(tool_call.content.as_str(), UpsertMode::Upsert,ctx,
+                    "Information successfully committed to long-term memory."
+                    ).await?;
+        }
+        Ok(())
     }
-    pub(super) async fn embed(&self, prompt: &str, mode: UpsertMode) -> Result<()> {
+    pub(super) async fn embed(&self, prompt: &str, mode: UpsertMode, ctx: &mut Context, msg: &str) -> Result<()> {
         if let Some(args) = self.embed_args.as_ref() {
             args.embed(prompt, mode).await
         } else {
             EmbedArgs::default().embed(prompt, mode).await
-        }
+        }.map(|()| ctx.history.push_str(&format!("\n### SYSTEM: {msg}")))
     }
 
     pub(crate) async fn query_stream(
@@ -181,16 +187,8 @@ impl Agent {
         tx.send(Err(RuChatError::ColorChange(NC.to_string())))
             .await
             .map_err(|e| RuChatError::Is(e.to_string()))?;
+        self.parse_tool_call(ctx).await?;
         let output = &ctx.output;
-        if let Some(tool_call) = self.parse_tool_call(&output) {
-            match tool_call.name.as_str() {
-                "MEMORIZE" => {
-                    self.embed(tool_call.content.as_str(), UpsertMode::Upsert).await?;
-                    ctx.history.push_str("\n### SYSTEM: Information successfully committed to long-term memory.");
-                }
-                _ => { /* Handle other tools like shell execution */ }
-            }
-        }
         ctx.history.push_str(&format!("### {role} response:\n{output}\n\n"));
 
         match role {
@@ -205,5 +203,22 @@ impl Agent {
             }
         }
         Ok(())
+    }
+    pub(super) async fn execute_and_verify(&self, ctx: &mut Context) -> Result<Validation> {
+        let tool_call = match ToolCall::parse(&ctx.output) {
+            Some(call) => call,
+            None => return Ok(Validation::Skip),
+        };
+
+        match tool_call.to_tool() {
+            Some(Tool::Shell { command }) => {
+                Validation::execute_shell_script(&command, ctx).await
+            }
+            Some(Tool::Memorize { content }) => {
+                self.embed(&content, UpsertMode::Upsert, ctx, "Information successfully memorized.").await
+                    .map_or_else(|e| Ok(Validation::Failure(e.to_string())), |_| Ok(Validation::Success))
+            }
+            None => Ok(Validation::Failure(format!("Unknown tool: {}", tool_call.name))),
+        }
     }
 }

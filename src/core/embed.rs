@@ -11,7 +11,7 @@ use std::result::Result as StdResult;
 use uuid::Builder;
 use serde::Deserialize;
 use chrono::Utc;
-use chroma::types::{UpdateMetadataValue, IncludeList};
+use chroma::types::UpdateMetadataValue;
 
 /// The mode of operation for record synchronization.
 #[derive(ValueEnum, Debug, Clone, PartialEq, Copy, Deserialize)]
@@ -24,7 +24,7 @@ pub(crate) enum UpsertMode {
     Upsert,
 }
 
-#[derive(Parser, Debug, Clone, PartialEq, Deserialize)]
+#[derive(Parser, Debug, Clone, PartialEq, Deserialize, Default)]
 pub(crate) struct EmbedArgs {
     /// Optional prefix or base ID for the generated chunk IDs.
     #[arg(short, long)]
@@ -41,17 +41,6 @@ pub(crate) struct EmbedArgs {
 
     #[command(flatten)]
     metadata: UpdateMetadataArrayArgs,
-}
-impl Default for EmbedArgs {
-    fn default() -> Self {
-        Self {
-            id: None,
-            ollama_args: OllamaArgs::default(),
-            client_config: ChromaClientConfigArgs::default(),
-            collection_config: ChromaCollectionConfigArgs::default(),
-            metadata: UpdateMetadataArrayArgs::default(),
-        }
-    }
 }
 
 impl EmbedArgs {
@@ -89,8 +78,14 @@ impl EmbedArgs {
             for meta in metadata_items {
 
                 let mut meta_value = serde_json::to_value(&meta).unwrap_or_default();
-                meta_value.get_mut("created_at").map(|v| *v = serde_json::json!(Utc::now().to_rfc3339()));
-                meta_value.get_mut("model_origin").map(|v| *v = serde_json::json!(model.clone()));
+                if let Some(v) = meta_value.get_mut("created_at") {
+                    *v = serde_json::json!(Utc::now().to_rfc3339());
+                }
+
+                if let Some(v) = meta_value.get_mut("model_origin") {
+                    *v = serde_json::json!(model.clone());
+                }
+
                 let start = meta_value
                     .get("start")
                     .and_then(|v| v.as_u64())
