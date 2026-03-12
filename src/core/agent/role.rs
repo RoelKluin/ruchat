@@ -1,7 +1,7 @@
 use super::types::Context;
-use std::str::FromStr;
-use crate::{RuChatError, Result};
+use crate::{Result, RuChatError};
 use std::fmt::Display;
+use std::str::FromStr;
 
 pub(crate) enum Role {
     Architect,
@@ -29,15 +29,15 @@ impl Role {
         "\x1b[0m"
     }
     pub(crate) fn build_prompt(&self, system: &str, ctx: &Context, hint: Option<&str>) -> String {
-        let hint_section = hint.map_or_else(|| "".to_string(), |h| format!("\nCONTEXTUAL HINT: {h}"));
+        let hint_section =
+            hint.map_or_else(|| "".to_string(), |h| format!("\nCONTEXTUAL HINT: {h}"));
         match self {
             Role::Architect => format!(
                 "{system}{hint_section}\nGOAL: {}\nHISTORY: {}\nTASK: Plan implementation.",
                 ctx.get_goal(),
                 ctx.history
             ),
-            Self::Worker
-                => format!(
+            Self::Worker => format!(
                 "{system}{hint_section}\nDOCUMENTS: {}\nPLAN: {}\nGOAL: {}",
                 ctx.documents,
                 ctx.context,
@@ -68,10 +68,13 @@ impl Role {
         match self {
             Role::Architect => ctx.context = format!("PLAN:\n{}", ctx.output),
             Role::Worker => ctx.context = format!("IMPLEMENTATION:\n{}", ctx.output),
-            Role::Summarizer => ctx.history = format!("SUMMARY OF PREVIOUS EVENTS: {}\n", ctx.output),
+            Role::Summarizer => {
+                ctx.history = format!("SUMMARY OF PREVIOUS EVENTS: {}\n", ctx.output)
+            }
             _ => {
                 if !ctx.output.contains(signal) {
-                    ctx.rejections.push_str(&format!("- {}: {}\n", self, ctx.output));
+                    ctx.rejections
+                        .push_str(&format!("- {}: {}\n", self, ctx.output));
                 }
             }
         }

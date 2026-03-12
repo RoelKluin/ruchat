@@ -35,9 +35,29 @@ pub(crate) struct Orchestrator {
 
 impl Orchestrator {
     pub(crate) async fn new(mut config: Value, ollama: Ollama) -> Result<Self> {
-        let task_type = TaskType::deserialize(&config).map_err(RuChatError::SerdeError)?;
+        let task_type = TaskType::deserialize(&config).unwrap_or(TaskType::ShellAutomation);
         // 1. Extract Core Agents
         let architect = Agent::new(&mut config, "Architect", true, Some(&task_type)).await?;
+        let worker = Agent::new(&mut config, "Worker", true, Some(&task_type)).await?;
+
+        let validator = Agent::new(&mut config, "Validator", false, Some(&task_type))
+            .await
+            .ok();
+        let summarizer = Agent::new(&mut config, "Summarizer", false, None)
+            .await
+            .ok();
+
+        let mut critics = Vec::new();
+        if let Some(critic_list) = config.get("Critics").and_then(|v| v.as_array()) {
+            for critic_val in critic_list.clone() {
+                if let Some(role) = critic_val.as_str()
+                    && let Ok(agent) = Agent::new(&mut config, role, false, None).await
+                {
+                    critics.push(agent);
+                }
+            }
+        }
+
         let mut librarian = None;
         let mut client = None;
         if let Ok(mut lib) = Agent::new(&mut config, "Librarian", false, None).await {
@@ -51,34 +71,19 @@ impl Orchestrator {
 
             librarian = Some(lib);
         }
-        let worker = Agent::new(&mut config, "Worker", true, Some(&task_type)).await?;
-        let validator = Agent::new(&mut config, "Validator", false, Some(&task_type))
-            .await
-            .ok();
 
         // 2. Extract Critics (can be a list or individual named keys in JSON)
-        let mut critics = Vec::new();
-        let critic_roles = ["Validator", "Critic", "Safety Critic", "Performance Critic"];
-
-        for role in critic_roles {
-            if let Ok(agent) = Agent::new(&mut config, role, false, None).await {
-                critics.push(agent);
-            }
-        }
-        let summarizer = Agent::new(&mut config, "Summarizer", false, None)
-            .await
-            .ok();
 
         Ok(Self {
             architect,
-            librarian,
             worker,
+            validator,
+            summarizer,
             critics,
+            librarian,
             config,
             ollama,
-            summarizer,
             client,
-            validator,
         })
     }
 

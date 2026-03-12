@@ -21,14 +21,25 @@ const DEFAULT_MODEL: &str = "qwen2.5vl:latest";
 /// to a model, including model details, prompt, and input options.
 #[derive(Parser, Debug, Clone, Default, PartialEq)]
 pub(crate) struct AskArgs {
-    /// Optional JSON string to configure agentic behavior. If provided, this will orchestrate
-    /// multiple agents based on the specified configuration instead of a single-shot generation.
-    #[arg(short, long, default_value_t = String::new())]
-    agentic: String,
+    /// Provide a full JSON config for the team
+    #[arg(short, long, group = "agent_config")]
+    agentic: Option<String>,
 
-    /// Request a certain output format, the default leaves the text as is.
-    #[arg(short, long, default_value_t = String::from("text"))]
-    output_format: String,
+    /// Quick-start: Just enable Worker+Architect with this model
+    #[arg(long, group = "agent_config")]
+    team_model: Option<String>,
+
+    /// Enable RAG by specifying a Chroma collection name
+    #[arg(long)]
+    collection: Option<String>,
+
+    /// Override maximum iterations
+    #[arg(long, default_value = "3")]
+    iterations: Option<u64>,
+
+    /// Model for an optional Validator agent
+    #[arg(long)]
+    validator_model: Option<String>,
 
     #[command(flatten)]
     prompt: PromptArgs,
@@ -68,6 +79,60 @@ pub(crate) async fn generate_oneshot(
 }
 
 impl AskArgs {
+    pub fn into_config(self, default_model: &str) -> Result<serde_json::Value> {
+        // 1. Start with base: either provided JSON or empty object
+        let mut config: serde_json::Value = if let Some(ref json_str) = self.agentic {
+            serde_json::from_str(json_str).map_err(RuChatError::SerdeError)?
+        } else {
+            serde_json::json!({})
+        };
+        // Inject Librarian if collection is provided via flag
+        if let Some(col) = self.collection {
+            config["Librarian"] = serde_json::json!({
+                "chroma_client": "{\"chroma_server\": \"http://localhost:8000\"}", // Default server
+                "status_msg": "Searching knowledge base..."
+            });
+            // Ensure the librarian uses the correct collection in the prompt
+            config["task_hint"] = serde_json::json!(format!("Query the {} collection", col));
+        }
+        // 2. Handle team_model shortcut
+        if let Some(model) = self.team_model {
+            if config.get("Architect").is_none() {
+                config["Architect"] = serde_json::json!({ "model": model });
+            }
+            if config.get("Worker").is_none() {
+                config["Worker"] = serde_json::json!({ "model": model });
+            }
+        }
+
+        // 3. Handle validator shortcut
+        if let Some(v_model) = self.validator_model {
+            config["Validator"] = serde_json::json!({ "model": v_model });
+        }
+
+        // 4. Override iterations if flag is present
+        if let Some(iters) = self.iterations {
+            config["iterations"] = serde_json::json!(iters);
+        }
+
+        // 5. Inject global model as fallback for agents missing one
+        for role in [
+            "Architect",
+            "Worker",
+            "Librarian",
+            "Validator",
+            "Summarizer",
+        ] {
+            if let Some(agent) = config.get_mut(role)
+                && agent.get("model").is_none()
+            {
+                agent["model"] = default_model.into();
+            }
+        }
+
+        Ok(config)
+    }
+
     /// The ask command handles prompted questions with context using a model.
     ///
     /// This function connects to a model using the provided arguments,
@@ -82,7 +147,7 @@ impl AskArgs {
     /// A `Result` indicating success or failure.
     pub(crate) async fn ask(&self, end_marker: &str) -> Result<()> {
         let mut cio = Io::new();
-        let mut prompt = match self.prompt.get_prompt() {
+        let prompt = match self.prompt.get_prompt() {
             Ok(p) => p,
             Err(RuChatError::NoPromptProvided) => {
                 let mut input = String::new();
@@ -103,32 +168,33 @@ impl AskArgs {
             }
             Err(e) => return Err(e),
         };
-        if self.output_format != "text" {
-            prompt.push_str("\nGenerate your response in valid ");
-            prompt.push_str(&self.output_format);
-            prompt.push_str(" output format.\n");
-        }
-        let (ollama, model) = self.ollama.init("").await?;
 
-        let mut stream: LlamaStream = if !self.agentic.is_empty() {
-            let config = serde_json::from_str::<serde_json::Value>(&self.agentic)
-                .map_err(RuChatError::SerdeError)?;
-            let orchestrator = Orchestrator::new(config, ollama).await?;
-            Box::pin(orchestrator.run_task_stream(prompt))
-        } else {
-            // ... existing single-shot logic ...
-            let request = self
-                .ollama
-                .build_generation_request(model[0].clone(), prompt)
-                .await?;
-            Box::pin(
-                ollama
-                    .generate_stream(request)
-                    .await
-                    .map(|res| res.map_err(RuChatError::OllamaError))
-                    .map_err(RuChatError::OllamaError)?,
-            )
-        };
+        let (ollama, model) = self.ollama.init("").await?;
+        let model_name = model
+            .first()
+            .cloned()
+            .unwrap_or_else(|| DEFAULT_MODEL.to_string());
+
+        let config = self.clone().into_config(&model_name)?;
+
+        let mut stream: LlamaStream =
+            if config.get("Architect").is_some() || config.get("Worker").is_some() {
+                let orchestrator = Orchestrator::new(config, ollama).await?;
+                Box::pin(orchestrator.run_task_stream(prompt))
+            } else {
+                // ... existing single-shot logic ...
+                let request = self
+                    .ollama
+                    .build_generation_request(model[0].clone(), prompt)
+                    .await?;
+                Box::pin(
+                    ollama
+                        .generate_stream(request)
+                        .await
+                        .map(|res| res.map_err(RuChatError::OllamaError))
+                        .map_err(RuChatError::OllamaError)?,
+                )
+            };
         while let Some(res) = stream.next().await {
             match res {
                 Ok(responses) => {
@@ -138,7 +204,7 @@ impl AskArgs {
                 }
                 Err(RuChatError::ColorChange(ansi_code)) => {
                     // Write the color code directly to the output without a newline
-                    cio.write_line(&ansi_code).await?;
+                    cio.write_line(ansi_code).await?;
                 }
                 Err(RuChatError::StatusUpdate(msg)) => {
                     // Print a dim status message that gets overwritten by the next line
@@ -163,7 +229,20 @@ mod tests {
         assert_eq!(args.agentic, "");
         assert_eq!(args.output_format, "text");
     }
+    #[tokio::test]
+    async fn test_agentic_config_merging() {
+        let args = AskArgs {
+            team_model: Some("codellama".to_string()),
+            iterations: Some(5),
+            ..Default::default()
+        };
 
+        let config = args.into_config("default-model").unwrap();
+
+        assert_eq!(config["iterations"], 5);
+        assert_eq!(config["Architect"]["model"], "codellama");
+        assert_eq!(config["Worker"]["model"], "codellama");
+    }
     #[tokio::test]
     async fn test_agentic() {
         let agentic = json!({

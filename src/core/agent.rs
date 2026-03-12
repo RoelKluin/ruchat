@@ -1,9 +1,9 @@
 pub(crate) mod manager;
 pub(crate) mod protocol;
+mod role;
 pub(crate) mod team;
 pub(crate) mod types;
 pub(crate) mod worker;
-mod role;
 
 use crate::core::embed::{EmbedArgs, UpsertMode};
 use crate::core::orchestrator::TaskType;
@@ -14,14 +14,14 @@ use chroma::ChromaHttpClient;
 use ollama_rs::generation::completion::{GenerationResponse, request::GenerationRequest};
 use ollama_rs::{Ollama, models::ModelOptions};
 use protocol::{Tool, ToolCall, Validation};
+use role::Role;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::str::FromStr;
 pub(crate) use team::Team;
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 use types::Context;
-use role::Role;
-use std::str::FromStr;
 
 pub(crate) struct Agent {
     options: ModelOptions,
@@ -157,8 +157,8 @@ impl Agent {
         }
         // Inject the color change into the stream
         tx.send(Err(RuChatError::ColorChange(role.get_color())))
-        .await
-        .map_err(|e| RuChatError::Is(e.to_string()))?;
+            .await
+            .map_err(|e| RuChatError::Is(e.to_string()))?;
 
         let mut stream = ollama
             .generate_stream(request)

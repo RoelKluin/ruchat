@@ -3,42 +3,59 @@ use crate::{Result, RuChatError};
 use log::info;
 
 pub(crate) async fn commit_feature_branch(ctx: &Context) -> Result<()> {
-    // 1. Sanitize Branch Name
     let timestamp = chrono::Utc::now().timestamp();
     let branch_name = format!("ai/feature-{}", timestamp);
     let goal = ctx.get_goal();
 
-    // 2. Prepare the Summary Entry
-    let summary_entry = format!(
-        "\n--- \n### 🤖 AI Update: {}\n**Date:** {}\n**Goal:** {}\n**Changes:** \n{}\n",
-        branch_name,
-        chrono::Utc::now().to_rfc2822(),
-        goal,
-        ctx.output.lines().take(5).collect::<Vec<_>>().join("\n") // Take first 5 lines of worker output as summary
-    );
-
-    // 3. Execution Sequence
-    // We use a helper to run commands and check status
-    // Create branch and switch
-    run_git_command(vec!["checkout", "-b", &branch_name]).await?;
-
-    // Append to featured_changes.md
-    let mut file = tokio::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("featured_changes.md")
+    // 1. Get current branch name to return to it later
+    let current_branch_output = tokio::process::Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .output()
         .await?;
+    let original_branch = String::from_utf8_lossy(&current_branch_output.stdout)
+        .trim()
+        .to_string();
 
-    tokio::io::AsyncWriteExt::write_all(&mut file, summary_entry.as_bytes()).await?;
+    // 2. Execution with rollback
+    let result = async {
+        run_git_command(vec!["checkout", "-b", &branch_name]).await?;
 
-    // Finalize Git sequence
-    run_git_command(vec!["add", "."]).await?;
-    run_git_command(vec!["commit", "-m", &format!("AI Success: {}", goal)]).await?;
-    run_git_command(vec!["checkout", "-"]).await?; // Return to main
+        // Append to featured_changes.md
+        let mut file = tokio::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("featured_changes.md")
+            .await?;
+
+        // 2. Prepare the Summary Entry
+        let summary_entry = format!(
+            "\n--- \n### 🤖 AI Update: {}\n**Date:** {}\n**Goal:** {}\n**Changes:** \n{}\n",
+            branch_name,
+            chrono::Utc::now().to_rfc2822(),
+            goal,
+            ctx.output.lines().take(5).collect::<Vec<_>>().join("\n") // Take first 5 lines of worker output as summary
+        );
+
+        tokio::io::AsyncWriteExt::write_all(&mut file, summary_entry.as_bytes()).await?;
+
+        run_git_command(vec!["add", "."]).await?;
+        run_git_command(vec!["commit", "-m", &format!("AI Success: {}", goal)]).await?;
+        Ok::<(), RuChatError>(())
+    }
+    .await;
+
+    // 3. Always attempt to return to the original branch
+    let _ = run_git_command(vec!["checkout", &original_branch]).await;
+
+    if let Err(e) = result {
+        // If we failed after creating the branch, maybe delete the failed branch
+        let _ = run_git_command(vec!["branch", "-D", &branch_name]).await;
+        return Err(e);
+    }
 
     info!(
-        "🚀 Changes logged in featured_changes.md and committed to {}",
-        branch_name
+        "🚀 Changes committed to {} and returned to {}",
+        branch_name, original_branch
     );
     Ok(())
 }
