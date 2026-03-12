@@ -49,9 +49,16 @@ impl Orchestrator {
 
         let mut critics = Vec::new();
         if let Some(critic_list) = config.get("Critics").and_then(|v| v.as_array()) {
-            for critic_val in critic_list.clone() {
-                if let Some(role) = critic_val.as_str()
-                    && let Ok(agent) = Agent::new(&mut config, role, false, None).await
+            for (i, c_val) in critic_list.iter().enumerate() {
+                // We pass a copy of the specific critic's config
+                let mut c_config = c_val.clone();
+                if let Ok(agent) = Agent::new(
+                    &mut c_config,
+                    &format!("Critic_{}", i),
+                    true,
+                    Some(&task_type),
+                )
+                .await
                 {
                     critics.push(agent);
                 }

@@ -41,6 +41,10 @@ pub(crate) struct AskArgs {
     #[arg(long)]
     validator_model: Option<String>,
 
+    /// Add one or more specific critics (e.g., --critic "Security" --critic "Performance")
+    #[arg(long, action = clap::ArgAction::Append)]
+    critic: Vec<String>,
+
     #[command(flatten)]
     prompt: PromptArgs,
 
@@ -95,7 +99,21 @@ impl AskArgs {
             // Ensure the librarian uses the correct collection in the prompt
             config["task_hint"] = serde_json::json!(format!("Query the {} collection", col));
         }
-        // 2. Handle team_model shortcut
+
+        // Handle Multiple Critics
+        if !self.critic.is_empty() {
+            let mut critics_array = Vec::new();
+            for c_name in self.critic {
+                critics_array.push(serde_json::json!({
+                    "model": self.team_model.clone().unwrap_or_else(|| default_model.to_string()),
+                    "task": format!("Review the implementation specifically for {} concerns.", c_name),
+                    "status_msg": format!("{} Critic is reviewing...", c_name)
+                }));
+            }
+            config["Critics"] = serde_json::Value::Array(critics_array);
+        }
+
+        // Handle team_model shortcut
         if let Some(model) = self.team_model {
             if config.get("Architect").is_none() {
                 config["Architect"] = serde_json::json!({ "model": model });
@@ -105,17 +123,17 @@ impl AskArgs {
             }
         }
 
-        // 3. Handle validator shortcut
+        // Handle validator shortcut
         if let Some(v_model) = self.validator_model {
             config["Validator"] = serde_json::json!({ "model": v_model });
         }
 
-        // 4. Override iterations if flag is present
+        // Override iterations if flag is present
         if let Some(iters) = self.iterations {
             config["iterations"] = serde_json::json!(iters);
         }
 
-        // 5. Inject global model as fallback for agents missing one
+        // Inject global model as fallback for agents missing one
         for role in [
             "Architect",
             "Worker",
