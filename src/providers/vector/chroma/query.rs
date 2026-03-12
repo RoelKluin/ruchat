@@ -22,7 +22,7 @@ pub(crate) struct Query {
     n_results: Option<u32>,
 
     /// Comma separated list of document IDs to restrict the search.
-    #[arg(short, long)]
+    #[arg(short, long, value_delimiter = ',')]
     ids: Option<String>,
 
     #[command(flatten)]

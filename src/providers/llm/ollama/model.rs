@@ -3,7 +3,7 @@ use crate::{Result, RuChatError};
 use clap::Parser;
 use ollama_rs::Ollama;
 use ollama_rs::generation::completion::request::GenerationRequest;
-use serde::Deserialize;
+use serde::{Serialize, Deserialize};
 
 pub(crate) fn get_dynamic_history_limit(model_name: &str) -> u64 {
     if model_name.contains("qwen2.5") {
@@ -15,24 +15,88 @@ pub(crate) fn get_dynamic_history_limit(model_name: &str) -> u64 {
     } // Safe fallback
 }
 
-#[derive(Parser, Debug, Clone, Default, PartialEq, Deserialize)]
+#[derive(Parser, Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ModelArgs {
-    /// Model to (down)load and use.
-    #[arg(short, long)]
+    /// Model(s) to (down)load and use.
+    #[arg(short, long, value_delimiter = ',')]
     model: Vec<String>,
 
-    /// Path to a JSON file to amend default generation options, or a string
-    /// representing the options in JSON format.
+    /// Path to a JSON file or a JSON string to amend default generation options.
     #[arg(short, long)]
     options: Option<String>,
+
+    /// Size of the prompt context (tokens) used to generate the next token.
+    #[arg(long)]
+    pub num_ctx: Option<u64>,
+
+    /// The temperature of the model. Increasing the temperature will make the model answer more creatively.
+    #[arg(long, value_parser = clap::value_parser!(f32))]
+    pub temperature: Option<f32>,
+
+    /// Reduces the probability of generating nonsense. A higher value (e.g. 100) will give more diverse answers.
+    #[arg(long)]
+    pub top_k: Option<u32>,
+
+    /// Works together with top-k. A higher value (e.g., 0.95) will lead to more diverse text.
+    #[arg(long, value_parser = clap::value_parser!(f32))]
+    pub top_p: Option<f32>,
+
+    /// Sets how strongly to penalize repetitions. A higher value (e.g., 1.5) will penalize repetitions more strongly.
+    #[arg(long)]
+    pub repeat_penalty: Option<f32>,
+
+    /// Sets the stop sequences to use. When this pattern is encountered the LLM will stop generating text.
+    #[arg(long)]
+    pub stop: Option<Vec<String>>,
+
+    /// Maximum number of tokens to predict when generating text. (-1 = infinite, -2 = fill context).
+    #[arg(long)]
+    pub num_predict: Option<i32>,
+
+    /// Sets the random number seed to use for generation. Setting this to a specific number will make the model generate the same text for the same prompt.
+    #[arg(long)]
+    pub seed: Option<i32>,
 }
 
 impl ModelArgs {
+    pub(crate) async fn build_generation_request(
+        &self,
+        model: String,
+        prompt: String,
+    ) -> Result<GenerationRequest<'_>> {
+        // 1. Get base options from file/string or start with empty JSON
+        let mut opts_val = if let Some(ref opts_raw) = self.options {
+            let (opts, _etc) = get_options(opts_raw).await?;
+            serde_json::to_value(opts).map_err(RuChatError::SerdeError)?
+        } else {
+            serde_json::json!({})
+        };
+
+        // 2. Merge CLI flags into JSON to bypass private fields
+        if let Some(v) = self.num_ctx { opts_val["num_ctx"] = serde_json::json!(v); }
+        if let Some(v) = self.temperature { opts_val["temperature"] = serde_json::json!(v); }
+        if let Some(v) = self.top_k { opts_val["top_k"] = serde_json::json!(v); }
+        if let Some(v) = self.top_p { opts_val["top_p"] = serde_json::json!(v); }
+        if let Some(v) = self.repeat_penalty { opts_val["repeat_penalty"] = serde_json::json!(v); }
+        if let Some(v) = &self.stop { opts_val["stop"] = serde_json::json!(v); }
+        if let Some(v) = self.num_predict { opts_val["num_predict"] = serde_json::json!(v); }
+        if let Some(v) = self.seed { opts_val["seed"] = serde_json::json!(v); }
+
+        // 3. Deserialize back to ModelOptions
+        let model_opts: ollama_rs::models::ModelOptions = 
+            serde_json::from_value(opts_val).map_err(RuChatError::SerdeError)?;
+
+        Ok(GenerationRequest::new(model, prompt).options(model_opts))
+    }
     #[cfg(test)]
     pub(crate) fn new(model: &str, options: Option<&str>) -> Self {
         let model = model.split(',').map(|s| s.trim().to_string()).collect();
         let options = options.map(|s| s.to_string());
-        Self { model, options }
+        Self {
+            model,
+            options,
+            ..Default::default()
+        }
     }
     pub(super) async fn get_model(
         &self,
@@ -53,19 +117,6 @@ impl ModelArgs {
     }
     pub(super) fn get_nr_of_models(&self) -> usize {
         self.model.len()
-    }
-    pub(crate) async fn build_generation_request(
-        &self,
-        model: String,
-        prompt: String,
-    ) -> Result<GenerationRequest<'_>> {
-        match self.options {
-            None => Ok(GenerationRequest::new(model, prompt)),
-            Some(ref opts) => {
-                let (options, _etc) = get_options(opts).await?;
-                Ok(GenerationRequest::new(model, prompt).options(options))
-            }
-        }
     }
 }
 

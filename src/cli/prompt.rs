@@ -1,57 +1,50 @@
 use crate::{Result, RuChatError};
 use clap::Parser;
-use clap::ValueEnum;
-use std::collections::HashSet;
-use std::fs;
-use std::process::Command;
-
-#[derive(ValueEnum, Clone, Debug, PartialEq, Default)]
-enum StdCapture {
-    Stdout,
-    Stderr,
-    #[default]
-    Both,
-}
-
-impl StdCapture {
-    fn as_str(&self) -> &'static str {
-        match self {
-            StdCapture::Stdout => "Stdout",
-            StdCapture::Stderr => "Stderr",
-            StdCapture::Both => "Stderr and Stdout",
-        }
-    }
-}
+use std::path::PathBuf;
+use clap::ValueHint::FilePath;
 
 #[derive(Parser, Debug, Clone, Default, PartialEq)]
 pub(crate) struct PromptArgs {
-    /// Prompt to use.
-    #[arg(short, long)]
+    /// The primary prompt or question. Can be provided as a positional argument.
+    #[arg(help = "The prompt to send to the model")]
     prompt: Option<String>,
 
-    /// Text files to use as input, separated by commas.
-    #[arg(short = 'i', long)]
-    files: Option<String>,
+    /// Explicit prompt flag (alternative to positional).
+    #[arg(short, long, help = "Explicitly set the prompt")]
+    explicit_prompt: Option<String>,
 
-    /// Command to read input from, defaults to 'cat'.
+    /// Text files to inject into the context.
+    /// Supports multiple flags: -i file1.txt -i file2.txt or comma-separated.
+    #[arg(
+        short = 'i',
+        long = "input-files",
+        value_delimiter = ',',
+        value_hint = FilePath
+    )]
+    files: Vec<PathBuf>,
+
+    /// External command to run to generate input context.
     #[arg(short = 'c', long, default_value = "cat")]
     command: String,
 
-    /// Arguments to pass to the command.
+    /// Arguments to pass to the external command.
     #[arg(short = 'a', long, num_args = 0..)]
     args: Vec<String>,
 
-    /// Capture standard output, standard error, or both.
-    #[arg(short = 's', long, default_value = "both")]
-    capture: StdCapture,
+    /// Which output streams to capture from the external command.
+    #[arg(
+        short = 's',
+        long,
+        default_value = "both",
+        value_parser = ["stdout", "stderr", "both"]
+    )]
+    capture: String,
 
-    /// Allowed exit codes for the command, separated by commas.
-    #[arg(short = 'e', long, default_value = "0")]
-    allowed_exit_codes: String,
-
-    /// Specify the prompt using a positional argument.
-    positional_prompt: Option<String>,
+    /// Expected exit codes from the command. Errors if code doesn't match.
+    #[arg(short = 'e', long, value_delimiter = ',', default_value = "0")]
+    allowed_exit_codes: Vec<i32>,
 }
+
 
 fn andify_list<S: AsRef<str>>(what: &str, items: &[S], q: &str) -> String {
     match items.len() {
@@ -73,89 +66,58 @@ fn andify_list<S: AsRef<str>>(what: &str, items: &[S], q: &str) -> String {
 }
 
 impl PromptArgs {
-    fn promptless(&self, files: &str) -> Result<String> {
-        let allowed_exit_codes: HashSet<i32> = HashSet::from_iter(
-            self.allowed_exit_codes
-                .split(',')
-                .map(|code| code.trim().parse::<i32>())
-                .collect::<std::result::Result<Vec<_>, _>>()
-                .map_err(|e| RuChatError::InvalidExitCodeFormat(format!("{e}")))?,
-        );
-        let v = files.split(',').map(str::trim).collect::<Vec<_>>();
+    fn promptless(&self, files: &[std::path::PathBuf]) -> Result<String> {
+        let v: Vec<String> = files.iter().map(|p| p.to_string_lossy().into_owned()).collect();
         let files_str = andify_list("the file", &v, "`");
         match self.command {
             ref cmd if cmd == "cat" => {
                 let mut combined_content = format!("The contents of {files_str}:\n");
-                for file in files.split(',') {
-                    let file = file.trim();
-                    let content = fs::read_to_string(file)
-                        .map_err(|e| RuChatError::FileReadError(format!("{}, {e}", file)))?;
-                    combined_content.push_str("```\n");
-                    combined_content.push_str(&content);
-                    combined_content.push_str("\n```\n");
+                for path in files {
+                    let content = std::fs::read_to_string(path)
+                        .map_err(|e| RuChatError::FileReadError(format!("{}: {e}", path.display())))?;
+                    
+                    combined_content.push_str(&format!("```\n{}\n```\n", content));
                 }
                 Ok(combined_content)
             }
             ref cmd => {
-                let args = self
-                    .args
-                    .iter()
-                    .map(String::as_str)
-                    .collect::<Vec<_>>()
-                    .join(" ");
+                let joined_args = self.args.join(" ");
                 let mut combined_content = format!(
-                    "The `{cmd} {args}` {} for {files_str}:\n",
-                    self.capture.as_str()
+                    "The `{cmd} {joined_args}` {} for {files_str}:\n",
+                    self.capture
                 );
 
-                let mut command = Command::new(cmd);
                 let mut errors = Vec::new();
-                for file in files.split(',') {
-                    let child = command.args(&self.args).arg(file.trim()).spawn()?;
-                    let output = child.wait_with_output()?;
+                for path in files {
+                    let output = std::process::Command::new(cmd)
+                        .args(&self.args)
+                        .arg(path)
+                        .output()?;
+
                     let status = output.status;
-                    if self.capture == StdCapture::Stdout || self.capture == StdCapture::Both {
-                        if !output.stdout.is_empty() {
-                            combined_content.push_str("Stdout:\n```\n");
-                            combined_content.push_str(&String::from_utf8_lossy(&output.stdout));
-                            combined_content.push_str("\n```\n");
-                        } else {
-                            combined_content.push_str("No stdout.\n");
-                        }
+                    let exit_code = status.code().unwrap_or(-1);
+
+                    // Append captured output based on settings
+                    if self.capture != "stderr" && !output.stdout.is_empty() {
+                        combined_content.push_str(&format!("Stdout:\n```\n{}\n```\n", String::from_utf8_lossy(&output.stdout)));
                     }
-                    if (self.capture == StdCapture::Stderr || self.capture == StdCapture::Both)
-                        && !output.stderr.is_empty()
-                    {
-                        combined_content.push_str("Stderr:\n```\n");
-                        combined_content.push_str(&String::from_utf8_lossy(&output.stderr));
-                        combined_content.push_str("\n```\n");
+                    if self.capture != "stdout" && !output.stderr.is_empty() {
+                        combined_content.push_str(&format!("Stderr:\n```\n{}\n```\n", String::from_utf8_lossy(&output.stderr)));
                     }
-                    if allowed_exit_codes.contains(&status.code().unwrap_or(-1)) {
-                        combined_content.push_str(&format!(
-                            "`{cmd} {args} {file}` exited with status code {}.\n",
-                            status.code().unwrap_or(-1)
-                        ));
+
+                    // Check exit codes using the Vec from clap
+                    if self.allowed_exit_codes.contains(&exit_code) {
+                        combined_content.push_str(&format!("`{cmd} {joined_args} {}` exited with status {exit_code}.\n", path.display()));
                     } else {
-                        errors.push(RuChatError::CommandExitError(
-                            cmd.to_string(),
-                            status.to_string(),
-                        ));
+                        errors.push(RuChatError::CommandExitError(cmd.to_string(), exit_code.to_string()));
                     }
                 }
                 if !errors.is_empty() {
-                    Err(RuChatError::MultipleCommandExitErrors(andify_list(
-                        "the command",
-                        &errors
-                            .iter()
-                            .map(|e| match e {
-                                RuChatError::CommandExitError(cmd, code) => {
-                                    format!("`{cmd}` exited with code {code}")
-                                }
-                                _ => "Unknown error".to_string(),
-                            })
-                            .collect::<Vec<_>>(),
-                        "`",
-                    )))
+                    let err_msgs: Vec<String> = errors.iter().map(|e| match e {
+                        RuChatError::CommandExitError(c, code) => format!("`{c}` exited with code {code}"),
+                        _ => "Unknown error".into(),
+                    }).collect();
+                    Err(RuChatError::MultipleCommandExitErrors(andify_list("the command", &err_msgs, "`")))
                 } else {
                     Ok(combined_content)
                 }
@@ -165,20 +127,24 @@ impl PromptArgs {
 
     pub(crate) fn get_prompt(&self) -> Result<String> {
         if self.prompt.is_some()
-            && self.positional_prompt.is_some()
-            && self.prompt != self.positional_prompt
+            && self.prompt.is_some()
+            && self.prompt != self.explicit_prompt
         {
             Err(RuChatError::ConflictingPrompts)
         } else {
-            match self.prompt.as_ref().or(self.positional_prompt.as_ref()) {
-                Some(p) if self.files.is_none() => Ok(p.to_string()),
-                Some(p) => self
-                    .promptless(self.files.as_ref().unwrap())
-                    .map(|s| format!("{p}\n{s}")),
-                None => self
-                    .files
-                    .as_ref()
-                    .map_or(Err(RuChatError::NoPromptProvided), |f| self.promptless(f)),
+            match self.prompt.as_ref().or(self.explicit_prompt.as_ref()) {
+                Some(p) if self.files.is_empty() => Ok(p.to_string()),
+                Some(p) => {
+                    let context = self.promptless(&self.files)?;
+                    Ok(format!("{p}\n{context}"))
+                },
+                None => {
+                    if self.files.is_empty() {
+                        Err(RuChatError::NoPromptProvided)
+                    } else {
+                        self.promptless(&self.files)
+                    }
+                }
             }
         }
     }

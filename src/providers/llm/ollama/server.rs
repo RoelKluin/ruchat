@@ -6,7 +6,7 @@ use serde::Deserialize;
 #[derive(Parser, Debug, Default, PartialEq, Clone, Deserialize)]
 pub(crate) struct ServerArgs {
     /// Address and port of the ollama server.
-    #[arg(short, long, default_value = "http://localhost:11434")]
+    #[arg(short = 's', long, default_value = "http://localhost:11434")]
     server: String,
 }
 

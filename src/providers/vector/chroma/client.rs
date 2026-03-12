@@ -8,20 +8,35 @@ use std::time::Duration;
 
 #[derive(Parser, Debug, Clone, PartialEq, Deserialize)]
 pub(crate) struct ChromaClientConfigArgs {
-    #[arg(short = 'C', long, default_value = "http://localhost:8000")]
+    /// URL of the ChromaDB server.
+    #[arg(short = 'C', long, env = "CHROMA_SERVER", default_value = "http://localhost:8000")]
     pub chroma_server: String,
-    #[arg(short = 't', long)]
+
+    /// Optional authentication token for the ChromaDB instance.
+    #[arg(short = 't', long, env = "CHROMA_TOKEN")]
     pub chroma_token: Option<String>,
+
+    /// Maximum number of times to retry a failed request.
     #[arg(long, default_value_t = 3)]
     pub max_retries: usize,
-    #[arg(long, default_value_t = 100)]
+
+    /// Minimum delay (in milliseconds) between retries.
+    #[arg(long, default_value_t = 100, hide_default_value = true)]
     pub min_delay: u64,
-    #[arg(long, default_value_t = 10)]
+
+    /// Maximum delay (in milliseconds) between retries.
+    #[arg(long, default_value_t = 10, hide_default_value = true)]
     pub max_delay: u64,
-    #[arg(long, default_value_t = true)]
+
+    /// Whether to apply a random jitter to the retry delay to prevent thundering herds.
+    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
     pub jitter: bool,
+
+    /// The tenant identifier used for multi-tenancy environments.
     #[arg(long, default_value = "default_tenant")]
     pub tenant_id: Option<String>,
+
+    /// The name of the database within the Chroma instance.
     #[arg(short = 'd', long, default_value = "default")]
     pub chroma_database: Option<String>,
 }

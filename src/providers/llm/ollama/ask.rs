@@ -22,7 +22,7 @@ const DEFAULT_MODEL: &str = "qwen2.5vl:latest";
 #[derive(Parser, Debug, Clone, Default, PartialEq)]
 pub(crate) struct AskArgs {
     /// Provide a full JSON config for the team
-    #[arg(short, long, group = "agent_config")]
+    #[arg(short, long, group = "agent_config", conflicts_with = "team_model")]
     agentic: Option<String>,
 
     /// Quick-start: Just enable Worker+Architect with this model
@@ -34,7 +34,7 @@ pub(crate) struct AskArgs {
     collection: Option<String>,
 
     /// Override maximum iterations
-    #[arg(long, default_value = "3")]
+    #[arg(long)]
     iterations: Option<u64>,
 
     /// Model for an optional Validator agent

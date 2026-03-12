@@ -5,14 +5,15 @@ use log::info;
 
 #[derive(Parser, Debug, Clone, PartialEq)]
 pub(crate) struct ChromaDeleteArgs {
-    /// The name of the collection.
+    /// The name of the collection from which to delete documents.
     #[arg(short, long)]
     collection: String,
 
+    /// If set, bypasses confirmation prompts before deletion.
     #[arg(short, long)]
     force: bool,
 
-    /// Comma separated list of document IDs to delete from the collection.
+    /// Comma separated list of document IDs to delete.
     #[arg(short, long)]
     ids: Option<String>,
 
