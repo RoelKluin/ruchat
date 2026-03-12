@@ -23,19 +23,6 @@ use types::Context;
 use role::Role;
 use std::str::FromStr;
 
-fn get_agent_color(role: &str) -> &str {
-    match role {
-        "ARCHITECT" => "\x1b[1;32m",
-        "WORKER" => "\x1b[1;34m",
-        "VALIDATOR" => "\x1b[1;33m",
-        "CRITIC" => "\x1b[1;31m",
-        "PERFORMANCE CRITIC" => "\x1b[1;94m",
-        "SUMMARIZER" => "\x1b[1;35m",
-        _ => "\x1b[0m",
-    }
-}
-const NC: &str = "\x1b[0m";
-
 pub(crate) struct Agent {
     options: ModelOptions,
     config: HashMap<String, Value>,
@@ -106,46 +93,6 @@ impl Agent {
         get_dynamic_history_limit(self.get_str("model").unwrap_or(""))
     }
 
-    fn build_prompt_by_role(&self, role: &str, system: &str, ctx: &Context) -> String {
-        let hint = self.get_str("task_hint").unwrap_or_default();
-        let hint_section = if hint.is_empty() {
-            String::new()
-        } else {
-            format!("\nCONTEXTUAL HINT: {hint}")
-        };
-
-        match role {
-            "ARCHITECT" => format!(
-                "{system}{hint_section}\nGOAL: {}\nHISTORY: {}\nTASK: Plan implementation.",
-                ctx.get_goal(),
-                ctx.history
-            ),
-            "WORKER" => format!(
-                "{system}{hint_section}\nDOCUMENTS: {}\nPLAN: {}\nGOAL: {}",
-                ctx.documents,
-                ctx.context,
-                ctx.get_goal()
-            ),
-            "SUMMARIZER" => format!("{system}\nRAW HISTORY TO COMPRESS: {}", ctx.history),
-            "LIBRARIAN" => format!(
-                "{system}{hint_section}\nGOAL: {goal}\nTASK: Formulate a JSON Query. \
-                You can query collections: 'technical_docs', 'project_memory', or 'web_cache'.\n\
-                OUTPUT FORMAT: {{\"query_texts\": [\"...\"], \"n_results\": 5, \"collection\": \"...\"}}",
-                goal = ctx.get_goal()
-            ),
-            "VALIDATOR" => format!(
-                "{system}\nWORKER_OUTPUT: {}\nTASK: Identify technical flaws or incomplete logic. \
-                If flawed, respond with 'REJECTED: [reason]'. If perfect, respond with 'VALIDATED'.",
-                ctx.output
-            ),
-            _ => format!(
-                "{system}{hint_section}\nGOAL: {}\nCODE/WORK TO REVIEW: {}",
-                ctx.get_goal(),
-                ctx.context
-            ),
-        }
-    }
-
     async fn parse_tool_call(&self, ctx: &mut Context) -> Result<()> {
         if let Some(tool_call) = ToolCall::parse(&ctx.output)
             && tool_call.name.as_str() == "MEMORIZE"
@@ -209,9 +156,7 @@ impl Agent {
                 .map_err(|e| RuChatError::Is(e.to_string()))?;
         }
         // Inject the color change into the stream
-        tx.send(Err(RuChatError::ColorChange(
-            role.get_color().to_string(),
-        )))
+        tx.send(Err(RuChatError::ColorChange(role.get_color())))
         .await
         .map_err(|e| RuChatError::Is(e.to_string()))?;
 
@@ -236,7 +181,7 @@ impl Agent {
                 .await
                 .map_err(|e| RuChatError::Is(e.to_string()))?;
         }
-        tx.send(Err(RuChatError::ColorChange(NC.to_string())))
+        tx.send(Err(RuChatError::ColorChange(Role::no_color())))
             .await
             .map_err(|e| RuChatError::Is(e.to_string()))?;
         self.parse_tool_call(ctx).await?;

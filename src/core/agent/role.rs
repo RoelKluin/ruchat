@@ -14,7 +14,7 @@ pub(crate) enum Role {
 }
 
 impl Role {
-    pub(crate) fn get_color(&self) -> &str {
+    pub(crate) fn get_color(&self) -> &'static str {
         match self {
             Role::Architect => "\x1b[1;32m",
             Role::Worker => "\x1b[1;34m",
@@ -24,6 +24,9 @@ impl Role {
             Role::Summarizer => "\x1b[1;35m",
             Role::Librarian => "\x1b[1;36m",
         }
+    }
+    pub(crate) fn no_color() -> &'static str {
+        "\x1b[0m"
     }
     pub(crate) fn build_prompt(&self, system: &str, ctx: &Context, hint: Option<&str>) -> String {
         let hint_section = hint.map_or_else(|| "".to_string(), |h| format!("\nCONTEXTUAL HINT: {h}"));
