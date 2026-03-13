@@ -184,7 +184,10 @@ pub enum RuChatError {
     ColorChange(&'static str), // The payload is the ANSI code
 
     #[error("{0}")]
-    StatusUpdate(String), // e.g., "Architect is thinking..." or "Worker is coding..."
+    StatusUpdate(String),
+
+    #[error("{0}")]
+    Trace(String),
 
     #[error("Progress: {0:.2}%")]
     Progress(f32),

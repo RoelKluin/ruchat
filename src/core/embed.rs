@@ -137,7 +137,10 @@ impl EmbedArgs {
                 .is_ok();
 
             if mode == UpsertMode::Upsert || !exists {
-                let mut meta = chunk_metadatas[i].clone().unwrap_or_default();
+                let mut meta = chunk_metadatas
+                    .get(i)
+                    .and_then(|m| m.clone())
+                    .unwrap_or_default();
 
                 // FIX 2: Correct Metadata value types
                 meta.insert(

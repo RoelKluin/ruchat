@@ -25,6 +25,19 @@ impl Role {
             Role::Librarian => "\x1b[1;36m",
         }
     }
+    pub(crate) fn get_task(&self) -> &'static str {
+        match self {
+            Role::Architect => "Plan implementation.",
+            Role::Worker => "Implement the plan.",
+            Role::Validator => "Identify technical flaws or incomplete logic.",
+            Role::Critic => "Identify any issues in the work.",
+            Role::PerformanceCritic => "Identify any performance issues in the work.",
+            Role::Summarizer => "Compress the history of events into a concise summary.",
+            Role::Librarian => {
+                "Formulate a JSON Query to retrieve relevant information from the knowledge base."
+            }
+        }
+    }
     pub(crate) fn no_color() -> &'static str {
         "\x1b[0m"
     }

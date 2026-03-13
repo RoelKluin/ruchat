@@ -108,6 +108,17 @@ impl Orchestrator {
 
         ReceiverStream::new(rx)
     }
+    async fn trace(&self, ctx: &mut Context, tx: &mpsc::Sender<Result<Vec<GenerationResponse>>>, err: String) {
+        if !err.is_empty() {
+            ctx.rejections.push_str(&format!("\n{err}"));
+            tx.send(Err(RuChatError::Trace(err))).await.ok();
+        }
+        let trace_output = format!(
+            "# Orchestration Trace\n\n## Goal\n{}\n\n## Context\n{}\n\n## History\n{}\n\n## Rejections\n{}",
+            ctx.get_goal(), ctx.context, ctx.history, ctx.rejections
+        );
+        let _ = tokio::fs::write(".ruchat_trace.md", trace_output).await;
+    }
     async fn execute_orchestration(
         &mut self,
         goal: String,
@@ -120,11 +131,11 @@ impl Orchestrator {
             .unwrap_or(3);
         let history_limit = self.config.get("history_limit").and_then(|v| v.as_u64());
         let mut ctx = Context::new(goal);
+        let ctx = &mut ctx;
         let ollama = &self.ollama;
         let client = self.client.as_ref();
 
         for round in 1..=iterations {
-            let ctx = &mut ctx;
             self.architect.query_stream(ollama, round, ctx, &tx).await?;
 
             if round == 1
@@ -143,8 +154,7 @@ impl Orchestrator {
             }
             self.worker.query_stream(ollama, round, ctx, &tx).await?;
             if let Validation::Failure(err) = self.worker.execute_and_verify(ctx).await? {
-                ctx.rejections
-                    .push_str(&format!("\nRound {round} failed verification: {err}"));
+                self.trace(ctx, &tx, format!("Round {round} failed verification: {err}")).await;
                 continue;
             }
 
@@ -153,9 +163,7 @@ impl Orchestrator {
 
                 // Auto-Rejection Logic
                 if ctx.output.contains("REJECTED") {
-                    ctx.rejections
-                        .push_str(&format!("\nValidation Failed: {}", ctx.output));
-                    // Logic to skip Critics and jump back to Architect/Worker
+                    self.trace(ctx, &tx, format!("Round {round} rejected by validator: {}", ctx.output)).await;
                     continue;
                 }
             }
@@ -178,6 +186,7 @@ impl Orchestrator {
                 ctx.rejections.clear();
             }
         }
+        self.trace(ctx, &tx, String::new()).await;
         Ok(())
     }
 }

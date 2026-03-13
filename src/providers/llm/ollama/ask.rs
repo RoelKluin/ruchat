@@ -225,9 +225,11 @@ impl AskArgs {
                     cio.write_line(ansi_code).await?;
                 }
                 Err(RuChatError::StatusUpdate(msg)) => {
-                    // Print a dim status message that gets overwritten by the next line
-                    cio.write_line(&format!("\x1b[2m   ... {} \x1b[0m\r", msg))
-                        .await?;
+                    cio.write_line(&format!("\x1b[2m   ... {msg} \x1b[0m\r")).await?;
+                }
+                // ADD THIS: For printing persistent trace events (dimmed/gray so it doesn't clutter the main agent output)
+                Err(RuChatError::Trace(msg)) => {
+                    cio.write_line(&format!("\n\x1b[90m[TRACE] {msg}\x1b[0m\n")).await?;
                 }
                 Err(e) => return Err(e), // Real errors still break the loop
             }
@@ -240,12 +242,12 @@ impl AskArgs {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[tokio::test]
     async fn test_ask_args_default() {
         let args = AskArgs::default();
-        assert_eq!(args.agentic, "");
-        assert_eq!(args.output_format, "text");
+        assert_eq!(args.agentic, None);
     }
     #[tokio::test]
     async fn test_agentic_config_merging() {
@@ -263,7 +265,7 @@ mod tests {
     }
     #[tokio::test]
     async fn test_agentic() {
-        let agentic = json!({
+        let agentic = Some(json!({
                 "iterations": 3,
                 "Architect": {
                     "model": "qwen2.5:latest",
@@ -290,15 +292,14 @@ mod tests {
                     "temperature": 0.0,
                     "task": "Summarize the following history of changes and feedback into a dense technical state"
                 }
-            }).to_string();
+            }).to_string());
         let args = AskArgs {
             agentic,
-            output_format: "text".to_string(),
             prompt: PromptArgs::default(),
             ollama: OllamaArgs::default(),
+            ..Default::default()
         };
         assert!(args.ask("").await.is_ok());
-        assert_eq!(args.output_format, "text");
-        assert!(!args.agentic.is_empty());
+        assert!(args.agentic.is_some());
     }
 }

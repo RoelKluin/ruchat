@@ -103,10 +103,19 @@ ruchat ask --agentic '{
 }' "Fix the token expiration bug."
 
 #--
-ruchat ask "Refactor error handling in src/utils.rs" \
+./ruchat ask "Refactor error handling in src/core/orchestrator.rs" \
   --agentic '{
     "iterations": 2,
-    "Architect": { "model": "coder:7b", "task_hint": "Use anyhow::Result" },
-    "Worker": { "model": "coder:7b" },
-    "Validator": { "model": "llama3" }
+    "Architect": { "model": "qwen2.5-coder:7b" },
+    "Worker": { "model": "qwen2.5-coder:7b" },
+    "Validator": { "model": "llama3.2:latest" },
+    "Librarian": {
+        "chroma_client": {
+            "collection": "repo_src-all-minilm_l6-v2",
+            "fields": ["doc"],
+            "limit": 5
+        },
+        "model": "qwen3.5:latest",
+        "task": "Generate a Chroma search query to find relevant documentation for this task."
+    }
   }'

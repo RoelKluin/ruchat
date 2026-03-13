@@ -71,7 +71,7 @@ impl Agent {
         self.config
             .remove(key)
             .and_then(|s| s.as_str().map(|s| s.to_string()))
-            .ok_or(RuChatError::Is(format!("No {key} in agent config")))
+            .ok_or(RuChatError::Is(format!("No {key} to remove in agent config")))
     }
 
     pub(crate) fn get_str(&self, key: &str) -> Result<&str> {
@@ -136,7 +136,7 @@ impl Agent {
             let dense_signal = "Instruction: Use Delimiters (###) for sections. Avoid pleasantries. If providing code, provide ONLY code.";
             format!(
                 "SYSTEM: You are the {role} agent. TASK: {}. {}",
-                self.get_str("task")?,
+                self.get_str("task").unwrap_or(role.get_task()),
                 dense_signal
             )
         } else {

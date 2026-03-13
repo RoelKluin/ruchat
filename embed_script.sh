@@ -27,7 +27,7 @@ collection="repo_src-${model//:/_}"
 if [ -n "$1" ]; then
   files=("$@")
 else
-  ./ruchat chroma-delete --collection "$collection" 2>/dev/null || true
+  ./ruchat chroma-delete --collection "$collection" --force 2>/dev/null || true
   ./ruchat chroma-create --collection "$collection" --metadata "{\"model\": \"$model\"}" || exit 1
   declare -a files
   while read -r f; do
