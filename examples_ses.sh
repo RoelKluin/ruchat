@@ -101,3 +101,12 @@ ruchat ask --agentic '{
     "Architect": { "role": "ARCHITECT", "task": "Use the DOCUMENTS field to plan." },
     ...
 }' "Fix the token expiration bug."
+
+#--
+ruchat ask "Refactor error handling in src/utils.rs" \
+  --agentic '{
+    "iterations": 2,
+    "Architect": { "model": "coder:7b", "task_hint": "Use anyhow::Result" },
+    "Worker": { "model": "coder:7b" },
+    "Validator": { "model": "llama3" }
+  }'

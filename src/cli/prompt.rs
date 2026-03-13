@@ -1,7 +1,7 @@
 use crate::{Result, RuChatError};
 use clap::Parser;
-use std::path::PathBuf;
 use clap::ValueHint::FilePath;
+use std::path::PathBuf;
 
 #[derive(Parser, Debug, Clone, Default, PartialEq)]
 pub(crate) struct PromptArgs {
@@ -45,7 +45,6 @@ pub(crate) struct PromptArgs {
     allowed_exit_codes: Vec<i32>,
 }
 
-
 fn andify_list<S: AsRef<str>>(what: &str, items: &[S], q: &str) -> String {
     match items.len() {
         0 => String::new(),
@@ -67,15 +66,19 @@ fn andify_list<S: AsRef<str>>(what: &str, items: &[S], q: &str) -> String {
 
 impl PromptArgs {
     fn promptless(&self, files: &[std::path::PathBuf]) -> Result<String> {
-        let v: Vec<String> = files.iter().map(|p| p.to_string_lossy().into_owned()).collect();
+        let v: Vec<String> = files
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
         let files_str = andify_list("the file", &v, "`");
         match self.command {
             ref cmd if cmd == "cat" => {
                 let mut combined_content = format!("The contents of {files_str}:\n");
                 for path in files {
-                    let content = std::fs::read_to_string(path)
-                        .map_err(|e| RuChatError::FileReadError(format!("{}: {e}", path.display())))?;
-                    
+                    let content = std::fs::read_to_string(path).map_err(|e| {
+                        RuChatError::FileReadError(format!("{}: {e}", path.display()))
+                    })?;
+
                     combined_content.push_str(&format!("```\n{}\n```\n", content));
                 }
                 Ok(combined_content)
@@ -99,25 +102,46 @@ impl PromptArgs {
 
                     // Append captured output based on settings
                     if self.capture != "stderr" && !output.stdout.is_empty() {
-                        combined_content.push_str(&format!("Stdout:\n```\n{}\n```\n", String::from_utf8_lossy(&output.stdout)));
+                        combined_content.push_str(&format!(
+                            "Stdout:\n```\n{}\n```\n",
+                            String::from_utf8_lossy(&output.stdout)
+                        ));
                     }
                     if self.capture != "stdout" && !output.stderr.is_empty() {
-                        combined_content.push_str(&format!("Stderr:\n```\n{}\n```\n", String::from_utf8_lossy(&output.stderr)));
+                        combined_content.push_str(&format!(
+                            "Stderr:\n```\n{}\n```\n",
+                            String::from_utf8_lossy(&output.stderr)
+                        ));
                     }
 
                     // Check exit codes using the Vec from clap
                     if self.allowed_exit_codes.contains(&exit_code) {
-                        combined_content.push_str(&format!("`{cmd} {joined_args} {}` exited with status {exit_code}.\n", path.display()));
+                        combined_content.push_str(&format!(
+                            "`{cmd} {joined_args} {}` exited with status {exit_code}.\n",
+                            path.display()
+                        ));
                     } else {
-                        errors.push(RuChatError::CommandExitError(cmd.to_string(), exit_code.to_string()));
+                        errors.push(RuChatError::CommandExitError(
+                            cmd.to_string(),
+                            exit_code.to_string(),
+                        ));
                     }
                 }
                 if !errors.is_empty() {
-                    let err_msgs: Vec<String> = errors.iter().map(|e| match e {
-                        RuChatError::CommandExitError(c, code) => format!("`{c}` exited with code {code}"),
-                        _ => "Unknown error".into(),
-                    }).collect();
-                    Err(RuChatError::MultipleCommandExitErrors(andify_list("the command", &err_msgs, "`")))
+                    let err_msgs: Vec<String> = errors
+                        .iter()
+                        .map(|e| match e {
+                            RuChatError::CommandExitError(c, code) => {
+                                format!("`{c}` exited with code {code}")
+                            }
+                            _ => "Unknown error".into(),
+                        })
+                        .collect();
+                    Err(RuChatError::MultipleCommandExitErrors(andify_list(
+                        "the command",
+                        &err_msgs,
+                        "`",
+                    )))
                 } else {
                     Ok(combined_content)
                 }
@@ -126,7 +150,7 @@ impl PromptArgs {
     }
 
     pub(crate) fn get_prompt(&self) -> Result<String> {
-        if self.prompt.is_some()
+        if self.explicit_prompt.is_some()
             && self.prompt.is_some()
             && self.prompt != self.explicit_prompt
         {
@@ -137,7 +161,7 @@ impl PromptArgs {
                 Some(p) => {
                     let context = self.promptless(&self.files)?;
                     Ok(format!("{p}\n{context}"))
-                },
+                }
                 None => {
                     if self.files.is_empty() {
                         Err(RuChatError::NoPromptProvided)
