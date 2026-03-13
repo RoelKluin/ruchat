@@ -70,15 +70,17 @@ impl Agent {
     pub(crate) fn remove_str(&mut self, key: &str) -> Result<String> {
         self.config
             .remove(key)
-            .and_then(|s| s.as_str().map(|s| s.to_string()))
-            .ok_or(RuChatError::Is(format!("No {key} to remove in agent config")))
+            .ok_or(RuChatError::Is(format!("No {key} to remove in agent config")))?
+            .as_str().map(|s| s.to_string())
+             .ok_or(RuChatError::Is(format!("Value for {key} is not a string in agent config {:?})", self.config)))
     }
 
     pub(crate) fn get_str(&self, key: &str) -> Result<&str> {
         self.config
             .get(key)
-            .and_then(|s| s.as_str())
-            .ok_or(RuChatError::Is(format!("No {key} in agent config")))
+            .ok_or(RuChatError::Is(format!("No {key} in agent config")))?
+            .as_str()
+            .ok_or(RuChatError::Is(format!("Value for {key} is not a string in agent config {:?})", self.config)))
     }
     pub(crate) async fn retrieve_and_generate(
         &self,

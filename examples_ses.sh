@@ -110,11 +110,7 @@ ruchat ask --agentic '{
     "Worker": { "model": "qwen2.5-coder:7b" },
     "Validator": { "model": "llama3.2:latest" },
     "Librarian": {
-        "chroma_client": {
-            "collection": "repo_src-all-minilm_l6-v2",
-            "fields": ["doc"],
-            "limit": 5
-        },
+        "chroma_client": "http://localhost:8000",
         "model": "qwen3.5:latest",
         "task": "Generate a Chroma search query to find relevant documentation for this task."
     }
