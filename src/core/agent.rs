@@ -68,11 +68,16 @@ impl Agent {
         }
     }
     pub(crate) fn remove_str(&mut self, key: &str) -> Result<String> {
-        self.config
+        let v = self.config
             .remove(key)
-            .ok_or(RuChatError::Is(format!("No {key} to remove in agent config")))?
-            .as_str().map(|s| s.to_string())
-             .ok_or(RuChatError::Is(format!("Value for {key} is not a string in agent config {:?})", self.config)))
+            .ok_or(RuChatError::Is(format!("No {key} to remove in agent config")))?;
+        if v.is_string() {
+            Ok(v.as_str().unwrap().to_string())
+        } else if v.is_object() {
+            Ok(v.to_string())
+        } else {
+            Err(RuChatError::Is(format!("Value for {key} is not a string in agent config {:?})", self.config)))
+        }
     }
 
     pub(crate) fn get_str(&self, key: &str) -> Result<&str> {

@@ -20,6 +20,10 @@ async fn read_options_file(options: &str) -> Result<Value> {
         Ok(options) => serde_json::from_str(&options),
         Err(_) => serde_json::from_str(options),
     }
+    .map_err(|e| {
+        tracing::error!(error = ?e, "failed to read or parse options: {options}");
+        e
+    })
     .map_err(RuChatError::SerdeError)
 }
 
@@ -53,6 +57,10 @@ pub(crate) async fn get_options(options: &str) -> Result<(ModelOptions, HashMap<
         }
     }
     serde_json::from_value(defaults)
+        .map_err(|e| {
+            tracing::error!(error = ?e, "failed to deserialize JSON into ModelOptions");
+            e
+        })
         .map_err(RuChatError::SerdeError)
         .map(|opts| (opts, remain))
 }

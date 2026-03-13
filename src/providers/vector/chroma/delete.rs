@@ -29,7 +29,7 @@ impl ChromaDeleteArgs {
         let client = self
             .client_config
             .create_client()
-            .map_err(RuChatError::ChromaError)?;
+            .map_err(RuChatError::AnyhowError)?;
 
         // Parse optional target filters
         let ids: Option<Vec<String>> = self

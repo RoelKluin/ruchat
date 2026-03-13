@@ -102,7 +102,18 @@ ruchat ask --agentic '{
     ...
 }' "Fix the token expiration bug."
 
-#--
+            "collection": "repo_src-all-minilm_l6-v2",
+            "fields": ["doc"],
+
+#-- ok
+./ruchat ask "Refactor error handling in src/core/orchestrator.rs" \
+  --agentic '{
+    "iterations": 2,
+    "Architect": { "model": "qwen2.5-coder:7b" },
+    "Worker": { "model": "qwen2.5-coder:7b" },
+    "Validator": { "model": "llama3.2:latest" }  }'
+
+#-- issues.
 ./ruchat ask "Refactor error handling in src/core/orchestrator.rs" \
   --agentic '{
     "iterations": 2,
@@ -110,7 +121,17 @@ ruchat ask --agentic '{
     "Worker": { "model": "qwen2.5-coder:7b" },
     "Validator": { "model": "llama3.2:latest" },
     "Librarian": {
-        "chroma_client": "http://localhost:8000",
+        "chroma_client": {
+            "chroma_server": "http://localhost:8000",
+            "limit": 5,
+            "max_retries": 3,
+            "min_delay": 10,
+            "max_delay": 100,
+            "chroma_token": "default",
+            "jitter": false,
+            "tenant_id": "default_tenant",
+            "chroma_database": "default"
+        },
         "model": "qwen3.5:latest",
         "task": "Generate a Chroma search query to find relevant documentation for this task."
     }

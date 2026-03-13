@@ -77,7 +77,7 @@ impl RetrieveArgs {
         let client = self
             .client
             .create_client()
-            .map_err(RuChatError::ChromaError)?;
+            .map_err(RuChatError::AnyhowError)?;
         let collection = self.collection.get_collection(&client, "default").await?;
 
         let mode = self.determine_mode()?;

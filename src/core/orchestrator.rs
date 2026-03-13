@@ -68,13 +68,27 @@ impl Orchestrator {
         let mut librarian = None;
         let mut client = None;
         if let Ok(mut lib) = Agent::new(&mut config, "Librarian", false, None).await {
-            client = Some(
+            let mut client_config = ChromaClientConfigArgs::default();
+
+            /*client = Some(
                 lib.remove_str("chroma_client")
-                    .and_then(|s| serde_json::from_str(&s).map_err(RuChatError::SerdeError))
+                    .and_then(|s| serde_json::from_str(&s).map_err(|e| {
+                        eprintln!("{s}");
+                        tracing::error!(error = ?e, "Failed to parse chroma_client config as JSON:");
+                        e
+                    }).map_err(RuChatError::SerdeError))
                     .and_then(|c: ChromaClientConfigArgs| {
-                        c.create_client().map_err(RuChatError::ChromaError)
+                        c.create_client().map_err(RuChatError::AnyhowError)
                     })?,
-            );
+            );*/
+            lib.remove_str("chroma_client")
+                .and_then(|s| client_config.update_from_json(&s).map_err(|e| {
+                    eprintln!("{s}");
+                    tracing::error!(error = ?e, "Failed to parse chroma_client config as JSON:");
+                    e
+                }).map_err(RuChatError::AnyhowError)
+                )?;
+            client = Some(client_config.create_client().map_err(RuChatError::AnyhowError)?);
 
             librarian = Some(lib);
         }
@@ -149,7 +163,10 @@ impl Orchestrator {
                 librarian.query_stream(ollama, round, ctx, &tx).await?;
 
                 let q =
-                    serde_json::from_str(ctx.output.as_str()).map_err(RuChatError::SerdeError)?;
+                    serde_json::from_str(ctx.output.as_str()).map_err(|e| {
+                        tracing::error!(error = ?e, "Failed to parse librarian output as JSON");
+                        e
+                    }).map_err(RuChatError::SerdeError)?;
                 ctx.documents = librarian.retrieve_and_generate(client, ollama, q).await?;
             }
             self.worker.query_stream(ollama, round, ctx, &tx).await?;

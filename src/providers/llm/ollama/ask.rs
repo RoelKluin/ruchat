@@ -86,7 +86,12 @@ impl AskArgs {
     pub fn into_config(self, default_model: &str) -> Result<serde_json::Value> {
         // 1. Start with base: either provided JSON or empty object
         let mut config: serde_json::Value = if let Some(ref json_str) = self.agentic {
-            serde_json::from_str(json_str).map_err(RuChatError::SerdeError)?
+            serde_json::from_str(json_str).map_err(|e| {
+                eprintln!("Provided agentic config: {json_str}");
+                tracing::error!(error = ?e, "Failed to parse agentic JSON config");
+                e
+            })
+            .map_err(RuChatError::SerdeError)?
         } else {
             serde_json::json!({})
         };

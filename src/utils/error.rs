@@ -12,6 +12,10 @@ pub enum RuChatError {
     #[error("Model Error: {0}")]
     ModelError(String),
 
+    /// A general error from the `anyhow` crate.
+    #[error("Anyhow error: {0}")]
+    AnyhowError(#[from] anyhow::Error),
+
     /// Error when the model name is invalid.
     #[error("Invalid model name: {0}")]
     InvalidModelName(String),
@@ -51,10 +55,6 @@ pub enum RuChatError {
     /// Error when parsing the server argument.
     #[error("Unable to parse arg --server: '{0}'")]
     ArgServerError(String),
-
-    /// Error from the Chroma library.
-    #[error("Chroma error: {0}")]
-    ChromaError(#[from] anyhow::Error),
 
     /// Error when converting from an integer.
     #[error("TryFromIntError: {0}")]

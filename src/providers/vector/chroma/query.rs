@@ -7,8 +7,8 @@ use crate::{Result, RuChatError};
 use chroma::ChromaHttpClient;
 use clap::Parser;
 use log::{info, warn};
-use ollama_rs::Ollama;
 use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
+use ollama_rs::Ollama;
 use serde::Deserialize;
 
 #[derive(Parser, Debug, Clone, PartialEq, Deserialize)]
@@ -93,7 +93,12 @@ impl TryFrom<String> for QueryArgs {
     type Error = RuChatError;
 
     fn try_from(value: String) -> Result<Self> {
-        serde_json::from_str(&value).map_err(RuChatError::SerdeError)
+        serde_json::from_str(&value)
+            .map_err(|e| {
+                tracing::error!(error = ?e, "failed to deserialize JSON into QueryArgs");
+                e
+            })
+            .map_err(RuChatError::SerdeError)
     }
 }
 

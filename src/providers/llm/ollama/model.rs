@@ -1,9 +1,8 @@
 use crate::options::get_options;
 use crate::{Result, RuChatError};
 use clap::Parser;
-use ollama_rs::Ollama;
 use ollama_rs::generation::completion::request::GenerationRequest;
-use serde::{Serialize, Deserialize};
+use ollama_rs::Ollama;
 
 pub(crate) fn get_dynamic_history_limit(model_name: &str) -> u64 {
     if model_name.contains("qwen2.5") {
@@ -67,24 +66,49 @@ impl ModelArgs {
         // 1. Get base options from file/string or start with empty JSON
         let mut opts_val = if let Some(ref opts_raw) = self.options {
             let (opts, _etc) = get_options(opts_raw).await?;
-            serde_json::to_value(opts).map_err(RuChatError::SerdeError)?
+            serde_json::to_value(opts)
+                .map_err(|e| {
+                    tracing::error!(error = ?e, "failed to serialize ModelOptions to JSON");
+                    e
+                })
+                .map_err(RuChatError::SerdeError)?
         } else {
             serde_json::json!({})
         };
 
         // 2. Merge CLI flags into JSON to bypass private fields
-        if let Some(v) = self.num_ctx { opts_val["num_ctx"] = serde_json::json!(v); }
-        if let Some(v) = self.temperature { opts_val["temperature"] = serde_json::json!(v); }
-        if let Some(v) = self.top_k { opts_val["top_k"] = serde_json::json!(v); }
-        if let Some(v) = self.top_p { opts_val["top_p"] = serde_json::json!(v); }
-        if let Some(v) = self.repeat_penalty { opts_val["repeat_penalty"] = serde_json::json!(v); }
-        if let Some(v) = &self.stop { opts_val["stop"] = serde_json::json!(v); }
-        if let Some(v) = self.num_predict { opts_val["num_predict"] = serde_json::json!(v); }
-        if let Some(v) = self.seed { opts_val["seed"] = serde_json::json!(v); }
+        if let Some(v) = self.num_ctx {
+            opts_val["num_ctx"] = serde_json::json!(v);
+        }
+        if let Some(v) = self.temperature {
+            opts_val["temperature"] = serde_json::json!(v);
+        }
+        if let Some(v) = self.top_k {
+            opts_val["top_k"] = serde_json::json!(v);
+        }
+        if let Some(v) = self.top_p {
+            opts_val["top_p"] = serde_json::json!(v);
+        }
+        if let Some(v) = self.repeat_penalty {
+            opts_val["repeat_penalty"] = serde_json::json!(v);
+        }
+        if let Some(v) = &self.stop {
+            opts_val["stop"] = serde_json::json!(v);
+        }
+        if let Some(v) = self.num_predict {
+            opts_val["num_predict"] = serde_json::json!(v);
+        }
+        if let Some(v) = self.seed {
+            opts_val["seed"] = serde_json::json!(v);
+        }
 
         // 3. Deserialize back to ModelOptions
-        let model_opts: ollama_rs::models::ModelOptions = 
-            serde_json::from_value(opts_val).map_err(RuChatError::SerdeError)?;
+        let model_opts: ollama_rs::models::ModelOptions = serde_json::from_value(opts_val)
+            .map_err(|e| {
+                tracing::error!(error = ?e, "failed to deserialize JSON into ModelOptions");
+                e
+            })
+            .map_err(RuChatError::SerdeError)?;
 
         Ok(GenerationRequest::new(model, prompt).options(model_opts))
     }

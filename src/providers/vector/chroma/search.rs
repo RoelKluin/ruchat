@@ -42,7 +42,7 @@ impl SearchArgs {
         let client = self
             .client
             .create_client()
-            .map_err(RuChatError::ChromaError)?;
+            .map_err(RuChatError::AnyhowError)?;
         let collection = self.collection.get_collection(&client, "default").await?;
 
         // 1. Resolve the SearchPayload (Basic KNN or JSON-based)

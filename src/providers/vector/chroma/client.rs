@@ -1,6 +1,6 @@
 use anyhow::Result;
-use chroma::ChromaHttpClient;
 use chroma::client::{ChromaAuthMethod, ChromaHttpClientOptions, ChromaRetryOptions};
+use chroma::ChromaHttpClient;
 use clap::Parser;
 use http::{HeaderName, HeaderValue};
 use serde::Deserialize;
@@ -9,7 +9,12 @@ use std::time::Duration;
 #[derive(Parser, Debug, Clone, PartialEq, Deserialize)]
 pub(crate) struct ChromaClientConfigArgs {
     /// URL of the ChromaDB server.
-    #[arg(short = 'C', long, env = "CHROMA_SERVER", default_value = "http://localhost:8000")]
+    #[arg(
+        short = 'C',
+        long,
+        env = "CHROMA_SERVER",
+        default_value = "http://localhost:8000"
+    )]
     pub chroma_server: String,
 
     /// Optional authentication token for the ChromaDB instance.
@@ -21,11 +26,11 @@ pub(crate) struct ChromaClientConfigArgs {
     pub max_retries: usize,
 
     /// Minimum delay (in milliseconds) between retries.
-    #[arg(long, default_value_t = 100, hide_default_value = true)]
+    #[arg(long, default_value_t = 10, hide_default_value = true)]
     pub min_delay: u64,
 
     /// Maximum delay (in milliseconds) between retries.
-    #[arg(long, default_value_t = 10, hide_default_value = true)]
+    #[arg(long, default_value_t = 100, hide_default_value = true)]
     pub max_delay: u64,
 
     /// Whether to apply a random jitter to the retry delay to prevent thundering herds.
@@ -76,6 +81,34 @@ impl ChromaClientConfigArgs {
             // Defaults to http://localhost:8000
             Ok(ChromaHttpClient::new(Default::default()))
         }
+    }
+    pub(crate) fn update_from_json(&mut self, json_str: &str) -> Result<()> {
+        json_str
+            .parse::<serde_json::Value>()?
+            .as_object()
+            .ok_or_else(|| {
+                anyhow::anyhow!("Expected a JSON object to update ChromaClientConfigArgs")
+            })?
+            .iter()
+            .for_each(|(key, value)| match key.as_str() {
+                "chroma_server" => {
+                    self.chroma_server = value.as_str().unwrap_or(&self.chroma_server).to_string()
+                }
+                "chroma_token" => self.chroma_token = value.as_str().map(|s| s.to_string()),
+                "max_retries" => {
+                    self.max_retries = value.as_u64().unwrap_or(self.max_retries as u64) as usize
+                }
+                "min_delay" => self.min_delay = value.as_u64().unwrap_or(self.min_delay),
+                "max_delay" => self.max_delay = value.as_u64().unwrap_or(self.max_delay),
+                "jitter" => self.jitter = value.as_bool().unwrap_or(self.jitter),
+                "tenant_id" => self.tenant_id = value.as_str().map(|s| s.to_string()),
+                "chroma_database" => self.chroma_database = value.as_str().map(|s| s.to_string()),
+                _ => eprintln!(
+                    "Warning: Unrecognized field '{}' in ChromaClientConfigArgs JSON",
+                    key
+                ),
+            });
+        Ok(())
     }
 }
 

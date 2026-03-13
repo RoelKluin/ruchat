@@ -30,7 +30,7 @@ impl ModifyArgs {
         let client = self
             .client
             .create_client()
-            .map_err(RuChatError::ChromaError)?;
+            .map_err(RuChatError::AnyhowError)?;
 
         // Note: modify() requires a mutable reference to the collection handle
         let mut collection = self.collection.get_collection(&client, "default").await?;
