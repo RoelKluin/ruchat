@@ -16,18 +16,18 @@ pub(crate) enum Role {
 impl Role {
     pub(crate) fn get_color(&self) -> &'static str {
         match self {
-            Role::Architect => "\x1b[1;32m",
-            Role::Worker => "\x1b[1;34m",
-            Role::Validator => "\x1b[1;33m",
-            Role::Critic => "\x1b[1;31m",
-            Role::PerformanceCritic => "\x1b[1;94m",
-            Role::Summarizer => "\x1b[1;35m",
-            Role::Librarian => "\x1b[1;36m",
+            Role::Architect => "\x1b[1;32m[Architect]:\n",
+            Role::Worker => "\x1b[1;34m[Worker]:\n",
+            Role::Validator => "\x1b[1;33m[Validator]:\n",
+            Role::Critic => "\x1b[1;31m[Critic]:\n",
+            Role::PerformanceCritic => "\x1b[1;94m[Performance Critic]:\n",
+            Role::Summarizer => "\x1b[1;35m[Summarizer]:\n",
+            Role::Librarian => "\x1b[1;36m[Librarian]:\n",
         }
     }
     pub(crate) fn get_task(&self) -> &'static str {
         match self {
-            Role::Architect => "Plan implementation.",
+            Role::Architect => "Write a plan for the worker agent to implement.",
             Role::Worker => "Implement the plan.",
             Role::Validator => "Identify technical flaws or incomplete logic.",
             Role::Critic => "Identify any issues in the work.",

@@ -142,9 +142,8 @@ impl Agent {
         let system = if round == 1 {
             let dense_signal = "Instruction: Use Delimiters (###) for sections. Avoid pleasantries. If providing code, provide ONLY code.";
             format!(
-                "SYSTEM: You are the {role} agent. TASK: {}. {}",
-                self.get_str("task").unwrap_or(role.get_task()),
-                dense_signal
+                "SYSTEM: You are the {role} agent. TASK: {}. {dense_signal}",
+                self.get_str("task").unwrap_or(role.get_task())
             )
         } else {
             format!("System: Continue your role as {role}. Focus on high-signal density.")

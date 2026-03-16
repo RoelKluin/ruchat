@@ -110,17 +110,6 @@ impl Orchestrator {
 
         ReceiverStream::new(rx)
     }
-    async fn trace(&self, ctx: &mut Context, tx: &mpsc::Sender<Result<Vec<GenerationResponse>>>, err: String) {
-        if !err.is_empty() {
-            ctx.rejections.push_str(&format!("\n{err}"));
-            tx.send(Err(RuChatError::Trace(err))).await.ok();
-        }
-        let trace_output = format!(
-            "# Orchestration Trace\n\n## Goal\n{}\n\n## Context\n{}\n\n## History\n{}\n\n## Rejections\n{}",
-            ctx.get_goal(), ctx.context, ctx.history, ctx.rejections
-        );
-        let _ = tokio::fs::write(".ruchat_trace.md", trace_output).await;
-    }
     async fn execute_orchestration(
         &mut self,
         goal: String,
@@ -143,23 +132,27 @@ impl Orchestrator {
             if round == 1
                 && let Some(librarian) = self.librarian.as_mut()
             {
+                ctx.trace(&tx, format!("Round {round}: Architect formulated plan, invoking librarian for retrieval")).await;
                 let client = client.ok_or(RuChatError::Is(
                     "Librarian provided without chroma client config".into(),
                 ))?;
+                ctx.trace(&tx, format!("Round {round}: Librarian retrieving documents based on architect's plan")).await;
 
                 // Ask the LLM to formulate the query
                 librarian.query_stream(ollama, round, ctx, &tx).await?;
+                ctx.trace(&tx, format!("Round {round}: Librarian formulated query, retrieving documents")).await;
 
                 let q =
                     serde_json::from_str(ctx.output.as_str()).map_err(|e| {
                         tracing::error!(error = ?e, "Failed to parse librarian output as JSON");
                         e
                     }).map_err(RuChatError::SerdeError)?;
+                ctx.trace(&tx, format!("Round {round}: Librarian formulated query: {:?}", q)).await;
+                eprintln!("Librarian formulated query: {:?}", q);
                 ctx.documents = librarian.retrieve_and_generate(client, ollama, q).await?;
             }
-            self.worker.query_stream(ollama, round, ctx, &tx).await?;
             if let Validation::Failure(err) = self.worker.execute_and_verify(ctx).await? {
-                self.trace(ctx, &tx, format!("Round {round} failed verification: {err}")).await;
+                ctx.trace(&tx, format!("Round {round} failed verification: {err}")).await;
                 continue;
             }
 
@@ -168,7 +161,7 @@ impl Orchestrator {
 
                 // Auto-Rejection Logic
                 if ctx.output.contains("REJECTED") {
-                    self.trace(ctx, &tx, format!("Round {round} rejected by validator: {}", ctx.output)).await;
+                    ctx.trace(&tx, format!("Round {round} rejected by validator: {}", ctx.output)).await;
                     continue;
                 }
             }
@@ -191,7 +184,7 @@ impl Orchestrator {
                 ctx.rejections.clear();
             }
         }
-        self.trace(ctx, &tx, String::new()).await;
+        ctx.trace(&tx, String::new()).await;
         Ok(())
     }
 }
