@@ -75,7 +75,6 @@ impl ChromaClientConfigArgs {
                 tenant_id: self.tenant_id.clone(),
                 database_name: self.chroma_database.clone(),
             };
-            eprintln!("7");
             Ok(ChromaHttpClient::new(client))
         } else {
             // Defaults to http://localhost:8000
