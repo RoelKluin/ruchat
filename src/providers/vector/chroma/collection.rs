@@ -3,6 +3,7 @@ use chroma::types::{Metadata, Schema};
 use chroma::{ChromaCollection, ChromaHttpClient};
 use clap::Parser;
 use serde::Deserialize;
+use serde_json::Value;
 
 #[derive(Parser, Debug, Clone, PartialEq, Deserialize)]
 pub(crate) struct ChromaCollectionConfigArgs {
@@ -44,6 +45,23 @@ impl ChromaCollectionConfigArgs {
     }
     pub(crate) fn name(&self) -> &str {
         self.collection.as_str()
+    }
+    pub(crate) fn update_from_json(&mut self, json: &Value) -> Result<()> {
+        if let Some(collection) = json.get("collection") {
+            if collection.is_string() {
+                self.collection = collection.as_str().unwrap().to_string();
+                Ok(())
+            } else {
+                Err(RuChatError::Is(format!(
+                    "Expected 'collection' to be a string in JSON, got {:?}",
+                    collection
+                )))
+            }
+        } else {
+            Err(RuChatError::Is(
+                "Missing 'collection' field in JSON for ChromaCollectionConfigArgs".into(),
+            ))
+        }
     }
 }
 

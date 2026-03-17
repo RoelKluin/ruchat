@@ -117,13 +117,12 @@ ruchat ask --agentic '{
 ./ruchat ask "Refactor error handling in src/core/orchestrator.rs" \
   --agentic '{
     "iterations": 2,
-    "Architect": { "model": "qwen2.5-coder:7b" },
-    "Worker": { "model": "qwen2.5-coder:7b" },
-    "Validator": { "model": "llama3.2:latest" },
+    "Architect": { "model": "qwen2.5-coder:0.5b" },
+    "Worker": { "model": "qwen2.5-coder:0.5b" },
+    "Validator": { "model": "qwen3.5:0.8b" },
     "Librarian": {
         "chroma_client": {
             "chroma_server": "http://localhost:8000",
-            "limit": 5,
             "max_retries": 3,
             "min_delay": 10,
             "max_delay": 100,
@@ -132,7 +131,7 @@ ruchat ask --agentic '{
             "tenant_id": "default_tenant",
             "chroma_database": "default"
         },
-        "model": "qwen3.5:latest",
+        "model": "qwen3.5:0.8b",
         "task": "Generate a Chroma search query to find relevant documentation for this task."
     }
   }'

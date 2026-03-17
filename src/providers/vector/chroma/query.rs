@@ -10,12 +10,13 @@ use log::{info, warn};
 use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
 use ollama_rs::Ollama;
 use serde::Deserialize;
+use serde_json::Value;
 
-#[derive(Parser, Debug, Clone, PartialEq, Deserialize)]
+#[derive(Parser, Debug, Clone, PartialEq, Deserialize, Default)]
 pub(crate) struct Query {
-    /// The query string to search for in the database.
-    #[arg(short, long)]
-    query: String,
+    /// The query strings to search for in the database.
+    #[arg(short, long, value_delimiter = ',')]
+    query: Vec<String>,
 
     /// The number of results to return.
     #[arg(short, long)]
@@ -51,7 +52,7 @@ impl Query {
             warn!("Model {model} might not be an embeddings model");
         }
         let request =
-            GenerateEmbeddingsRequest::new(model.to_string(), vec![self.query.as_str()].into());
+            GenerateEmbeddingsRequest::new(model.to_string(), self.query.clone().into());
         let res = ollama.generate_embeddings(request).await?;
 
         let query_embeddings = res.embeddings;
@@ -69,6 +70,33 @@ impl Query {
             .query(query_embeddings, self.n_results, r#where, ids, include)
             .await?;
         ChromaResponse::Query(&mut query_result).as_string(&self.output)
+    }
+    pub(crate) fn update_from_json(&mut self, v: Value) -> Result<()> {
+        if let Some(query) = v.get("query").and_then(|q| q.as_array()) {
+            self.query = query
+                .iter()
+                .filter_map(|q| q.as_str().map(|s| s.to_string()))
+                .collect();
+        }
+        if let Some(n_results) = v.get("n_results").and_then(|n| n.as_u64()) {
+            self.n_results = Some(n_results as u32);
+        }
+        if let Some(ids) = v.get("ids").and_then(|i| i.as_str()) {
+            self.ids = Some(ids.to_string());
+        }
+        if v.get("collection").is_some() {
+            self.collection.update_from_json(&v)?;
+        }
+        if v.get("include").is_some() {
+            self.include.update_from_json(&v)?;
+        }
+        if v.get("where").is_some() {
+            self.r#where.update_from_json(&v)?;
+        }
+        if v.get("output").is_some() {
+            self.output.update_from_json(&v)?;
+        }
+        Ok(())
     }
 }
 

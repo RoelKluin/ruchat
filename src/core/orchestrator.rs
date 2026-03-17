@@ -18,6 +18,7 @@ use tokio_stream::wrappers::ReceiverStream;
 pub type OrchestratorResult = Result<Vec<GenerationResponse>>;
 use git::commit_feature_branch;
 use serde::Deserialize;
+use crate::providers::vector::chroma::query::Query;
 
 pub(crate) struct Orchestrator {
     // Core pipeline
@@ -35,12 +36,13 @@ pub(crate) struct Orchestrator {
 
 impl Orchestrator {
     pub(crate) async fn new(mut config: Value, ollama: Ollama) -> Result<Self> {
-        let task_type = TaskType::deserialize(&config).unwrap_or(TaskType::ShellAutomation);
+        let task_type = TaskType::deserialize(&config).ok();
+        let task_type = task_type.as_ref();
         // 1. Extract Core Agents
-        let architect = Agent::new(&mut config, "Architect", true, Some(&task_type)).await?;
-        let worker = Agent::new(&mut config, "Worker", true, Some(&task_type)).await?;
+        let architect = Agent::new(&mut config, "Architect", true, task_type).await?;
+        let worker = Agent::new(&mut config, "Worker", true, task_type).await?;
 
-        let validator = Agent::new(&mut config, "Validator", false, Some(&task_type))
+        let validator = Agent::new(&mut config, "Validator", false, task_type)
             .await
             .ok();
         let summarizer = Agent::new(&mut config, "Summarizer", false, None)
@@ -56,7 +58,7 @@ impl Orchestrator {
                     &mut c_config,
                     &format!("Critic_{}", i),
                     true,
-                    Some(&task_type),
+                    task_type,
                 )
                 .await
                 {
@@ -125,30 +127,35 @@ impl Orchestrator {
         let ctx = &mut ctx;
         let ollama = &self.ollama;
         let client = self.client.as_ref();
+        if let Some(librarian) = self.librarian.as_ref() {
+            ctx.read_config_file(librarian.get_str("db_config_path").unwrap_or("db_config.json"))?;
+        }
 
         for round in 1..=iterations {
-            self.architect.query_stream(ollama, round, ctx, &tx).await?;
+            self.architect.query_stream(ollama, ctx, &tx).await?;
 
             if round == 1
                 && let Some(librarian) = self.librarian.as_mut()
             {
-                ctx.trace(&tx, format!("Round {round}: Architect formulated plan, invoking librarian for retrieval")).await;
                 let client = client.ok_or(RuChatError::Is(
                     "Librarian provided without chroma client config".into(),
                 ))?;
-                ctx.trace(&tx, format!("Round {round}: Librarian retrieving documents based on architect's plan")).await;
 
                 // Ask the LLM to formulate the query
-                librarian.query_stream(ollama, round, ctx, &tx).await?;
-                ctx.trace(&tx, format!("Round {round}: Librarian formulated query, retrieving documents")).await;
+                librarian.query_stream(ollama, ctx, &tx).await?;
 
-                let q =
-                    serde_json::from_str(ctx.output.as_str()).map_err(|e| {
+                ctx.trace(&tx, format!("Librarian formulated query: {}", ctx.output.as_str())).await;
+
+                let mut q = Query::default();
+                serde_json::from_str(ctx.output.as_str()).map_err(|e| {
                         tracing::error!(error = ?e, "Failed to parse librarian output as JSON");
                         e
-                    }).map_err(RuChatError::SerdeError)?;
-                ctx.trace(&tx, format!("Round {round}: Librarian formulated query: {:?}", q)).await;
-                eprintln!("Librarian formulated query: {:?}", q);
+                    }).map_err(RuChatError::SerdeError).and_then(|query| {
+                        q.update_from_json(query).map_err(|e| {
+                            tracing::error!(error = ?e, "Failed to update Query from librarian output");
+                            e
+                        })
+                    })?;
                 ctx.documents = librarian.retrieve_and_generate(client, ollama, q).await?;
             }
             if let Validation::Failure(err) = self.worker.execute_and_verify(ctx).await? {
@@ -157,7 +164,7 @@ impl Orchestrator {
             }
 
             if let Some(validator) = self.validator.as_mut() {
-                validator.query_stream(ollama, round, ctx, &tx).await?;
+                validator.query_stream(ollama, ctx, &tx).await?;
 
                 // Auto-Rejection Logic
                 if ctx.output.contains("REJECTED") {
@@ -166,7 +173,7 @@ impl Orchestrator {
                 }
             }
             for critic in &mut self.critics {
-                critic.query_stream(ollama, round, ctx, &tx).await?;
+                critic.query_stream(ollama, ctx, &tx).await?;
             }
 
             if ctx.is_approved() {
@@ -177,7 +184,7 @@ impl Orchestrator {
                     && ctx.history.len() as u64
                         > history_limit.unwrap_or(summarizer.get_dynamic_history_limit())
                 {
-                    summarizer.query_stream(ollama, round, ctx, &tx).await?;
+                    summarizer.query_stream(ollama, ctx, &tx).await?;
                 }
                 ctx.history.push_str("\nREJECTIONS: ");
                 ctx.history.push_str(&ctx.rejections);

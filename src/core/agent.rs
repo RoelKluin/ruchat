@@ -132,27 +132,20 @@ impl Agent {
     pub(crate) async fn query_stream(
         &mut self,
         ollama: &Ollama,
-        round: u64,
         ctx: &mut Context,
         tx: &mpsc::Sender<Result<Vec<GenerationResponse>>>,
     ) -> Result<()> {
         let role = self.get_str("role")?.to_lowercase();
         let role = Role::from_str(role.as_str())?;
 
-        let system = if round == 1 {
-            let dense_signal = "Instruction: Use Delimiters (###) for sections. Avoid pleasantries. If providing code, provide ONLY code.";
-            format!(
-                "SYSTEM: You are the {role} agent. TASK: {}. {dense_signal}",
-                self.get_str("task").unwrap_or(role.get_task())
-            )
-        } else {
-            format!("System: Continue your role as {role}. Focus on high-signal density.")
-        };
-
         // Assemble the payload
-        let full_prompt = role.build_prompt(&system, ctx, self.get_str("task_hint").ok());
+        let full_prompt = role.build_prompt(self.get_str("task").ok(), ctx, self.get_str("task_hint").ok());
 
         let model = self.get_str("model")?;
+        ctx.trace(
+            tx,
+            format!("Agent '{role}' is generating with model '{model}' and prompt:\n{full_prompt}"),
+        ).await;
         let request =
             GenerationRequest::new(model.to_string(), full_prompt).options(self.options.clone());
 

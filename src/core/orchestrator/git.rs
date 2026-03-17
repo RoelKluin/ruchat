@@ -5,7 +5,6 @@ use log::info;
 pub(crate) async fn commit_feature_branch(ctx: &Context) -> Result<()> {
     let timestamp = chrono::Utc::now().timestamp();
     let branch_name = format!("ai/feature-{}", timestamp);
-    let goal = ctx.get_goal();
 
     // 1. Get current branch name to return to it later
     let current_branch_output = tokio::process::Command::new("git")
@@ -32,14 +31,14 @@ pub(crate) async fn commit_feature_branch(ctx: &Context) -> Result<()> {
             "\n--- \n### 🤖 AI Update: {}\n**Date:** {}\n**Goal:** {}\n**Changes:** \n{}\n",
             branch_name,
             chrono::Utc::now().to_rfc2822(),
-            goal,
+            ctx.goal,
             ctx.output.lines().take(5).collect::<Vec<_>>().join("\n") // Take first 5 lines of worker output as summary
         );
 
         tokio::io::AsyncWriteExt::write_all(&mut file, summary_entry.as_bytes()).await?;
 
         run_git_command(vec!["add", "."]).await?;
-        run_git_command(vec!["commit", "-m", &format!("AI Success: {}", goal)]).await?;
+        run_git_command(vec!["commit", "-m", &format!("AI Success: {}", ctx.goal)]).await?;
         Ok::<(), RuChatError>(())
     }
     .await;

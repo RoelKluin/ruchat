@@ -23,15 +23,16 @@ pub(crate) use metadata::{MetadataArgs, UpdateMetadataArrayArgs};
 use serde::Deserialize;
 use serde::Serialize;
 pub(crate) use r#where::WhereArgs;
+use serde_json::Value;
 
-#[derive(clap::Args, Debug, Clone, PartialEq, Deserialize)]
+#[derive(clap::Args, Debug, Clone, PartialEq, Deserialize, Default)]
 pub(super) struct OutputArgs {
     /// Output in JSON format instead of a human-readable table.
-    #[arg(short, long)]
+    #[arg(short, long, default_value_t = false)]
     json: bool,
 
     /// Sort the results by ID before displaying.
-    #[arg(short, long)]
+    #[arg(short, long, default_value_t = true)]
     sort: bool,
 
     /// Specify which fields to display (comma-separated:
@@ -48,6 +49,45 @@ pub(super) struct OutputArgs {
 impl OutputArgs {
     fn should_show(&self, field: &str) -> bool {
         self.fields.contains(&field.to_string())
+    }
+    pub(crate) fn update_from_json(&mut self, json: &Value) -> Result<()> {
+        if let Some(sort) = json.get("sort") {
+            self.sort = sort.as_bool().unwrap_or(self.sort);
+        }
+        if let Some(json_output) = json.get("json") {
+            self.json = json_output.as_bool().unwrap_or(self.json);
+        }
+        if let Some(max_width) = json.get("max_width") {
+            self.max_width = max_width.as_u64().unwrap_or(self.max_width as u64) as usize;
+        }
+        if let Some(json_fields) = json.get("fields") {
+            if json_fields.is_string() {
+                self.fields = json_fields
+                    .as_str()
+                    .unwrap()
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .collect();
+                Ok(())
+            } else if json_fields.is_array() {
+                self.fields = json_fields
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter_map(|v| v.as_str().map(|s| s.trim().to_string()))
+                    .collect();
+                Ok(())
+            } else {
+                Err(RuChatError::Is(format!(
+                    "Expected 'fields' to be a string or array in JSON, got {:?}",
+                    json_fields
+                )))
+            }
+        } else {
+            Err(RuChatError::Is(
+                "No 'fields' key found in JSON for OutputArgs".to_string(),
+            ))
+        }
     }
 }
 

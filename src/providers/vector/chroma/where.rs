@@ -34,19 +34,34 @@ impl Display for Token {
     }
 }
 
-#[derive(Parser, Debug, Clone, PartialEq, Deserialize)]
-pub struct WhereArgs {
+#[derive(Parser, Debug, Clone, PartialEq, Deserialize, Default)]
+pub(crate) struct WhereArgs {
     /// The metadata query string, e.g. "key1 = 'value' AND key2 > 5".
     #[arg(short, long)]
     r#where: Option<String>,
 }
 
 impl WhereArgs {
-    pub fn parse(&self) -> Result<Option<Where>> {
+    pub(crate) fn parse(&self) -> Result<Option<Where>> {
         if let Some(ref w) = self.r#where {
             Ok(Some(parse_where(w)?))
         } else {
             Ok(None)
+        }
+    }
+    pub(crate) fn update_from_json(&mut self, json: &serde_json::Value) -> Result<()> {
+        if let Some(where_val) = json.get("where") {
+            if where_val.is_string() {
+                self.r#where = Some(where_val.as_str().unwrap().to_string());
+                Ok(())
+            } else {
+                Err(RuChatError::Is(format!(
+                    "Expected 'where' to be a string in JSON, got {:?}",
+                    where_val
+                )))
+            }
+        } else {
+            Ok(())
         }
     }
 }
