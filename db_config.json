@@ -1,0 +1,80 @@
+{
+  "collections": [
+    {
+      "name": "repo_src-all-minilm_l6-v2",
+      "description": "Source code files from the repository, processed file-by-file. Each file is embedded as a whole using all-minilm-l6-v2. For files parsed by ctags, multiple symbol-level entries (functions, methods, structs, modules, etc.) are created with line ranges and metadata. Ideal for semantic search over implementations, definitions, and symbol relationships.",
+      "embedding_model": "all-minilm-l6-v2",
+      "metadata_keys": [
+        "file",
+        "language",
+        "name",
+        "kind",
+        "start",
+        "end",
+        "references"
+      ],
+      "notes_on_metadata": "Core keys are always present for symbol entries. Additional language-specific tag fields (e.g. signature, access, scope, path, module, etc.) may appear depending on ctags output for the language/kind.",
+      "example_queries": [
+        {
+          "query": "How is error handling implemented in the CLI?",
+          "where": "language = 'rust' AND kind IN ['function', 'method'] AND file CONTAINS 'cli'"
+        },
+        {
+          "query": "async file reading or processing",
+          "where": "language = 'rust' AND name CONTAINS 'read' AND kind = 'function'"
+        },
+        {
+          "query": "borrow checker related logic",
+          "where": "references CONTAINS 'borrow' OR references CONTAINS 'RefCell'"
+        },
+        {
+          "query": "Where is function xyz defined and used?",
+          "where": "name = 'xyz' OR references CONTAINS 'xyz'"
+        }
+      ]
+    },
+    {
+      "name": "repo_hist-all-minilm_l6-v2",
+      "description": "Git commit history from the 'src' directory. Each commit is split into: (1) the commit message (type='message'), and (2) individual diff hunks (type='hunk') with old/new line ranges. All parts embedded with all-minilm-l6-v2. Perfect for temporal questions, authorship, change rationale, and diff context.",
+      "embedding_model": "all-minilm-l6-v2",
+      "metadata_keys": [
+        "commit",
+        "author",
+        "date",
+        "file",
+        "type",
+        "old_start",
+        "old_ct",
+        "new_start",
+        "new_ct"
+      ],
+      "notes_on_metadata": "'type' is either 'message' (commit message) or 'hunk' (diff chunk). 'file', 'old_start/old_ct', 'new_start/new_ct' are only present on hunks. 'date' is in standard git log format (e.g. 'Mon Jan 6 12:34:56 2025 +0100').",
+      "example_queries": [
+        {
+          "query": "Recent changes to error handling",
+          "where": "date > '2025-12-01' AND document CONTAINS 'error' AND type = 'hunk'"
+        },
+        {
+          "query": "When was async/await support introduced?",
+          "where": "type = 'message' AND document CONTAINS 'async'"
+        },
+        {
+          "query": "Fixes to file reading by Alice",
+          "where": "author CONTAINS 'alice' AND document CONTAINS 'fixed' AND file CONTAINS 'read'"
+        },
+        {
+          "query": "Changes in src/cli around March 2026",
+          "where": "date CONTAINS 'Mar 2026' AND file CONTAINS 'cli' AND type = 'hunk'"
+        }
+      ]
+    }
+  ],
+  "allowed_include_fields": [
+    "distance",
+    "document",
+    "embedding",
+    "metadata",
+    "uri"
+  ],
+  "default_n_results": 6
+}
