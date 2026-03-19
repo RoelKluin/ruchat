@@ -28,21 +28,21 @@ use serde_json::Value;
 #[derive(clap::Args, Debug, Clone, PartialEq, Deserialize, Default)]
 pub(super) struct OutputArgs {
     /// Output in JSON format instead of a human-readable table.
-    #[arg(short, long, default_value_t = false)]
+    #[arg(short, long, default_value_t = false, help_heading = "Output Control")]
     json: bool,
 
     /// Sort the results by ID before displaying.
-    #[arg(short, long, default_value_t = true)]
+    #[arg(short, long, default_value_t = true, help_heading = "Output Control")]
     sort: bool,
 
     /// Specify which fields to display (comma-separated:
     /// id,doc,meta,embed,score,uri,distance,include,select).
     /// Defaults to "id,doc,meta".
-    #[arg(short, long, value_delimiter = ',', default_value = "id,doc,meta")]
+    #[arg(short, long, value_delimiter = ',', default_value = "id,doc,meta", help_heading = "Output Control")]
     fields: Vec<String>,
 
     /// Maximum width for the document column to prevent text wrapping issues.
-    #[arg(long, default_value_t = 80)]
+    #[arg(long, default_value_t = 80, help_heading = "Advanced Output Control", hide = true)]
     max_width: usize,
 }
 

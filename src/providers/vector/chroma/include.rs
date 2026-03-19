@@ -8,7 +8,7 @@ use serde_json::Value;
 #[derive(Parser, Debug, Clone, PartialEq, Deserialize, Default)]
 pub(crate) struct IncludeArgs {
     /// comma seperated string of include fields: "distance,document,embedding,metadata,uri"
-    #[arg(short, long)]
+    #[arg(short, long, help_heading = "Output Control")]
     include: Option<String>,
 }
 

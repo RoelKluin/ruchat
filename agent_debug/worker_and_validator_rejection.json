@@ -1,0 +1,6 @@
+{
+  "sequence": ["Worker", "Validator"],
+  "context_imputations": {
+    "context": "Worker produced code that still uses .unwrap() everywhere."
+  }
+}

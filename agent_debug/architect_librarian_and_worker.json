@@ -1,0 +1,6 @@
+{
+  "sequence": ["Architect", "Librarian", "Worker"],
+  "context_imputations": {
+    "history": "Previous round: user requested error-handling refactor."
+  }
+}

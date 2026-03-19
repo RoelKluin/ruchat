@@ -16,7 +16,7 @@ use crate::ollama::func::func_struct;
 use crate::ollama::OllamaArgs;
 use crate::ollama::ServerArgs;
 use crate::Result;
-use clap::{Parser, Subcommand};
+use clap::{ArgAction, Parser, Subcommand};
 
 /// Main command line interface for RuChat.
 ///
@@ -32,6 +32,9 @@ pub(crate) struct Args {
     /// Toggle verbose mode.
     #[arg(short, long, default_value = "false")]
     verbose: bool,
+
+    #[arg(long, hide = true, action = ArgAction::HelpLong)]
+    help_all: (),
 }
 
 impl Args {

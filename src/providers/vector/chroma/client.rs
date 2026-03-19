@@ -13,36 +13,69 @@ pub(crate) struct ChromaClientConfigArgs {
         short = 'C',
         long,
         env = "CHROMA_SERVER",
-        default_value = "http://localhost:8000"
+        default_value = "http://localhost:8000",
+        help_heading = "Chroma Connection"
     )]
     pub chroma_server: String,
 
     /// Optional authentication token for the ChromaDB instance.
-    #[arg(short = 't', long, env = "CHROMA_TOKEN")]
+    #[arg(
+        short = 't',
+        long,
+        env = "CHROMA_TOKEN",
+        help_heading = "Chroma Connection"
+    )]
     pub chroma_token: Option<String>,
 
     /// Maximum number of times to retry a failed request.
-    #[arg(long, default_value_t = 3)]
+    #[arg(
+        long,
+        default_value_t = 3,
+        hide = true,
+        hide_default_value = true,
+        help_heading = "Advanced Retry"
+    )]
     pub max_retries: usize,
 
     /// Minimum delay (in milliseconds) between retries.
-    #[arg(long, default_value_t = 10, hide_default_value = true)]
+    #[arg(
+        long,
+        default_value_t = 10,
+        hide = true,
+        hide_default_value = true,
+        help_heading = "Advanced Retry"
+    )]
     pub min_delay: u64,
 
     /// Maximum delay (in milliseconds) between retries.
-    #[arg(long, default_value_t = 100, hide_default_value = true)]
+    #[arg(
+        long,
+        default_value_t = 100,
+        hide_default_value = true,
+        hide = true,
+        help_heading = "Advanced Retry"
+    )]
     pub max_delay: u64,
 
     /// Whether to apply a random jitter to the retry delay to prevent thundering herds.
-    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+    #[arg(long, default_value_t = true, action = clap::ArgAction::SetTrue, help_heading = "Advanced Retry", hide = true)]
     pub jitter: bool,
 
     /// The tenant identifier used for multi-tenancy environments.
-    #[arg(long, default_value = "default_tenant")]
+    #[arg(
+        long,
+        default_value = "default_tenant",
+        help_heading = "Chroma Connection"
+    )]
     pub tenant_id: Option<String>,
 
     /// The name of the database within the Chroma instance.
-    #[arg(short = 'd', long, default_value = "default")]
+    #[arg(
+        short = 'd',
+        long,
+        default_value = "default",
+        help_heading = "Chroma Connection"
+    )]
     pub chroma_database: Option<String>,
 }
 

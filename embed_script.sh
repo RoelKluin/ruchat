@@ -9,7 +9,7 @@ while read -r lang extension comment_re; do
     ext["$extension"]="$lang"
 done < <(cat etc/language_specifics.txt)
 
-git ls-files | grep -v '^ruchat$' | ctags -L -
+git ls-files | grep -Ev '^(ruchat|.*\.json|.gitignore)$' | xargs ctags -L -
 declare -A tags
 s="[:space:]"
 S="[^$s]"

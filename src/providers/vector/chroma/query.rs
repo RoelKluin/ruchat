@@ -6,7 +6,7 @@ use crate::ollama::OllamaArgs;
 use crate::{Result, RuChatError};
 use chroma::ChromaHttpClient;
 use clap::Parser;
-use log::{info, warn};
+use log::warn;
 use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
 use ollama_rs::Ollama;
 use serde::Deserialize;
@@ -15,15 +15,23 @@ use serde_json::Value;
 #[derive(Parser, Debug, Clone, PartialEq, Deserialize, Default)]
 pub(crate) struct Query {
     /// The query strings to search for in the database.
-    #[arg(short, long, value_delimiter = ',')]
+    #[arg(short, long, value_delimiter = ',', help_heading = "Query Content")]
     query: Vec<String>,
 
     /// The number of results to return.
-    #[arg(short, long)]
+    #[arg(
+        short,
+        long,
+        help = "Number of results to return (default: 10)",
+        long_help = "Number of nearest neighbors to return.\n\
+                     Higher values = slower but more complete answers.\n\
+                     Typical range: 3–50",
+        help_heading = "Query Content"
+    )]
     n_results: Option<u32>,
 
     /// Comma separated list of document IDs to restrict the search.
-    #[arg(short, long, value_delimiter = ',')]
+    #[arg(short, long, value_delimiter = ',', help_heading = "Filtering")]
     ids: Option<String>,
 
     #[command(flatten)]
@@ -51,8 +59,7 @@ impl Query {
         if model != "all-minilm:l6-v2" && !model.contains("embed") {
             warn!("Model {model} might not be an embeddings model");
         }
-        let request =
-            GenerateEmbeddingsRequest::new(model.to_string(), self.query.clone().into());
+        let request = GenerateEmbeddingsRequest::new(model.to_string(), self.query.clone().into());
         let res = ollama.generate_embeddings(request).await?;
 
         let query_embeddings = res.embeddings;
@@ -138,7 +145,8 @@ impl QueryArgs {
         let model = models
             .last()
             .ok_or(RuChatError::ModelNotFound("all-minilm:l6-v2".to_string()))?;
-        info!("{}", self.query.query(&client, &ollama, model).await?);
+        let res = self.query.query(&client, &ollama, model).await?;
+        eprintln!("got: {}", res);
         Ok(())
     }
 }

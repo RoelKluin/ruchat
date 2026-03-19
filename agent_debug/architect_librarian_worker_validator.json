@@ -1,0 +1,7 @@
+{
+  "sequence": ["Architect", "Librarian", "Worker", "Validator"],
+  "context_imputations": {
+    "history": "User goal: refactor error handling to use ? and anyhow::Context."
+  }
+}
+

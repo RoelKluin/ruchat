@@ -45,6 +45,10 @@ pub(crate) struct AskArgs {
     #[arg(long, action = clap::ArgAction::Append)]
     critic: Vec<String>,
 
+    /// Path to a single JSON file defining debug sequence + context imputations.
+    #[arg(long)]
+    debug_sequence: Option<String>,
+
     #[command(flatten)]
     prompt: PromptArgs,
 
@@ -203,7 +207,7 @@ impl AskArgs {
         let mut stream: LlamaStream =
             if config.get("Architect").is_some() || config.get("Worker").is_some() {
                 let orchestrator = Orchestrator::new(config, ollama).await?;
-                Box::pin(orchestrator.run_task_stream(prompt))
+                Box::pin(orchestrator.run_task_stream(prompt, self.debug_sequence.clone()))
             } else {
                 // ... existing single-shot logic ...
                 let request = self

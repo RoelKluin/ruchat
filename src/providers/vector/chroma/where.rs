@@ -37,7 +37,7 @@ impl Display for Token {
 #[derive(Parser, Debug, Clone, PartialEq, Deserialize, Default)]
 pub(crate) struct WhereArgs {
     /// The metadata query string, e.g. "key1 = 'value' AND key2 > 5".
-    #[arg(short, long)]
+    #[arg(short, long, help_heading = "Filtering")]
     r#where: Option<String>,
 }
 

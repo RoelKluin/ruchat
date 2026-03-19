@@ -1,7 +1,7 @@
-use crate::{RuChatError, Result};
+use crate::{Result, RuChatError};
 use ollama_rs::generation::completion::GenerationResponse;
-use tokio::sync::mpsc;
 use serde_json::Value;
+use tokio::sync::mpsc;
 
 pub(crate) struct Context {
     pub(crate) goal: String,
@@ -33,7 +33,11 @@ impl Context {
     pub(crate) fn is_approved(&self) -> bool {
         self.rejections.is_empty()
     }
-    pub(crate) async fn trace(&mut self, tx: &mpsc::Sender<Result<Vec<GenerationResponse>>>, err: String) {
+    pub(crate) async fn trace(
+        &mut self,
+        tx: &mpsc::Sender<Result<Vec<GenerationResponse>>>,
+        err: String,
+    ) {
         if !err.is_empty() {
             self.rejections.push_str(&format!("\n{err}"));
             tx.send(Err(RuChatError::Trace(err))).await.ok();
@@ -59,18 +63,19 @@ impl Context {
                     .filter_map(|v| v.as_str().map(|s| s.to_string()))
                     .collect();
 
-                let examples = if let Some(exs) = coll.get("example_queries").and_then(|v| v.as_array()) {
-                    exs.iter()
-                        .map(|e| {
-                            let q = e["query"].as_str().unwrap_or("");
-                            let w = e.get("where").and_then(|v| v.as_str()).unwrap_or("none");
-                            format!("    • query: \"{q}\"  where: \"{w}\"")
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                } else {
-                    String::from("    (no examples provided)")
-                };
+                let examples =
+                    if let Some(exs) = coll.get("example_queries").and_then(|v| v.as_array()) {
+                        exs.iter()
+                            .map(|e| {
+                                let q = e["query"].as_str().unwrap_or("");
+                                let w = e.get("where").and_then(|v| v.as_str()).unwrap_or("none");
+                                format!("    • query: \"{q}\"  where: \"{w}\"")
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    } else {
+                        String::from("    (no examples provided)")
+                    };
 
                 summary.push_str(&format!(
                     "- **{name}**\n  Description: {desc}\n  Embedding model: {model}\n  Available metadata keys: {}\n  Collection-specific examples:\n{examples}\n\n",
@@ -82,7 +87,11 @@ impl Context {
         }
 
         // Global settings
-        if let Some(includes) = self.config.get("allowed_include_fields").and_then(|v| v.as_array()) {
+        if let Some(includes) = self
+            .config
+            .get("allowed_include_fields")
+            .and_then(|v| v.as_array())
+        {
             let inc_list: Vec<&str> = includes.iter().filter_map(|v| v.as_str()).collect();
             summary.push_str(&format!(
                 "GLOBAL OPTIONS:\n- Allowed \"include\" fields (any combination): {}\n- Default n_results: {}\n",
@@ -92,5 +101,29 @@ impl Context {
         }
 
         summary
+    }
+    /// Apply debug imputations from a JSON file (only for the **first** agent in a debug sequence).
+    /// Called exactly once per debug run.
+    pub(crate) fn apply_debug_imputations(&mut self, imputations: &Value) {
+        if let Some(d) = imputations.get("documents").and_then(|v| v.as_str()) {
+            self.documents = d.to_string();
+        }
+        if let Some(c) = imputations.get("context").and_then(|v| v.as_str()) {
+            self.context = c.to_string();
+        }
+        if let Some(h) = imputations.get("history").and_then(|v| v.as_str()) {
+            self.history = h.to_string();
+        }
+    }
+    pub(crate) async fn print_debug_info(
+        &mut self,
+        tx: &mpsc::Sender<Result<Vec<GenerationResponse>>>,
+        role: &str,
+    ) {
+        let debug_info = format!(
+            "DEBUG INFO FOR ROLE: {role}\n\nGOAL:\n{}\n\nCONTEXT:\n{}\n\nHISTORY:\n{}\n\nREJECTIONS:\n{}\n\nDOCUMENTS:\n{}",
+            self.goal, self.context, self.history, self.rejections, self.documents
+        );
+        self.trace(tx, debug_info).await;
     }
 }

@@ -98,20 +98,6 @@ impl Orchestrator {
         })
     }
 
-    pub(crate) fn run_task_stream(
-        mut self,
-        goal: String,
-    ) -> impl Stream<Item = OrchestratorResult> {
-        let (tx, rx) = mpsc::channel(100);
-
-        tokio::spawn(async move {
-            if let Err(e) = self.execute_orchestration(goal, tx.clone()).await {
-                let _ = tx.send(Err(e)).await;
-            }
-        });
-
-        ReceiverStream::new(rx)
-    }
     async fn execute_orchestration(
         &mut self,
         goal: String,
@@ -147,17 +133,20 @@ impl Orchestrator {
                 ctx.trace(&tx, format!("Librarian formulated query: {}", ctx.output.as_str())).await;
 
                 let mut q = Query::default();
-                serde_json::from_str(ctx.output.as_str()).map_err(|e| {
-                        tracing::error!(error = ?e, "Failed to parse librarian output as JSON");
-                        e
-                    }).map_err(RuChatError::SerdeError).and_then(|query| {
-                        q.update_from_json(query).map_err(|e| {
-                            tracing::error!(error = ?e, "Failed to update Query from librarian output");
-                            e
-                        })
-                    })?;
+                if let Ok(json_val) = serde_json::from_str::<Value>(&ctx.output) {
+                    let _ = q.update_from_json(json_val);
+                } else {
+                    ctx.trace(&tx, "Librarian did not output valid JSON query — skipping RAG".to_string()).await;
+                }
                 ctx.documents = librarian.retrieve_and_generate(client, ollama, q).await?;
+
+                let num_docs = ctx.documents.lines().filter(|l| l.trim().starts_with(|c: char| c.is_ascii_digit() || c == ' ')).count().saturating_sub(2);
+                ctx.trace(&tx, format!("✅ Librarian found {} results. Documents now in context for Worker.", num_docs)).await;
             }
+
+            // Worker now generates implementation (using documents/plan from Architect + Librarian RAG)
+            self.worker.query_stream(ollama, ctx, &tx).await?;
+
             if let Validation::Failure(err) = self.worker.execute_and_verify(ctx).await? {
                 ctx.trace(&tx, format!("Round {round} failed verification: {err}")).await;
                 continue;
@@ -192,6 +181,82 @@ impl Orchestrator {
             }
         }
         ctx.trace(&tx, String::new()).await;
+        Ok(())
+    }
+
+    pub(crate) fn run_task_stream(
+        mut self,
+        goal: String,
+        debug_sequence: Option<String>,
+    ) -> impl Stream<Item = OrchestratorResult> {
+        let (tx, rx) = mpsc::channel(100);
+        tokio::spawn(async move {
+            if let Some (path) = debug_sequence {
+                if let Err(e) = self.debug_orchestration(goal, path, tx.clone()).await {
+                    let _ = tx.send(Err(e)).await;
+                }
+            } else {
+                if let Err(e) = self.execute_orchestration(goal, tx.clone()).await {
+                    let _ = tx.send(Err(e)).await;
+                }
+            }
+        });
+
+        ReceiverStream::new(rx)
+    }
+
+    async fn debug_orchestration(
+        &mut self,
+        goal: String,
+        path: String,
+        tx: mpsc::Sender<Result<Vec<GenerationResponse>>>,
+    ) -> Result<()> {
+        let debug_json: Value = serde_json::from_str(
+            &tokio::fs::read_to_string(path).await?
+        )?;
+        let sequence: Vec<String> = debug_json["sequence"]
+            .as_array()
+            .ok_or(RuChatError::Is("missing 'sequence' array".into()))?
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .collect();
+
+        let imputations = debug_json.get("context_imputations").cloned().unwrap_or_default();
+
+        let mut ctx = Context::new(goal);
+        ctx.apply_debug_imputations(&imputations);
+
+        for role in sequence {
+            let agent = match role.as_str() {
+                "Architect" => &mut self.architect,
+                "Worker" => &mut self.worker,
+                "Librarian" => self.librarian.as_mut().ok_or(RuChatError::Is("Librarian not enabled".into()))?,
+                "Validator" => self.validator.as_mut().ok_or(RuChatError::Is("Validator not enabled".into()))?,
+                "Summarizer" => self.summarizer.as_mut().ok_or(RuChatError::Is("Summarizer not enabled".into()))?,
+                r if r.starts_with("Critic") => {
+                    let idx: usize = r[5..].parse().unwrap_or(0); // Critic0, Critic1...
+                    self.critics.get_mut(idx).ok_or(RuChatError::Is("Critic index out of bounds".into()))?
+                }
+                _ => return Err(RuChatError::Is(format!("Unknown agent: {role}"))),
+            };
+            agent.query_stream(&self.ollama, &mut ctx, &tx).await?;
+            if role == "Librarian" {
+                let client = self.client.as_ref().ok_or(RuChatError::Is(
+                    "Librarian provided without chroma client config".into(),
+                ))?;
+
+                let mut q = Query::default();
+                if let Ok(json_val) = serde_json::from_str::<Value>(&ctx.output) {
+                    let _ = q.update_from_json(json_val);
+                } else {
+                    ctx.trace(&tx, "Librarian did not output valid JSON query — skipping RAG".to_string()).await;
+                }
+                ctx.documents = agent.retrieve_and_generate(client, &self.ollama, q).await?;
+            }
+            ctx.print_debug_info(&tx, &role).await;
+        }
+
+        ctx.trace(&tx, "DEBUG SEQUENCE COMPLETE — real Librarian query used when present".to_string()).await;
         Ok(())
     }
 }

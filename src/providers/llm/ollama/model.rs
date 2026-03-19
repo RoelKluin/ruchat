@@ -17,43 +17,48 @@ pub(crate) fn get_dynamic_history_limit(model_name: &str) -> u64 {
 #[derive(Parser, Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ModelArgs {
     /// Model(s) to (down)load and use.
-    #[arg(short, long, value_delimiter = ',')]
+    #[arg(short, long, value_delimiter = ',', help_heading = "Model Selection")]
     model: Vec<String>,
 
     /// Path to a JSON file or a JSON string to amend default generation options.
-    #[arg(short, long)]
+    #[arg(short, long, help_heading = "Advanced Model Options", hide = true)]
     options: Option<String>,
 
     /// Size of the prompt context (tokens) used to generate the next token.
-    #[arg(long)]
+    #[arg(long, help_heading = "Advanced Generation Parameters", hide = true)]
     pub num_ctx: Option<u64>,
 
     /// The temperature of the model. Increasing the temperature will make the model answer more creatively.
-    #[arg(long, value_parser = clap::value_parser!(f32))]
+    #[arg(long, value_parser = clap::value_parser!(f32), help_heading = "Advanced Generation Parameters", hide = true)]
     pub temperature: Option<f32>,
 
     /// Reduces the probability of generating nonsense. A higher value (e.g. 100) will give more diverse answers.
-    #[arg(long)]
+    #[arg(long, help_heading = "Advanced Generation Parameters", hide = true)]
     pub top_k: Option<u32>,
 
     /// Works together with top-k. A higher value (e.g., 0.95) will lead to more diverse text.
-    #[arg(long, value_parser = clap::value_parser!(f32))]
+    #[arg(long, value_parser = clap::value_parser!(f32), help_heading = "Advanced Generation Parameters", hide = true)]
     pub top_p: Option<f32>,
 
     /// Sets how strongly to penalize repetitions. A higher value (e.g., 1.5) will penalize repetitions more strongly.
-    #[arg(long)]
+    #[arg(long, value_parser = clap::value_parser!(f32), help_heading = "Advanced Generation Parameters", hide = true)]
     pub repeat_penalty: Option<f32>,
 
     /// Sets the stop sequences to use. When this pattern is encountered the LLM will stop generating text.
-    #[arg(long)]
+    #[arg(
+        long,
+        value_delimiter = ',',
+        help_heading = "Advanced Generation Parameters",
+        hide = true
+    )]
     pub stop: Option<Vec<String>>,
 
     /// Maximum number of tokens to predict when generating text. (-1 = infinite, -2 = fill context).
-    #[arg(long)]
+    #[arg(long, help_heading = "Advanced Generation Parameters", hide = true)]
     pub num_predict: Option<i32>,
 
     /// Sets the random number seed to use for generation. Setting this to a specific number will make the model generate the same text for the same prompt.
-    #[arg(long)]
+    #[arg(long, help_heading = "Advanced Generation Parameters", hide = true)]
     pub seed: Option<i32>,
 }
 

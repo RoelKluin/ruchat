@@ -1,0 +1,7 @@
+{
+  "sequence": ["Librarian", "Worker"],
+  "context_imputations": {
+    "documents": "Relevant snippets from Chroma:\n- Use ? instead of unwrap\n- anyhow::Context for error chaining\n- Keep Result<T, anyhow::Error>",
+    "context": "Architect plan: Replace all unwrap/panic with proper ? propagation and add context."
+  }
+}

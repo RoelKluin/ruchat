@@ -1,0 +1,8 @@
+{
+  "sequence": ["Worker", "Validator"],
+  "context_imputations": {
+    "documents": "Code from previous step uses unwrap on every Result.",
+    "context": "Worker output contains several unwrap() calls."
+  }
+}
+

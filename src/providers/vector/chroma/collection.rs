@@ -7,7 +7,7 @@ use serde_json::Value;
 
 #[derive(Parser, Debug, Clone, PartialEq, Deserialize)]
 pub(crate) struct ChromaCollectionConfigArgs {
-    #[arg(short = 'c', long, default_value = "")]
+    #[arg(short = 'c', long, default_value = "", help_heading = "Collection")]
     collection: String,
 }
 
