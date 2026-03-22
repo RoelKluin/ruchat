@@ -32,9 +32,6 @@ pub(crate) struct Args {
     /// Toggle verbose mode.
     #[arg(short, long, default_value = "false")]
     verbose: bool,
-
-    #[arg(long, hide = true, action = ArgAction::HelpLong)]
-    help_all: (),
 }
 
 impl Args {

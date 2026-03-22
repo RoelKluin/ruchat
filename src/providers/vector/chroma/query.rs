@@ -7,8 +7,8 @@ use crate::{Result, RuChatError};
 use chroma::ChromaHttpClient;
 use clap::Parser;
 use log::warn;
-use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
 use ollama_rs::Ollama;
+use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
 use serde::Deserialize;
 use serde_json::Value;
 

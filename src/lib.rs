@@ -37,10 +37,10 @@ pub async fn run() -> Result<()> {
 mod tests {
     use super::*;
     use crate::args::Commands;
-    use crate::ollama::ask::AskArgs;
     use crate::ollama::ModelArgs;
     use crate::ollama::OllamaArgs;
     use crate::ollama::ServerArgs;
+    use crate::ollama::ask::AskArgs;
     use args::Args;
     use cli::prompt::PromptArgs;
 

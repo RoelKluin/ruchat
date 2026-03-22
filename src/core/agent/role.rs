@@ -33,37 +33,39 @@ impl Role {
             Role::Critic => "Identify any issues in the work",
             Role::PerformanceCritic => "Identify any performance issues in the work",
             Role::Summarizer => "Compress the history of events into a concise summary",
-            Role::Librarian => {
-                "Formulate a single vector search query against ChromaDB"
-            }
+            Role::Librarian => "Formulate a single vector search query against ChromaDB",
         }
     }
     pub(crate) fn no_color() -> &'static str {
         "\x1b[0m"
     }
-    pub(crate) fn build_prompt(&self, task: Option<&str>, ctx: &Context, hint: Option<&str>) -> String {
+    pub(crate) fn build_prompt(
+        &self,
+        task: Option<&str>,
+        ctx: &Context,
+        hint: Option<&str>,
+    ) -> String {
         let system = format!("SYSTEM: You are the {self} agent.\n");
         let task = format!("TASK: {}.", task.unwrap_or(self.get_task()));
         let hint_section =
             hint.map_or_else(|| "".to_string(), |h| format!("CONTEXTUAL HINT: {h}.\n"));
         let goal = format!("GOAL: {}.", ctx.goal);
         match self {
-            Role::Architect if ctx.history.is_empty() => format!(
-                "{system}{hint_section}{goal}{task}",
-            ),
+            Role::Architect if ctx.history.is_empty() => {
+                format!("{system}{hint_section}{goal}{task}",)
+            }
             Role::Architect => format!(
                 "{system}{hint_section}\n{goal}{task}HISTORY: {}.",
                 ctx.history
             ),
             Self::Worker => format!(
                 "{system}{hint_section}DOCUMENTS: {}\nPLAN: {}\n{goal}{task}",
-                ctx.documents,
-                ctx.context,
+                ctx.documents, ctx.context,
             ),
             Role::Summarizer => format!("{system}{task}RAW HISTORY TO COMPRESS: {}", ctx.history),
             Role::Librarian => {
-                    let collections_summary = ctx.build_collections_summary();
-                    format!(
+                let collections_summary = ctx.build_collections_summary();
+                format!(
                     "{system}{hint_section}{goal}{task}\
                     {collections_summary}\n\n\
                     OUTPUT FORMAT — must be valid JSON, nothing else before or after:\n\
@@ -99,7 +101,7 @@ impl Role {
                     }}\n\n\
                     Return ONLY the JSON. Do not add extra keys. Omit optional fields when not needed."
                 )
-            },
+            }
             Role::Validator => format!(
                 "{system}\n{task}WORKER_OUTPUT: {}.\n\
                 If flawed, respond with 'REJECTED: [reason]'. If perfect, respond with 'VALIDATED'.",

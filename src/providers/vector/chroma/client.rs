@@ -1,6 +1,6 @@
 use anyhow::Result;
-use chroma::client::{ChromaAuthMethod, ChromaHttpClientOptions, ChromaRetryOptions};
 use chroma::ChromaHttpClient;
+use chroma::client::{ChromaAuthMethod, ChromaHttpClientOptions, ChromaRetryOptions};
 use clap::Parser;
 use http::{HeaderName, HeaderValue};
 use serde::Deserialize;
@@ -31,7 +31,8 @@ pub(crate) struct ChromaClientConfigArgs {
     #[arg(
         long,
         default_value_t = 3,
-        hide = true,
+        hide_short_help = true,
+        hide_long_help = false,
         hide_default_value = true,
         help_heading = "Advanced Retry"
     )]
@@ -41,7 +42,8 @@ pub(crate) struct ChromaClientConfigArgs {
     #[arg(
         long,
         default_value_t = 10,
-        hide = true,
+        hide_short_help = true,
+        hide_long_help = false,
         hide_default_value = true,
         help_heading = "Advanced Retry"
     )]
@@ -52,13 +54,14 @@ pub(crate) struct ChromaClientConfigArgs {
         long,
         default_value_t = 100,
         hide_default_value = true,
-        hide = true,
+        hide_short_help = true,
+        hide_long_help = false,
         help_heading = "Advanced Retry"
     )]
     pub max_delay: u64,
 
     /// Whether to apply a random jitter to the retry delay to prevent thundering herds.
-    #[arg(long, default_value_t = true, action = clap::ArgAction::SetTrue, help_heading = "Advanced Retry", hide = true)]
+    #[arg(long, default_value_t = true, action = clap::ArgAction::SetTrue, help_heading = "Advanced Retry", hide_short_help = true, hide_long_help = false)]
     pub jitter: bool,
 
     /// The tenant identifier used for multi-tenancy environments.

@@ -11,7 +11,8 @@ pub(crate) struct ServerArgs {
         long,
         default_value = "http://localhost:11434",
         help_heading = "Ollama Server",
-        hide = true,
+        hide_short_help = true,
+        hide_long_help = false,
         hide_default_value = true
     )]
     server: String,

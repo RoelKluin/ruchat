@@ -4,12 +4,12 @@ pub(crate) mod create;
 pub(crate) mod delete;
 pub(crate) mod fork;
 pub(crate) mod get;
-pub(crate) mod retrieve;
 pub(crate) mod include;
 pub(crate) mod ls;
 pub(crate) mod metadata;
 pub(crate) mod modify;
 pub(crate) mod query;
+pub(crate) mod retrieve;
 pub(crate) mod search;
 pub(crate) mod r#where;
 
@@ -22,8 +22,8 @@ use log::{info, warn};
 pub(crate) use metadata::{MetadataArgs, UpdateMetadataArrayArgs};
 use serde::Deserialize;
 use serde::Serialize;
-pub(crate) use r#where::WhereArgs;
 use serde_json::Value;
+pub(crate) use r#where::WhereArgs;
 
 #[derive(clap::Args, Debug, Clone, PartialEq, Deserialize, Default)]
 pub(super) struct OutputArgs {
@@ -38,11 +38,23 @@ pub(super) struct OutputArgs {
     /// Specify which fields to display (comma-separated:
     /// id,doc,meta,embed,score,uri,distance,include,select).
     /// Defaults to "id,doc,meta".
-    #[arg(short, long, value_delimiter = ',', default_value = "id,doc,meta", help_heading = "Output Control")]
+    #[arg(
+        short,
+        long,
+        value_delimiter = ',',
+        default_value = "id,doc,meta",
+        help_heading = "Output Control"
+    )]
     fields: Vec<String>,
 
     /// Maximum width for the document column to prevent text wrapping issues.
-    #[arg(long, default_value_t = 80, help_heading = "Advanced Output Control", hide = true)]
+    #[arg(
+        long,
+        default_value_t = 80,
+        help_heading = "Advanced Output Control",
+        hide_short_help = true,
+        hide_long_help = false
+    )]
     max_width: usize,
 }
 

@@ -68,15 +68,18 @@ impl Agent {
         }
     }
     pub(crate) fn remove_str(&mut self, key: &str) -> Result<String> {
-        let v = self.config
-            .remove(key)
-            .ok_or(RuChatError::Is(format!("No {key} to remove in agent config")))?;
+        let v = self.config.remove(key).ok_or(RuChatError::Is(format!(
+            "No {key} to remove in agent config"
+        )))?;
         if v.is_string() {
             Ok(v.as_str().unwrap().to_string())
         } else if v.is_object() {
             Ok(v.to_string())
         } else {
-            Err(RuChatError::Is(format!("Value for {key} is not a string in agent config {:?})", self.config)))
+            Err(RuChatError::Is(format!(
+                "Value for {key} is not a string in agent config {:?})",
+                self.config
+            )))
         }
     }
 
@@ -85,7 +88,10 @@ impl Agent {
             .get(key)
             .ok_or(RuChatError::Is(format!("No {key} in agent config")))?
             .as_str()
-            .ok_or(RuChatError::Is(format!("Value for {key} is not a string in agent config {:?})", self.config)))
+            .ok_or(RuChatError::Is(format!(
+                "Value for {key} is not a string in agent config {:?})",
+                self.config
+            )))
     }
     pub(crate) async fn retrieve_and_generate(
         &self,
@@ -139,13 +145,18 @@ impl Agent {
         let role = Role::from_str(role.as_str())?;
 
         // Assemble the payload
-        let full_prompt = role.build_prompt(self.get_str("task").ok(), ctx, self.get_str("task_hint").ok());
+        let full_prompt = role.build_prompt(
+            self.get_str("task").ok(),
+            ctx,
+            self.get_str("task_hint").ok(),
+        );
 
         let model = self.get_str("model")?;
         ctx.trace(
             tx,
             format!("Agent '{role}' is generating with model '{model}' and prompt:\n{full_prompt}"),
-        ).await;
+        )
+        .await;
         let request =
             GenerationRequest::new(model.to_string(), full_prompt).options(self.options.clone());
 

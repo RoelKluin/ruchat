@@ -1,8 +1,8 @@
 use crate::options::get_options;
 use crate::{Result, RuChatError};
 use clap::Parser;
-use ollama_rs::generation::completion::request::GenerationRequest;
 use ollama_rs::Ollama;
+use ollama_rs::generation::completion::request::GenerationRequest;
 
 pub(crate) fn get_dynamic_history_limit(model_name: &str) -> u64 {
     if model_name.contains("qwen2.5") {
@@ -21,27 +21,43 @@ pub(crate) struct ModelArgs {
     model: Vec<String>,
 
     /// Path to a JSON file or a JSON string to amend default generation options.
-    #[arg(short, long, help_heading = "Advanced Model Options", hide = true)]
+    #[arg(
+        short,
+        long,
+        help_heading = "Advanced Model Options",
+        hide_short_help = true,
+        hide_long_help = false
+    )]
     options: Option<String>,
 
     /// Size of the prompt context (tokens) used to generate the next token.
-    #[arg(long, help_heading = "Advanced Generation Parameters", hide = true)]
+    #[arg(
+        long,
+        help_heading = "Advanced Generation Parameters",
+        hide_short_help = true,
+        hide_long_help = false
+    )]
     pub num_ctx: Option<u64>,
 
     /// The temperature of the model. Increasing the temperature will make the model answer more creatively.
-    #[arg(long, value_parser = clap::value_parser!(f32), help_heading = "Advanced Generation Parameters", hide = true)]
+    #[arg(long, value_parser = clap::value_parser!(f32), help_heading = "Advanced Generation Parameters", hide_short_help = true, hide_long_help = false)]
     pub temperature: Option<f32>,
 
     /// Reduces the probability of generating nonsense. A higher value (e.g. 100) will give more diverse answers.
-    #[arg(long, help_heading = "Advanced Generation Parameters", hide = true)]
+    #[arg(
+        long,
+        help_heading = "Advanced Generation Parameters",
+        hide_short_help = true,
+        hide_long_help = false
+    )]
     pub top_k: Option<u32>,
 
     /// Works together with top-k. A higher value (e.g., 0.95) will lead to more diverse text.
-    #[arg(long, value_parser = clap::value_parser!(f32), help_heading = "Advanced Generation Parameters", hide = true)]
+    #[arg(long, value_parser = clap::value_parser!(f32), help_heading = "Advanced Generation Parameters", hide_short_help = true, hide_long_help = false)]
     pub top_p: Option<f32>,
 
     /// Sets how strongly to penalize repetitions. A higher value (e.g., 1.5) will penalize repetitions more strongly.
-    #[arg(long, value_parser = clap::value_parser!(f32), help_heading = "Advanced Generation Parameters", hide = true)]
+    #[arg(long, value_parser = clap::value_parser!(f32), help_heading = "Advanced Generation Parameters", hide_short_help = true, hide_long_help = false)]
     pub repeat_penalty: Option<f32>,
 
     /// Sets the stop sequences to use. When this pattern is encountered the LLM will stop generating text.
@@ -49,16 +65,27 @@ pub(crate) struct ModelArgs {
         long,
         value_delimiter = ',',
         help_heading = "Advanced Generation Parameters",
-        hide = true
+        hide_short_help = true,
+        hide_long_help = false
     )]
     pub stop: Option<Vec<String>>,
 
     /// Maximum number of tokens to predict when generating text. (-1 = infinite, -2 = fill context).
-    #[arg(long, help_heading = "Advanced Generation Parameters", hide = true)]
+    #[arg(
+        long,
+        help_heading = "Advanced Generation Parameters",
+        hide_short_help = true,
+        hide_long_help = false
+    )]
     pub num_predict: Option<i32>,
 
     /// Sets the random number seed to use for generation. Setting this to a specific number will make the model generate the same text for the same prompt.
-    #[arg(long, help_heading = "Advanced Generation Parameters", hide = true)]
+    #[arg(
+        long,
+        help_heading = "Advanced Generation Parameters",
+        hide_short_help = true,
+        hide_long_help = false
+    )]
     pub seed: Option<i32>,
 }
 

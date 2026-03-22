@@ -10,7 +10,12 @@ pub(crate) struct PromptArgs {
     prompt: Option<String>,
 
     /// Explicit prompt flag (alternative to positional).
-    #[arg(short, long, help = "Explicitly set the prompt")]
+    #[arg(
+        short,
+        long,
+        help = "Explicitly set the prompt",
+        help_heading = "Prompt & Context"
+    )]
     explicit_prompt: Option<String>,
 
     /// Text files to inject into the context.
@@ -19,16 +24,22 @@ pub(crate) struct PromptArgs {
         short = 'i',
         long = "input-files",
         value_delimiter = ',',
-        value_hint = FilePath
+        value_hint = FilePath,
+        help_heading = "Prompt & Context"
     )]
     files: Vec<PathBuf>,
 
     /// External command to run to generate input context.
-    #[arg(short = 'c', long, default_value = "cat")]
+    #[arg(
+        short = 'c',
+        long,
+        default_value = "cat",
+        help_heading = "Prompt & Context"
+    )]
     command: String,
 
     /// Arguments to pass to the external command.
-    #[arg(short = 'a', long, num_args = 0..)]
+    #[arg(short = 'a', long, num_args = 0.., help_heading = "Prompt & Context")]
     args: Vec<String>,
 
     /// Which output streams to capture from the external command.
@@ -36,12 +47,22 @@ pub(crate) struct PromptArgs {
         short = 's',
         long,
         default_value = "both",
-        value_parser = ["stdout", "stderr", "both"]
+        value_parser = ["stdout", "stderr", "both"],
+        help_heading = "Command Output Capture",
+        hide_short_help = true, hide_long_help = false
     )]
     capture: String,
 
     /// Expected exit codes from the command. Errors if code doesn't match.
-    #[arg(short = 'e', long, value_delimiter = ',', default_value = "0")]
+    #[arg(
+        short = 'e',
+        long,
+        value_delimiter = ',',
+        default_value = "0",
+        help_heading = "Command Output Capture",
+        hide_short_help = true,
+        hide_long_help = false
+    )]
     allowed_exit_codes: Vec<i32>,
 }
 

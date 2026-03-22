@@ -17,6 +17,10 @@ pub(crate) struct ChromaDeleteArgs {
     #[arg(short, long)]
     ids: Option<String>,
 
+    /// Optional limit on the number of records to delete.
+    #[arg(short, long)]
+    limit: Option<u32>,
+
     #[command(flatten)]
     client_config: ChromaClientConfigArgs,
 
@@ -48,9 +52,13 @@ impl ChromaDeleteArgs {
                 .get_collection(&self.collection)
                 .await
                 .map_err(RuChatError::ChromaHttpClientError)?;
+            let limit = match where_clause {
+                None => None,
+                _ => self.limit,
+            };
 
             collection_handle
-                .delete(ids, where_clause)
+                .delete(ids, where_clause, limit)
                 .await
                 .map_err(RuChatError::ChromaHttpClientError)?;
 

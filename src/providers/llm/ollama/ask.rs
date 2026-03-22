@@ -22,31 +22,42 @@ const DEFAULT_MODEL: &str = "qwen2.5vl:latest";
 #[derive(Parser, Debug, Clone, Default, PartialEq)]
 pub(crate) struct AskArgs {
     /// Provide a full JSON config for the team
-    #[arg(short, long, group = "agent_config", conflicts_with = "team_model")]
+    #[arg(
+        short,
+        long,
+        group = "agent_config",
+        conflicts_with = "team_model",
+        help_heading = "Agent Configuration"
+    )]
     agentic: Option<String>,
 
     /// Quick-start: Just enable Worker+Architect with this model
-    #[arg(long, group = "agent_config")]
+    #[arg(
+        long,
+        group = "agent_config",
+        conflicts_with = "agentic",
+        help_heading = "Agent Configuration"
+    )]
     team_model: Option<String>,
 
     /// Enable RAG by specifying a Chroma collection name
-    #[arg(long)]
+    #[arg(long, help_heading = "RAG Configuration")]
     collection: Option<String>,
 
     /// Override maximum iterations
-    #[arg(long)]
+    #[arg(long, help_heading = "Agent Configuration")]
     iterations: Option<u64>,
 
     /// Model for an optional Validator agent
-    #[arg(long)]
+    #[arg(long, help_heading = "Agent Configuration")]
     validator_model: Option<String>,
 
     /// Add one or more specific critics (e.g., --critic "Security" --critic "Performance")
-    #[arg(long, action = clap::ArgAction::Append)]
+    #[arg(long, action = clap::ArgAction::Append, help_heading = "Agent Configuration")]
     critic: Vec<String>,
 
     /// Path to a single JSON file defining debug sequence + context imputations.
-    #[arg(long)]
+    #[arg(long, hide_short_help = true, hide_long_help = false, help_heading = "Debugging")]
     debug_sequence: Option<String>,
 
     #[command(flatten)]
@@ -90,12 +101,13 @@ impl AskArgs {
     pub fn into_config(self, default_model: &str) -> Result<serde_json::Value> {
         // 1. Start with base: either provided JSON or empty object
         let mut config: serde_json::Value = if let Some(ref json_str) = self.agentic {
-            serde_json::from_str(json_str).map_err(|e| {
-                eprintln!("Provided agentic config: {json_str}");
-                tracing::error!(error = ?e, "Failed to parse agentic JSON config");
-                e
-            })
-            .map_err(RuChatError::SerdeError)?
+            serde_json::from_str(json_str)
+                .map_err(|e| {
+                    eprintln!("Provided agentic config: {json_str}");
+                    tracing::error!(error = ?e, "Failed to parse agentic JSON config");
+                    e
+                })
+                .map_err(RuChatError::SerdeError)?
         } else {
             serde_json::json!({})
         };
@@ -234,11 +246,13 @@ impl AskArgs {
                     cio.write_line(ansi_code).await?;
                 }
                 Err(RuChatError::StatusUpdate(msg)) => {
-                    cio.write_line(&format!("\x1b[2m   ... {msg} \x1b[0m\r")).await?;
+                    cio.write_line(&format!("\x1b[2m   ... {msg} \x1b[0m\r"))
+                        .await?;
                 }
                 // ADD THIS: For printing persistent trace events (dimmed/gray so it doesn't clutter the main agent output)
                 Err(RuChatError::Trace(msg)) => {
-                    cio.write_line(&format!("\n\x1b[90m[TRACE] {msg}\x1b[0m\n")).await?;
+                    cio.write_line(&format!("\n\x1b[90m[TRACE] {msg}\x1b[0m\n"))
+                        .await?;
                 }
                 Err(e) => return Err(e), // Real errors still break the loop
             }

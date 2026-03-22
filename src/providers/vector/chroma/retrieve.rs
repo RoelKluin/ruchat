@@ -4,9 +4,9 @@ use crate::chroma::{
 };
 use crate::ollama::OllamaArgs;
 use crate::{Result, RuChatError};
+use chroma::ChromaCollection;
 use chroma::types::SearchPayload;
 use chroma::types::{Key, QueryVector, RankExpr};
-use chroma::ChromaCollection;
 use chroma_types::plan::ReadLevel;
 use clap::{Parser, ValueEnum};
 use log::warn;
