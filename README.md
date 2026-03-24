@@ -1,5 +1,126 @@
 # Ruchat
 
+Ruchat is a powerful command-line AI chat and agent orchestration tool built on **Ollama** and **ChromaDB**. It supports interactive chats, RAG-augmented queries, structured tool calling, multi-agent orchestration (Architect → Worker → Critic → Validator), and direct Chroma vector database operations.
+
+## Features
+
+- **Single-shot & piped prompts** (`ask`, `pipe`)
+- **Interactive TUI chat** with full editing, history, undo/redo (`chat`)
+- **Multi-agent orchestration** with configurable Architect/Worker/Validator/Critic/Librarian teams (including RAG via Chroma)
+- **Tool calling** (calculator, web search, browserless, weather, disk space, custom functions)
+- **Structured JSON output** via `func-struct`
+- **Full ChromaDB CLI**:
+  - `embed`, `query`, `search`, `get`, `ls`, `create`, `modify`, `fork`, `delete`
+- **Embedding & retrieval** with automatic ID generation and upsert support
+- **Git integration** – AI can commit changes to feature branches
+- **Configurable model options**, streaming, and advanced generation parameters
+
+## Installation
+
+1. **Prerequisites**
+   - Rust (latest stable)
+   - Ollama running (`OLLAMA_HOST=localhost:11434 ollama serve`)
+   - Optional: ChromaDB (via Docker)
+
+2. **Build**
+   ```bash
+   git clone https://github.com/RoelKluin/ruchat.git
+   cd ruchat
+   cargo build --release
+   ```
+
+3. **Run ChromaDB (optional, for RAG/embedding)**
+   ```bash
+   docker run -p 8000:8000 \
+     -v ~/chroma_storage:/chroma/chroma \
+     chromadb/chroma
+   ```
+
+## Basic Usage
+
+```bash
+# Simple question
+./target/release/ruchat ask "Explain borrow checker in Rust"
+
+# Pipe input
+cat file.md | ./target/release/ruchat pipe
+
+# Interactive TUI chat
+./target/release/ruchat chat
+
+# List models
+./target/release/ruchat ollama-ls
+
+# Multi-agent orchestration (recommended)
+./target/release/ruchat ask --team-model "qwen2.5-coder:14b" "Refactor the CLI argument parsing"
+```
+
+### Agentic Mode Examples
+
+```bash
+# Quick team with one model
+ruchat ask --team-model "qwen2.5-coder:14b" "Implement a new Chroma delete command"
+
+# Full custom config (JSON)
+ruchat ask --agentic '{
+  "iterations": 4,
+  "Architect": {"model": "qwen2.5:14b", "temperature": 0.0},
+  "Worker": {"model": "qwen2.5-coder:14b"},
+  "Validator": {"model": "qwen2.5:14b"}
+}' "Add support for sparse vectors in queries"
+```
+
+### Chroma Commands
+
+```bash
+ruchat chroma-ls
+ruchat embed "Some code" --collection repo_src-all-minilm_l6-v2
+ruchat chroma-query --query "error handling" --n-results 5
+ruchat chroma-search --query-vector 0.1,0.2,...   # advanced
+```
+
+See `ruchat --help` and subcommand help for all options.
+
+## Configuration
+
+- Model options via `--options <JSON|file>`
+- Chroma connection via env vars (`CHROMA_SERVER`, `CHROMA_TOKEN`) or CLI flags
+- Persistent team/manager state in `ruchat_manager.json`
+- Collection definitions in `db_config.json`
+
+## Project Status
+
+**Version:** 0.1.2
+
+Actively developed with focus on:
+- Robust error handling and logging
+- Improved configuration merging
+- Better TUI editing experience
+- Expanded agent orchestration and RAG capabilities
+
+## Contributing
+
+Contributions welcome! Please fork the repository and submit a PR.
+
+See `TODO.txt` and `more_TODO.txt` for planned improvements (error handling, testing, performance, security, etc.).
+
+## License
+
+MIT License
+```
+
+**Key improvements in this update:**
+- Clearer feature overview
+- Prominent agentic/multi-agent section with practical examples
+- Better Chroma command examples
+- Updated installation & usage flow
+- Mention of current version and development focus
+- Cleaner, more actionable structure for technical users
+
+Replace the existing `README.md` with the content above.
+
+# Ruchat
+
 Ruchat is a command-line AI chat tool that uses `ollama` and `chroma`. It allows you to interact with AI models directly from the terminal.
 
 ## Description
@@ -23,37 +144,3 @@ docker run -p 8000:8000 \
                -e chroma_server_auth_credentials="$(sed -n 2p ~/.chroma_creds.txt)" \
                -v ~/chroma_storage/:/chroma/chroma chromadb/chroma
 ```
-
-## Usage
-
-After building the project, you can run Ruchat the terminal:
-
-```bash
-./target/release/ruchat
-```
-
-For more information on availavle subcommands and options, you can use the help command:
-
-
-### Subcommands
-
-- **Ask**: Interact with the AI model by asking questions.
-- **Pipe**: Pipe input through the chat tool.
-- **Chat**: Engage in a chat session with the AI model.
-- **Ls**: List available models.
-- **Rm**: Remove a specified model.
-- **Pull**: Pull a model from a repository.
-- **Func**: Execute a function with the AI model.
-- **FuncStruct**: Execute a structured function with the AI model.
-- **Embed**: Generate embeddings for input data.
-- **Query**: Perform a query operation.
-- **Similarity**: Conduct a similarity search.
-- **ChromaLs**: List chroma-related information.
-
-## Contributing
-
-Contributions are welcome! If you want to contribute, please fork the repository and submit a pull request. Any improvements or bug fixes are great ly appreciated!
-
-## License
-
-This project is licensed under the MIT License.
