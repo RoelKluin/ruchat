@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "default": {
+      "ollama": { "server": "http://localhost:11434" },
+      "chroma": { "server": "http://localhost:8000" },
+      "default_model": "qwen2.5-coder:14b",
+      "iterations": 4
+    }
+  }
+}
