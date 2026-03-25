@@ -1,5 +1,6 @@
 use crate::cli::prompt::PromptArgs;
 use crate::io::Io;
+use crate::cli::config::ConfigArgs;
 use crate::ollama::OllamaArgs;
 use crate::orchestrator::Orchestrator;
 use crate::{Result, RuChatError};
@@ -65,6 +66,9 @@ pub(crate) struct AskArgs {
 
     #[command(flatten)]
     ollama: OllamaArgs,
+
+    #[command(flatten)]
+    pub config: ConfigArgs,
 }
 
 // Reusable generation logic for Agents
@@ -185,6 +189,9 @@ impl AskArgs {
     ///
     /// A `Result` indicating success or failure.
     pub(crate) async fn ask(&self, end_marker: &str) -> Result<()> {
+        let mut cfg = self.config.load().await?;
+        self.config.merge_into(cfg.clone(), &mut cfg);
+
         let mut cio = Io::new();
         let prompt = match self.prompt.get_prompt() {
             Ok(p) => p,

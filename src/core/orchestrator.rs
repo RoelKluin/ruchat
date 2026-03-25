@@ -67,7 +67,8 @@ impl Orchestrator {
         if let Ok(mut lib) = Agent::new(&mut config, "Librarian", false, None).await {
             let mut client_config = ChromaClientConfigArgs::default();
             lib.remove_str("chroma_client").and_then(|s| {
-                client_config.update_from_json(&s).map_err(|e| {
+                let val = s.parse::<serde_json::Value>()?;
+                client_config.update_from_json(&val).map_err(|e| {
                     eprintln!("{s}");
                     tracing::error!(error = ?e, "Failed to parse chroma_client config as JSON:");
                     e
@@ -75,7 +76,7 @@ impl Orchestrator {
             })?;
             client = Some(
                 client_config
-                    .create_client()
+                    .create_client().await
                     .map_err(RuChatError::AnyhowError)?,
             );
 

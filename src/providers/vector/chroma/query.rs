@@ -139,7 +139,7 @@ impl TryFrom<String> for QueryArgs {
 
 impl QueryArgs {
     pub(crate) async fn query(&self) -> Result<()> {
-        let client = self.client.create_client()?;
+        let client = self.client.create_client().await?;
 
         let (ollama, models) = self.ollama.init("all-minilm:l6-v2").await?;
         let model = models

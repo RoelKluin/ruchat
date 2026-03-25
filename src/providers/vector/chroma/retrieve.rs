@@ -4,9 +4,9 @@ use crate::chroma::{
 };
 use crate::ollama::OllamaArgs;
 use crate::{Result, RuChatError};
-use chroma::ChromaCollection;
 use chroma::types::SearchPayload;
 use chroma::types::{Key, QueryVector, RankExpr};
+use chroma::ChromaCollection;
 use chroma_types::plan::ReadLevel;
 use clap::{Parser, ValueEnum};
 use log::warn;
@@ -77,6 +77,7 @@ impl RetrieveArgs {
         let client = self
             .client
             .create_client()
+            .await
             .map_err(RuChatError::AnyhowError)?;
         let collection = self.collection.get_collection(&client, "default").await?;
 

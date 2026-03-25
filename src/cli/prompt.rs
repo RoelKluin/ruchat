@@ -39,12 +39,12 @@ pub(crate) struct PromptArgs {
     command: String,
 
     /// Arguments to pass to the external command.
-    #[arg(short = 'a', long, num_args = 0.., help_heading = "Prompt & Context")]
+    #[arg(short = 'A', long, num_args = 0.., help_heading = "Prompt & Context")]
     args: Vec<String>,
 
     /// Which output streams to capture from the external command.
     #[arg(
-        short = 's',
+        short = 'S',
         long,
         default_value = "both",
         value_parser = ["stdout", "stderr", "both"],
@@ -55,7 +55,7 @@ pub(crate) struct PromptArgs {
 
     /// Expected exit codes from the command. Errors if code doesn't match.
     #[arg(
-        short = 'e',
+        short = 'E',
         long,
         value_delimiter = ',',
         default_value = "0",

@@ -1,9 +1,11 @@
+use crate::cli::config::ConfigArgs;
 use anyhow::Result;
-use chroma::ChromaHttpClient;
 use chroma::client::{ChromaAuthMethod, ChromaHttpClientOptions, ChromaRetryOptions};
+use chroma::ChromaHttpClient;
 use clap::Parser;
 use http::{HeaderName, HeaderValue};
 use serde::Deserialize;
+use serde_json::Value;
 use std::time::Duration;
 
 #[derive(Parser, Debug, Clone, PartialEq, Deserialize)]
@@ -80,6 +82,9 @@ pub(crate) struct ChromaClientConfigArgs {
         help_heading = "Chroma Connection"
     )]
     pub chroma_database: Option<String>,
+
+    #[command(flatten)]
+    pub config: ConfigArgs,
 }
 
 impl ChromaClientConfigArgs {
@@ -92,35 +97,43 @@ impl ChromaClientConfigArgs {
     /// # Returns
     ///
     /// A `Result` containing the `ChromaClient` or an error.
-    pub(crate) fn create_client(&self) -> Result<ChromaHttpClient> {
-        if let Some(token) = self.chroma_token.as_ref() {
-            let endpoint = self.chroma_server.parse()?;
+    pub(crate) async fn create_client(&self) -> Result<ChromaHttpClient> {
+        let mut cfg = self.config.load().await?;
+        self.config.merge_into(cfg.clone(), &mut cfg);
+
+        // Apply config values (lowest priority)
+        let mut args = self.clone();
+        if let Some(v) = cfg.get("chroma") {
+            args.update_from_json(v)?;
+        }
+
+        // Your original logic, unchanged
+        if let Some(token) = args.chroma_token.as_ref() {
+            let endpoint = args.chroma_server.parse()?;
             let value = HeaderValue::from_str(token.as_str())?;
             let header = HeaderName::from_static("x_chroma_token");
             let auth_method = ChromaAuthMethod::HeaderAuth { header, value };
             let retry_options = ChromaRetryOptions {
-                max_retries: self.max_retries,
-                min_delay: Duration::from_millis(self.min_delay),
-                max_delay: Duration::from_secs(self.max_delay),
-                jitter: self.jitter,
+                max_retries: args.max_retries,
+                min_delay: Duration::from_millis(args.min_delay),
+                max_delay: Duration::from_secs(args.max_delay),
+                jitter: args.jitter,
             };
             let client = ChromaHttpClientOptions {
                 endpoint,
                 auth_method,
                 retry_options,
-                tenant_id: self.tenant_id.clone(),
-                database_name: self.chroma_database.clone(),
+                tenant_id: args.tenant_id.clone(),
+                database_name: args.chroma_database.clone(),
             };
             Ok(ChromaHttpClient::new(client))
         } else {
-            // Defaults to http://localhost:8000
             Ok(ChromaHttpClient::new(Default::default()))
         }
     }
-    pub(crate) fn update_from_json(&mut self, json_str: &str) -> Result<()> {
-        json_str
-            .parse::<serde_json::Value>()?
-            .as_object()
+
+    pub(crate) fn update_from_json(&mut self, val: &Value) -> Result<()> {
+        val.as_object()
             .ok_or_else(|| {
                 anyhow::anyhow!("Expected a JSON object to update ChromaClientConfigArgs")
             })?
@@ -158,6 +171,7 @@ impl Default for ChromaClientConfigArgs {
             jitter: true,
             tenant_id: Some("default_tenant".to_string()),
             chroma_database: Some("default".to_string()),
+            config: ConfigArgs::default(),
         }
     }
 }

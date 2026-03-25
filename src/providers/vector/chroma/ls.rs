@@ -44,6 +44,7 @@ impl ChromaLsArgs {
         let client = self
             .client
             .create_client()
+            .await
             .map_err(RuChatError::AnyhowError)?;
 
         // Determine if we are listing all or one specific collection

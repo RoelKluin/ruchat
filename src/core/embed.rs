@@ -1,4 +1,5 @@
 use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs, UpdateMetadataArrayArgs};
+use crate::cli::config::ConfigArgs;
 use crate::ollama::OllamaArgs;
 use crate::{Result, RuChatError};
 use chroma::types::UpdateMetadataValue;
@@ -51,7 +52,7 @@ impl EmbedArgs {
             .ok_or_else(|| RuChatError::InternalError("No model found".into()))?
             .to_string();
 
-        let client = self.client_config.create_client()?;
+        let client = self.client_config.create_client().await?;
         let collection = self
             .collection_config
             .get_collection(&client, "default")
@@ -245,10 +246,15 @@ pub(crate) struct EmbedPromptArgs {
 
     #[command(flatten)]
     args: EmbedArgs,
+
+    #[command(flatten)]
+    config_args: ConfigArgs,
 }
 
 impl EmbedPromptArgs {
     pub(crate) async fn embed(&self) -> Result<()> {
+        let mut cfg = self.config_args.load().await?;
+        self.config_args.merge_into(cfg.clone(), &mut cfg);
         self.args.embed(self.prompt.as_str(), self.mode).await
     }
 }

@@ -33,6 +33,7 @@ impl ChromaDeleteArgs {
         let client = self
             .client_config
             .create_client()
+            .await
             .map_err(RuChatError::AnyhowError)?;
 
         // Parse optional target filters

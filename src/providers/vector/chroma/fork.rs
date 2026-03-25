@@ -24,6 +24,7 @@ impl ForkArgs {
         let client = self
             .client
             .create_client()
+            .await
             .map_err(RuChatError::AnyhowError)?;
 
         // Get the source collection handle

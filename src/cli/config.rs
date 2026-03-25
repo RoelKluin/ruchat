@@ -16,7 +16,7 @@ pub(crate) struct ConfigArgs {
     #[arg(
         long,
         env = "RUCHAT_PROFILE",
-        default_value = "default",
+        default_value_t = String::from("default"),
         help_heading = "Configuration"
     )]
     profile: String,
@@ -70,5 +70,44 @@ impl ConfigArgs {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn test_config_json_profile() {
+        let dir = tempdir().unwrap();
+        let config_path = dir.path().join("ruchat.json");
+
+        let content = r#"
+        {
+          "profiles": {
+            "default": {
+              "chroma": { "server": "http://localhost:8001", "token": "test-token" },
+              "ollama": { "server": "http://localhost:11435" }
+            },
+            "prod": {
+              "chroma": { "server": "https://chroma.example.com" }
+            }
+          }
+        }"#;
+
+        fs::write(&config_path, content).unwrap();
+
+        let args = ConfigArgs {
+            config: Some(config_path),
+            profile: "default".into(),
+        };
+
+        let val = args.load().await.unwrap();
+
+        assert_eq!(val["chroma"]["server"], "http://localhost:8001");
+        assert_eq!(val["chroma"]["token"], "test-token");
+        assert_eq!(val["ollama"]["server"], "http://localhost:11435");
     }
 }

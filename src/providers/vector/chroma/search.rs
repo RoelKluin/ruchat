@@ -42,6 +42,7 @@ impl SearchArgs {
         let client = self
             .client
             .create_client()
+            .await
             .map_err(RuChatError::AnyhowError)?;
         let collection = self.collection.get_collection(&client, "default").await?;
 

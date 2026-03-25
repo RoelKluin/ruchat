@@ -2,23 +2,24 @@ mod bufcursor;
 mod event_result;
 mod history;
 mod pos;
+use crate::cli::config::ConfigArgs;
 use crate::core::chat::tree::ConversationTree;
-use crate::ollama::OllamaArgs;
 use crate::ollama::chat::event_result::EventResult;
+use crate::ollama::OllamaArgs;
 use crate::{Result, RuChatError};
 use bufcursor::BufCursor;
 use clap::{ArgAction, Parser};
 use crossterm::{
-    ExecutableCommand,
     cursor::{Hide, MoveTo, Show},
     event::{self, DisableMouseCapture, EnableMouseCapture},
     terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
+    ExecutableCommand,
 };
-use ollama_rs::generation::chat::{ChatMessage, request::ChatMessageRequest};
+use ollama_rs::generation::chat::{request::ChatMessageRequest, ChatMessage};
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 use tokio::task;
-use tokio::time::{Duration, sleep, timeout};
+use tokio::time::{sleep, timeout, Duration};
 use tokio_stream::StreamExt;
 
 /// Command-line arguments for interactive chat sessions with a model.
@@ -32,7 +33,10 @@ pub(crate) struct ChatArgs {
     debug: u8,
 
     #[command(flatten)]
-    ollama_args: OllamaArgs,
+    ollama: OllamaArgs,
+
+    #[command(flatten)]
+    config: ConfigArgs,
 }
 
 impl ChatArgs {
@@ -46,6 +50,9 @@ impl ChatArgs {
     ///
     /// A `Result` indicating success or failure.
     pub(crate) async fn chat(&self) -> Result<()> {
+        let mut cfg = self.config.load().await?;
+        self.config.merge_into(cfg.clone(), &mut cfg);
+
         // Enter raw mode and alternate screen
         terminal::enable_raw_mode()?;
         match self.chat_raw_mode().await {
@@ -98,7 +105,7 @@ impl ChatArgs {
 
         //let running = Arc::new(Mutex::new(true))
         let mut stdout = io::stdout();
-        let (ollama, models) = self.ollama_args.init("").await?;
+        let (ollama, models) = self.ollama.init("").await?;
         let model = models[0].clone();
         let mut bufcursor = BufCursor::new()?;
         let debug_level = self.debug;
@@ -309,7 +316,7 @@ fn redraw_screen(
 
     let it = chat_history.get_current_question_ids();
     let cp = bufcursor.get_cursor(); // Cursor position editing the question
-    // the last line is a status line. The second to last line is the last line of the question
+                                     // the last line is a status line. The second to last line is the last line of the question
     text_view.push("Ask your question (Alt+Enter to send, Esc to quit):".to_string());
 
     // Clear the screen

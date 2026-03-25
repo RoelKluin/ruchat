@@ -26,7 +26,7 @@ impl ChromaCreateArgs {
     /// arguments, parses the metadata, and creates a collection with the specified name and
     /// metadata.
     pub(crate) async fn create(&self) -> Result<()> {
-        let client = self.client.create_client()?;
+        let client = self.client.create_client().await?;
         let name = self.collection.name();
         let schema = self
             .schema
