@@ -16,7 +16,7 @@ use crate::ollama::func::func_struct;
 use crate::ollama::OllamaArgs;
 use crate::ollama::ServerArgs;
 use crate::Result;
-use clap::{ArgAction, Parser, Subcommand};
+use clap::{Parser, Subcommand};
 
 /// Main command line interface for RuChat.
 ///

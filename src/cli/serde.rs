@@ -1,13 +1,12 @@
 use crate::agent::manager::Manager; // generic approach is better, but explicit is easier here
 use crate::cli::config::ConfigArgs;
 use crate::utils::error::Result;
-use crate::RuChatError;
 use serde_json::Value;
 use std::path::Path;
 use tokio::fs;
 
 pub(crate) async fn load_merged_config(config_args: &ConfigArgs) -> Result<Value> {
-    let mut base = config_args.load().await?;
+    let base = config_args.load().await?;
 
     // Future: env var overrides, CLI flags will be merged on top in each subcommand
     Ok(base)

@@ -37,11 +37,10 @@ impl ConfigArgs {
         let full: Value = serde_json::from_str(&content)
             .map_err(|e| RuChatError::InternalError(format!("Invalid JSON in {path:?}: {e}")))?;
 
-        if let Some(profiles) = full.get("profiles").and_then(|p| p.as_object()) {
-            if let Some(profile) = profiles.get(&self.profile) {
+        if let Some(profiles) = full.get("profiles").and_then(|p| p.as_object())
+            && let Some(profile) = profiles.get(&self.profile) {
                 return Ok(profile.clone());
             }
-        }
         Ok(full)
     }
 
@@ -61,15 +60,14 @@ impl ConfigArgs {
 
     // Merge config into target (CLI overrides win)
     pub(crate) fn merge_into(&self, config: Value, target: &mut Value) {
-        if let Value::Object(c) = config {
-            if let Value::Object(t) = target {
+        if let Value::Object(c) = config
+            && let Value::Object(t) = target {
                 for (k, v) in c {
                     if !v.is_null() {
                         t.insert(k, v);
                     }
                 }
             }
-        }
     }
 }
 
