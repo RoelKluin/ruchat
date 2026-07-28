@@ -27,6 +27,7 @@ pub(crate) struct Agent {
     options: ModelOptions,
     agent_config: HashMap<String, Value>,
     pub(super) embed_args: Option<EmbedArgs>,
+    cfg: Value,
 }
 
 impl Agent {
@@ -35,6 +36,7 @@ impl Agent {
         role: &str,
         required: bool,
         task_type: Option<&TaskType>,
+        cfg: Value,
     ) -> Result<Self> {
         if let Some(agent_val) = config.get(role) {
             // Check if it's a raw JSON string (from CLI) or an Object (from json! macro)
@@ -60,6 +62,7 @@ impl Agent {
                 options,
                 agent_config,
                 embed_args,
+                cfg
             })
         } else if required {
             Err(RuChatError::MissingAgent(role.to_string()))
@@ -106,7 +109,7 @@ impl Agent {
         get_dynamic_history_limit(self.get_str("model").unwrap_or(""))
     }
 
-    async fn parse_tool_call(&self, ctx: &mut Context, cfg: &Value) -> Result<()> {
+    async fn parse_tool_call(&self, ctx: &mut Context) -> Result<()> {
         if let Some(tool_call) = ToolCall::parse(&ctx.output)
             && tool_call.name.as_str() == "MEMORIZE"
         {
@@ -115,7 +118,6 @@ impl Agent {
                 UpsertMode::Upsert,
                 ctx,
                 "Information successfully committed to long-term memory.",
-                cfg
             )
             .await?;
         }
@@ -127,12 +129,11 @@ impl Agent {
         mode: UpsertMode,
         ctx: &mut Context,
         msg: &str,
-        cfg: &Value,
     ) -> Result<()> {
         if let Some(args) = self.embed_args.as_ref() {
-            args.embed(prompt, mode, cfg).await
+            args.embed(prompt, mode, &self.cfg).await
         } else {
-            EmbedArgs::default().embed(prompt, mode, cfg).await
+            EmbedArgs::default().embed(prompt, mode, &self.cfg).await
         }
         .map(|()| ctx.history.push_str(&format!("\n### SYSTEM: {msg}")))
     }
@@ -142,7 +143,6 @@ impl Agent {
         ollama: &Ollama,
         ctx: &mut Context,
         tx: &mpsc::Sender<Result<Vec<GenerationResponse>>>,
-        cfg: &Value,
     ) -> Result<()> {
         let role = self.get_str("role")?.to_lowercase();
         let role = Role::from_str(role.as_str())?;
@@ -197,11 +197,11 @@ impl Agent {
         tx.send(Err(RuChatError::ColorChange(Role::no_color())))
             .await
             .map_err(|e| RuChatError::Is(e.to_string()))?;
-        self.parse_tool_call(ctx, cfg).await?;
+        self.parse_tool_call(ctx).await?;
         role.update_context(ctx, self.get_str("approval_signal").unwrap_or("APPROVED"));
         Ok(())
     }
-    pub(super) async fn execute_and_verify(&self, ctx: &mut Context, cfg: &Value) -> Result<Validation> {
+    pub(super) async fn execute_and_verify(&self, ctx: &mut Context) -> Result<Validation> {
         let tool_call = match ToolCall::parse(&ctx.output) {
             Some(call) => call,
             None => return Ok(Validation::Skip),
@@ -215,7 +215,6 @@ impl Agent {
                     UpsertMode::Upsert,
                     ctx,
                     "Information successfully memorized.",
-                    cfg
                 )
                 .await
                 .map_or_else(

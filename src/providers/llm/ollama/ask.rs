@@ -220,12 +220,12 @@ impl AskArgs {
         let mut stream: LlamaStream =
             if config.get("Architect").is_some() || config.get("Worker").is_some() {
                 let orchestrator = Orchestrator::new(config, ollama, cfg).await?;
-                Box::pin(orchestrator.run_task_stream(prompt, self.debug_sequence.clone(), cfg.clone()))
+                Box::pin(orchestrator.run_task_stream(prompt, self.debug_sequence.clone()))
             } else {
                 // ... existing single-shot logic ...
                 let request = self
                     .ollama
-                    .build_generation_request(model[0].clone(), prompt)
+                    .build_generation_request(model[0].clone(), prompt, cfg)
                     .await?;
                 Box::pin(
                     ollama

@@ -1,8 +1,9 @@
 use crate::options::get_options;
 use crate::{Result, RuChatError};
 use clap::Parser;
-use ollama_rs::Ollama;
 use ollama_rs::generation::completion::request::GenerationRequest;
+use ollama_rs::Ollama;
+use serde_json::Value;
 
 pub(crate) fn get_dynamic_history_limit(model_name: &str) -> u64 {
     if model_name.contains("qwen2.5") {
@@ -94,10 +95,11 @@ impl ModelArgs {
         &self,
         model: String,
         prompt: String,
+        cfg: &Value,
     ) -> Result<GenerationRequest<'_>> {
         // 1. Get base options from file/string or start with empty JSON
-        let mut opts_val = if let Some(ref opts_raw) = self.options {
-            let (opts, _etc) = get_options(opts_raw).await?;
+        let mut opts_val = if let Some(opts_raw) = cfg.get("model_options") {
+            let (opts, _etc) = get_options(format!("{opts_raw}").as_str()).await?;
             serde_json::to_value(opts)
                 .map_err(|e| {
                     tracing::error!(error = ?e, "failed to serialize ModelOptions to JSON");

@@ -73,7 +73,10 @@ impl OllamaArgs {
         &self,
         model: String,
         prompt: String,
+        cfg: &Value,
     ) -> Result<GenerationRequest<'_>> {
-        self.model.build_generation_request(model, prompt).await
+        self.model
+            .build_generation_request(model, prompt, cfg)
+            .await
     }
 }

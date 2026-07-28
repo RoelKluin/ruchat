@@ -39,13 +39,13 @@ impl Orchestrator {
         let task_type = TaskType::deserialize(&orchestrator_config).ok();
         let task_type = task_type.as_ref();
         // 1. Extract Core Agents
-        let architect = Agent::new(&mut orchestrator_config, "Architect", true, task_type).await?;
-        let worker = Agent::new(&mut orchestrator_config, "Worker", true, task_type).await?;
+        let architect = Agent::new(&mut orchestrator_config, "Architect", true, task_type, cfg.clone()).await?;
+        let worker = Agent::new(&mut orchestrator_config, "Worker", true, task_type, cfg.clone()).await?;
 
-        let validator = Agent::new(&mut orchestrator_config, "Validator", false, task_type)
+        let validator = Agent::new(&mut orchestrator_config, "Validator", false, task_type, cfg.clone())
             .await
             .ok();
-        let summarizer = Agent::new(&mut orchestrator_config, "Summarizer", false, None)
+        let summarizer = Agent::new(&mut orchestrator_config, "Summarizer", false, None, cfg.clone())
             .await
             .ok();
 
@@ -55,7 +55,7 @@ impl Orchestrator {
                 // We pass a copy of the specific critic's config
                 let mut c_config = c_val.clone();
                 if let Ok(agent) =
-                    Agent::new(&mut c_config, &format!("Critic_{}", i), true, task_type).await
+                    Agent::new(&mut c_config, &format!("Critic_{}", i), true, task_type, cfg.clone()).await
                 {
                     critics.push(agent);
                 }
@@ -64,7 +64,7 @@ impl Orchestrator {
 
         let mut librarian = None;
         let mut client = None;
-        if let Ok(mut lib) = Agent::new(&mut orchestrator_config, "Librarian", false, None).await {
+        if let Ok(mut lib) = Agent::new(&mut orchestrator_config, "Librarian", false, None, cfg.clone()).await {
             let mut client_config = ChromaClientConfigArgs::default();
             lib.remove_str("chroma_client").and_then(|s| {
                 let val = s.parse::<serde_json::Value>()?;
@@ -102,7 +102,6 @@ impl Orchestrator {
         &mut self,
         goal: String,
         tx: mpsc::Sender<Result<Vec<GenerationResponse>>>,
-        cfg: &Value,
     ) -> Result<()> {
         let iterations = self
             .orchestrator_config
@@ -123,7 +122,7 @@ impl Orchestrator {
         }
 
         for round in 1..=iterations {
-            self.architect.query_stream(ollama, ctx, &tx, cfg).await?;
+            self.architect.query_stream(ollama, ctx, &tx).await?;
 
             if round == 1
                 && let Some(librarian) = self.librarian.as_mut()
@@ -133,7 +132,7 @@ impl Orchestrator {
                 ))?;
 
                 // Ask the LLM to formulate the query
-                librarian.query_stream(ollama, ctx, &tx, cfg).await?;
+                librarian.query_stream(ollama, ctx, &tx).await?;
 
                 ctx.trace(
                     &tx,
@@ -173,16 +172,16 @@ impl Orchestrator {
             }
 
             // Worker now generates implementation (using documents/plan from Architect + Librarian RAG)
-            self.worker.query_stream(ollama, ctx, &tx, cfg).await?;
+            self.worker.query_stream(ollama, ctx, &tx).await?;
 
-            if let Validation::Failure(err) = self.worker.execute_and_verify(ctx, cfg).await? {
+            if let Validation::Failure(err) = self.worker.execute_and_verify(ctx).await? {
                 ctx.trace(&tx, format!("Round {round} failed verification: {err}"))
                     .await;
                 continue;
             }
 
             if let Some(validator) = self.validator.as_mut() {
-                validator.query_stream(ollama, ctx, &tx, cfg).await?;
+                validator.query_stream(ollama, ctx, &tx).await?;
 
                 // Auto-Rejection Logic
                 if ctx.output.contains("REJECTED") {
@@ -195,7 +194,7 @@ impl Orchestrator {
                 }
             }
             for critic in &mut self.critics {
-                critic.query_stream(ollama, ctx, &tx, cfg).await?;
+                critic.query_stream(ollama, ctx, &tx).await?;
             }
 
             if ctx.is_approved() {
@@ -206,7 +205,7 @@ impl Orchestrator {
                     && ctx.history.len() as u64
                         > history_limit.unwrap_or(summarizer.get_dynamic_history_limit())
                 {
-                    summarizer.query_stream(ollama, ctx, &tx, cfg).await?;
+                    summarizer.query_stream(ollama, ctx, &tx).await?;
                 }
                 ctx.history.push_str("\nREJECTIONS: ");
                 ctx.history.push_str(&ctx.rejections);
@@ -221,16 +220,15 @@ impl Orchestrator {
         mut self,
         goal: String,
         debug_sequence: Option<String>,
-        cfg: Value,
     ) -> impl Stream<Item = OrchestratorResult> {
         let (tx, rx) = mpsc::channel(100);
         tokio::spawn(async move {
             if let Some(path) = debug_sequence {
-                if let Err(e) = self.debug_orchestration(goal, path, tx.clone(), &cfg).await {
+                if let Err(e) = self.debug_orchestration(goal, path, tx.clone()).await {
                     let _ = tx.send(Err(e)).await;
                 }
             } else {
-                if let Err(e) = self.execute_orchestration(goal, tx.clone(), &cfg).await {
+                if let Err(e) = self.execute_orchestration(goal, tx.clone()).await {
                     let _ = tx.send(Err(e)).await;
                 }
             }
@@ -244,7 +242,6 @@ impl Orchestrator {
         goal: String,
         path: String,
         tx: mpsc::Sender<Result<Vec<GenerationResponse>>>,
-        cfg: &Value,
     ) -> Result<()> {
         let debug_json: Value = serde_json::from_str(&tokio::fs::read_to_string(path).await?)?;
         let sequence: Vec<String> = debug_json["sequence"]
@@ -286,7 +283,7 @@ impl Orchestrator {
                 }
                 _ => return Err(RuChatError::Is(format!("Unknown agent: {role}"))),
             };
-            agent.query_stream(&self.ollama, &mut ctx, &tx, cfg).await?;
+            agent.query_stream(&self.ollama, &mut ctx, &tx).await?;
             if role == "Librarian" {
                 let client = self.client.as_ref().ok_or(RuChatError::Is(
                     "Librarian provided without chroma client config".into(),
