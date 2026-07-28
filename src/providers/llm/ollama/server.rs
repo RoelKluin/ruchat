@@ -31,7 +31,11 @@ impl ServerArgs {
     pub(crate) fn init(&self) -> Result<Ollama> {
         self.server
             .rsplit_once(':')
-            .and_then(|(host, port)| port.parse::<u16>().map(|p| Ollama::new(host, p)).ok())
+            .and_then(|(host, port)| {
+                port.parse::<u16>()
+                    .map(|p| Ollama::builder().host(host).port(p).build())
+                    .ok()
+            })
             .ok_or_else(|| RuChatError::ArgServerError(self.server.to_string()))
     }
     pub(crate) fn update_from_json(&mut self, json: &serde_json::Value) -> Result<()> {

@@ -178,26 +178,17 @@ impl AskArgs {
     /// This function connects to a model using the provided arguments,
     /// generates a response to the specified prompt, and outputs the response.
     ///
-    /// # Parameters
-    ///
-    /// - `end_marker`: The marker indicating the end of user or stdin input.
-    ///
     /// # Returns
     ///
     /// A `Result` indicating success or failure.
-    pub(crate) async fn ask(&self, end_marker: &str, cfg: &Value) -> Result<()> {
+    pub(crate) async fn ask(&self,cfg: &Value) -> Result<()> {
         let mut cio = Io::new();
         let prompt = match self.prompt.get_prompt() {
             Ok(p) => p,
             Err(RuChatError::NoPromptProvided) => {
                 let mut input = String::new();
-                if end_marker.is_empty() {
-                    // indicates user mode
-                    cio.write_line("Enter your question (empty line to finish):")
-                        .await?;
-                }
                 while let Ok(line) = cio.read_line().await {
-                    if line == end_marker {
+                    if line == "---" {
                         cio.write_error_line("End marker received, finishing input...")
                             .await?;
                         break;

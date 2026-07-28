@@ -11,7 +11,6 @@ use crate::chroma::search::SearchArgs;
 use crate::cli::config::ConfigArgs;
 use crate::core::embed::EmbedPromptArgs;
 use crate::ollama::ask::AskArgs;
-use crate::ollama::chat::ChatArgs;
 use crate::ollama::func::func;
 use crate::ollama::func::func_struct;
 use crate::ollama::OllamaArgs;
@@ -48,9 +47,7 @@ impl Args {
             println!("Command line: {}", command_line);
         }
         match self.command.unwrap_or(default) {
-            Commands::Ask(args) => args.ask("", &cfg).await,
-            Commands::Pipe(args) => args.ask("---", &cfg).await,
-            Commands::Chat(args) => args.chat(&cfg).await,
+            Commands::Pipe(args) => args.ask(&cfg).await,
             Commands::OllamaLs(args) => args.ls(&cfg).await,
             Commands::OllamaDelete(args) => args.delete_model(&cfg).await,
             Commands::OllamaPull(args) => args.pull(&cfg).await,
@@ -78,12 +75,8 @@ impl Args {
 /// operation or functionality.
 #[derive(Subcommand, Debug, Clone, PartialEq)]
 pub(crate) enum Commands {
-    /// Query language model using a prompt, you may include file context.
-    Ask(AskArgs),
     /// Pipe markdown to language model separated by three hyphens/dashes, asterisks, or underscores.
     Pipe(AskArgs),
-    /// Chat with a language model.
-    Chat(ChatArgs),
     /// List models.
     OllamaLs(ServerArgs),
     /// Remove a model.
