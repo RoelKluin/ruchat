@@ -11,6 +11,7 @@ use chroma_types::plan::ReadLevel;
 use clap::{Parser, ValueEnum};
 use log::warn;
 use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
+use serde_json::Value;
 
 #[derive(ValueEnum, Clone, Debug, PartialEq)]
 enum RetrieveMode {
@@ -73,10 +74,10 @@ pub(crate) struct RetrieveArgs {
 }
 
 impl RetrieveArgs {
-    pub(crate) async fn retrieve(&self) -> Result<()> {
+    pub(crate) async fn retrieve(&self, cfg: &Value) -> Result<()> {
         let client = self
             .client
-            .create_client()
+            .create_client(cfg)
             .await
             .map_err(RuChatError::AnyhowError)?;
         let collection = self.collection.get_collection(&client, "default").await?;
@@ -93,7 +94,7 @@ impl RetrieveArgs {
 
         match mode {
             RetrieveMode::Get => self.execute_get(&collection).await,
-            RetrieveMode::Query => self.execute_query(&collection).await,
+            RetrieveMode::Query => self.execute_query(&collection, cfg).await,
             RetrieveMode::Search => self.execute_search(&collection).await,
         }
     }
@@ -152,12 +153,12 @@ impl RetrieveArgs {
         Ok(())
     }
 
-    async fn execute_query(&self, collection: &ChromaCollection) -> Result<()> {
+    async fn execute_query(&self, collection: &ChromaCollection, cfg: &Value) -> Result<()> {
         let query_text = self.query_text.as_ref().ok_or_else(|| {
             RuChatError::InternalError("No --query-text provided in query mode".into())
         })?;
 
-        let (ollama, models) = self.ollama.init("all-minilm:l6-v2").await?;
+        let (ollama, models) = self.ollama.init("all-minilm:l6-v2", cfg).await?;
         let model = models
             .last()
             .ok_or(RuChatError::ModelNotFound("all-minilm:l6-v2".into()))?;

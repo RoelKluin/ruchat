@@ -3,12 +3,12 @@ pub(crate) mod chat;
 pub(crate) mod func;
 mod model;
 pub(super) mod server;
-use crate::cli::config::ConfigArgs;
 use crate::Result;
 use clap::Parser;
 use ollama_rs::generation::completion::request::GenerationRequest;
 use ollama_rs::Ollama;
 use serde::Deserialize;
+use serde_json::Value;
 
 pub(crate) use model::{get_dynamic_history_limit, ModelArgs};
 pub(crate) use server::ServerArgs;
@@ -20,17 +20,11 @@ pub(crate) struct OllamaArgs {
 
     #[command(flatten)]
     model: ModelArgs,
-
-    #[command(flatten)]
-    config: ConfigArgs,
 }
 
 impl OllamaArgs {
     /// see [ServerArgs::init]
-    pub(crate) async fn init(&self, default: &str) -> Result<(Ollama, Vec<String>)> {
-        let mut cfg = self.config.load().await?;
-        self.config.merge_into(cfg.clone(), &mut cfg); // ensure profile applied
-
+    pub(crate) async fn init(&self, default: &str, cfg: &Value) -> Result<(Ollama, Vec<String>)> {
         // Apply config to server and model (existing update_from_json)
         if let Some(s) = cfg.get("ollama").or_else(|| cfg.get("server")) {
             let mut server = self.server.clone();
@@ -53,8 +47,8 @@ impl OllamaArgs {
     /// # Returns
     ///
     /// A `Result` indicating success or failure.
-    pub(crate) async fn delete_model(&self) -> Result<()> {
-        let (ollama, models) = self.init("").await?;
+    pub(crate) async fn delete_model(&self, cfg: &Value) -> Result<()> {
+        let (ollama, models) = self.init("", cfg).await?;
         ollama.delete_model(models[0].clone()).await?;
         Ok(())
     }
@@ -66,8 +60,8 @@ impl OllamaArgs {
     /// # Returns
     ///
     /// A `Result` indicating success or failure.
-    pub(crate) async fn pull(&self) -> Result<()> {
-        let (ollama, models) = self.init("").await?;
+    pub(crate) async fn pull(&self, cfg: &Value) -> Result<()> {
+        let (ollama, models) = self.init("", cfg).await?;
         ollama.pull_model(models[0].clone(), false).await?;
         Ok(())
     }

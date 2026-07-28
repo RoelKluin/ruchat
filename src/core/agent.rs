@@ -25,7 +25,7 @@ use types::Context;
 
 pub(crate) struct Agent {
     options: ModelOptions,
-    config: HashMap<String, Value>,
+    agent_config: HashMap<String, Value>,
     pub(super) embed_args: Option<EmbedArgs>,
 }
 
@@ -43,22 +43,22 @@ impl Agent {
             } else {
                 agent_val.to_string()
             };
-            let (options, mut config) = get_options(&options_str).await?;
-            config.insert("role".to_string(), Value::String(role.to_string()));
+            let (options, mut agent_config) = get_options(&options_str).await?;
+            agent_config.insert("role".to_string(), Value::String(role.to_string()));
             if let Some(task) = task_type {
-                config.insert(
+                agent_config.insert(
                     "task_hint".to_string(),
                     serde_json::Value::String(task.to_string()),
                 );
             }
 
-            let embed_args = config
+            let embed_args = agent_config
                 .remove("embed_args")
                 .and_then(|v| serde_json::from_value(v).ok());
 
             Ok(Self {
                 options,
-                config,
+                agent_config,
                 embed_args,
             })
         } else if required {
@@ -68,7 +68,7 @@ impl Agent {
         }
     }
     pub(crate) fn remove_str(&mut self, key: &str) -> Result<String> {
-        let v = self.config.remove(key).ok_or(RuChatError::Is(format!(
+        let v = self.agent_config.remove(key).ok_or(RuChatError::Is(format!(
             "No {key} to remove in agent config"
         )))?;
         if v.is_string() {
@@ -78,19 +78,19 @@ impl Agent {
         } else {
             Err(RuChatError::Is(format!(
                 "Value for {key} is not a string in agent config {:?})",
-                self.config
+                self.agent_config
             )))
         }
     }
 
     pub(crate) fn get_str(&self, key: &str) -> Result<&str> {
-        self.config
+        self.agent_config
             .get(key)
             .ok_or(RuChatError::Is(format!("No {key} in agent config")))?
             .as_str()
             .ok_or(RuChatError::Is(format!(
                 "Value for {key} is not a string in agent config {:?})",
-                self.config
+                self.agent_config
             )))
     }
     pub(crate) async fn retrieve_and_generate(
@@ -106,7 +106,7 @@ impl Agent {
         get_dynamic_history_limit(self.get_str("model").unwrap_or(""))
     }
 
-    async fn parse_tool_call(&self, ctx: &mut Context) -> Result<()> {
+    async fn parse_tool_call(&self, ctx: &mut Context, cfg: &Value) -> Result<()> {
         if let Some(tool_call) = ToolCall::parse(&ctx.output)
             && tool_call.name.as_str() == "MEMORIZE"
         {
@@ -115,6 +115,7 @@ impl Agent {
                 UpsertMode::Upsert,
                 ctx,
                 "Information successfully committed to long-term memory.",
+                cfg
             )
             .await?;
         }
@@ -126,11 +127,12 @@ impl Agent {
         mode: UpsertMode,
         ctx: &mut Context,
         msg: &str,
+        cfg: &Value,
     ) -> Result<()> {
         if let Some(args) = self.embed_args.as_ref() {
-            args.embed(prompt, mode).await
+            args.embed(prompt, mode, cfg).await
         } else {
-            EmbedArgs::default().embed(prompt, mode).await
+            EmbedArgs::default().embed(prompt, mode, cfg).await
         }
         .map(|()| ctx.history.push_str(&format!("\n### SYSTEM: {msg}")))
     }
@@ -140,6 +142,7 @@ impl Agent {
         ollama: &Ollama,
         ctx: &mut Context,
         tx: &mpsc::Sender<Result<Vec<GenerationResponse>>>,
+        cfg: &Value,
     ) -> Result<()> {
         let role = self.get_str("role")?.to_lowercase();
         let role = Role::from_str(role.as_str())?;
@@ -194,11 +197,11 @@ impl Agent {
         tx.send(Err(RuChatError::ColorChange(Role::no_color())))
             .await
             .map_err(|e| RuChatError::Is(e.to_string()))?;
-        self.parse_tool_call(ctx).await?;
+        self.parse_tool_call(ctx, cfg).await?;
         role.update_context(ctx, self.get_str("approval_signal").unwrap_or("APPROVED"));
         Ok(())
     }
-    pub(super) async fn execute_and_verify(&self, ctx: &mut Context) -> Result<Validation> {
+    pub(super) async fn execute_and_verify(&self, ctx: &mut Context, cfg: &Value) -> Result<Validation> {
         let tool_call = match ToolCall::parse(&ctx.output) {
             Some(call) => call,
             None => return Ok(Validation::Skip),
@@ -212,6 +215,7 @@ impl Agent {
                     UpsertMode::Upsert,
                     ctx,
                     "Information successfully memorized.",
+                    cfg
                 )
                 .await
                 .map_or_else(

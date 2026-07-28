@@ -3,6 +3,7 @@ use crate::{Result, RuChatError};
 use chroma_types::Metadata;
 use clap::Parser;
 use log::info;
+use serde_json::Value;
 
 /// Command-line arguments for modifying a Chroma collection.
 ///
@@ -26,10 +27,10 @@ pub(crate) struct ModifyArgs {
 }
 
 impl ModifyArgs {
-    pub(crate) async fn modify(&self) -> Result<()> {
+    pub(crate) async fn modify(&self, cfg: &Value) -> Result<()> {
         let client = self
             .client
-            .create_client()
+            .create_client(cfg)
             .await
             .map_err(RuChatError::AnyhowError)?;
 

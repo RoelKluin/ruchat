@@ -2,6 +2,7 @@ use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs};
 use crate::{Result, RuChatError};
 use clap::Parser;
 use log::info;
+use serde_json::Value;
 
 /// Command-line arguments for forking a Chroma collection.
 ///
@@ -20,10 +21,10 @@ pub(crate) struct ForkArgs {
 }
 
 impl ForkArgs {
-    pub(crate) async fn fork(&self) -> Result<()> {
+    pub(crate) async fn fork(&self, cfg: &Value) -> Result<()> {
         let client = self
             .client
-            .create_client()
+            .create_client(cfg)
             .await
             .map_err(RuChatError::AnyhowError)?;
 

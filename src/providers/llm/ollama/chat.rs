@@ -2,7 +2,6 @@ mod bufcursor;
 mod event_result;
 mod history;
 mod pos;
-use crate::cli::config::ConfigArgs;
 use crate::core::chat::tree::ConversationTree;
 use crate::ollama::chat::event_result::EventResult;
 use crate::ollama::OllamaArgs;
@@ -16,6 +15,7 @@ use crossterm::{
     ExecutableCommand,
 };
 use ollama_rs::generation::chat::{request::ChatMessageRequest, ChatMessage};
+use serde_json::Value;
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 use tokio::task;
@@ -34,9 +34,6 @@ pub(crate) struct ChatArgs {
 
     #[command(flatten)]
     ollama: OllamaArgs,
-
-    #[command(flatten)]
-    config: ConfigArgs,
 }
 
 impl ChatArgs {
@@ -49,13 +46,10 @@ impl ChatArgs {
     /// # Returns
     ///
     /// A `Result` indicating success or failure.
-    pub(crate) async fn chat(&self) -> Result<()> {
-        let mut cfg = self.config.load().await?;
-        self.config.merge_into(cfg.clone(), &mut cfg);
-
+    pub(crate) async fn chat(&self, cfg: &Value) -> Result<()> {
         // Enter raw mode and alternate screen
         terminal::enable_raw_mode()?;
-        match self.chat_raw_mode().await {
+        match self.chat_raw_mode(cfg).await {
             Ok(_) => {}
             Err(e) => {
                 terminal::disable_raw_mode()?;
@@ -100,12 +94,12 @@ impl ChatArgs {
     /// # Returns
     ///
     /// A `Result` indicating success or failure.
-    async fn chat_raw_mode(&self) -> Result<()> {
+    async fn chat_raw_mode(&self, cfg: &Value) -> Result<()> {
         let chat_history = Arc::new(Mutex::new(ConversationTree::new()));
 
         //let running = Arc::new(Mutex::new(true))
         let mut stdout = io::stdout();
-        let (ollama, models) = self.ollama.init("").await?;
+        let (ollama, models) = self.ollama.init("", cfg).await?;
         let model = models[0].clone();
         let mut bufcursor = BufCursor::new()?;
         let debug_level = self.debug;

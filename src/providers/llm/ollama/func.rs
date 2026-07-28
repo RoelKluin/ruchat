@@ -1,7 +1,7 @@
 mod strukt;
-use crate::Result;
 use crate::io::Io;
 use crate::ollama::OllamaArgs;
+use crate::Result;
 use ollama_rs::models::ModelOptions;
 use ollama_rs::{
     coordinator::Coordinator,
@@ -17,6 +17,7 @@ use ollama_rs::{
         },
     },
 };
+use serde_json::Value;
 pub(crate) use strukt::func_struct;
 
 /// Subcommand to run a function using a model.
@@ -33,9 +34,9 @@ pub(crate) use strukt::func_struct;
 /// # Returns
 ///
 /// A `Result` indicating success or failure.
-pub(crate) async fn func(args: OllamaArgs) -> Result<()> {
+pub(crate) async fn func(args: OllamaArgs, cfg: &Value) -> Result<()> {
     let history = vec![];
-    let (ollama, model) = args.init("").await?;
+    let (ollama, model) = args.init("", cfg).await?;
     let mut coordinator = Coordinator::new(ollama, model[0].clone(), history)
         .options(ModelOptions::default().num_ctx(16384))
         .add_tool(Calculator {})

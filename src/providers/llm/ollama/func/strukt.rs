@@ -1,6 +1,6 @@
-use crate::Result;
 use crate::io::Io;
 use crate::ollama::OllamaArgs;
+use crate::Result;
 use ollama_rs::models::ModelOptions;
 use ollama_rs::{
     coordinator::Coordinator,
@@ -10,6 +10,7 @@ use ollama_rs::{
     },
 };
 use serde::Deserialize;
+use serde_json::Value;
 use std::path::PathBuf;
 
 /// Get the weather for a given city.
@@ -71,10 +72,10 @@ async fn get_available_space(
 /// # Returns
 ///
 /// A `Result` indicating success or failure.
-pub(crate) async fn func_struct(args: OllamaArgs) -> Result<()> {
+pub(crate) async fn func_struct(args: OllamaArgs, cfg: &Value) -> Result<()> {
     // browserless requires an BROWSERLESS_TOKEN=... environment variable
     let history = vec![];
-    let (ollama, model) = args.init("").await?;
+    let (ollama, model) = args.init("", cfg).await?;
 
     let format = FormatType::StructuredJson(Box::new(JsonStructure::new::<Weather>()));
 

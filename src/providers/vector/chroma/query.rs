@@ -7,8 +7,8 @@ use crate::{Result, RuChatError};
 use chroma::ChromaHttpClient;
 use clap::Parser;
 use log::warn;
-use ollama_rs::Ollama;
 use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
+use ollama_rs::Ollama;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -138,10 +138,10 @@ impl TryFrom<String> for QueryArgs {
 }
 
 impl QueryArgs {
-    pub(crate) async fn query(&self) -> Result<()> {
-        let client = self.client.create_client().await?;
+    pub(crate) async fn query(&self, cfg: &Value) -> Result<()> {
+        let client = self.client.create_client(cfg).await?;
 
-        let (ollama, models) = self.ollama.init("all-minilm:l6-v2").await?;
+        let (ollama, models) = self.ollama.init("all-minilm:l6-v2", cfg).await?;
         let model = models
             .last()
             .ok_or(RuChatError::ModelNotFound("all-minilm:l6-v2".to_string()))?;

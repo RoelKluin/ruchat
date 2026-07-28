@@ -2,6 +2,7 @@ use crate::{Result, RuChatError};
 use clap::Parser;
 use ollama_rs::Ollama;
 use serde::Deserialize;
+use serde_json::Value;
 
 #[derive(Parser, Debug, Default, PartialEq, Clone, Deserialize)]
 pub(crate) struct ServerArgs {
@@ -53,7 +54,7 @@ impl ServerArgs {
     /// # Returns
     ///
     /// A `Result` indicating success or failure.
-    pub(crate) async fn ls(&self) -> Result<()> {
+    pub(crate) async fn ls(&self, _cfg: &Value) -> Result<()> {
         let ollama = self.init()?;
         let models: Vec<_> = ollama.list_local_models().await?;
         let max_length = models.iter().map(|m| m.name.len()).max().unwrap_or(0);

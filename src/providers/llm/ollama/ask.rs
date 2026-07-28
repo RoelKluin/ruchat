@@ -1,6 +1,5 @@
 use crate::cli::prompt::PromptArgs;
 use crate::io::Io;
-use crate::cli::config::ConfigArgs;
 use crate::ollama::OllamaArgs;
 use crate::orchestrator::Orchestrator;
 use crate::{Result, RuChatError};
@@ -11,6 +10,7 @@ use ollama_rs::{Ollama, generation::completion::request::GenerationRequest, mode
 use std::pin::Pin;
 use tokio_stream::Stream;
 use tokio_stream::StreamExt;
+use serde_json::Value;
 
 type LlamaStream = Pin<Box<dyn Stream<Item = Result<Vec<GenerationResponse>>> + Send>>;
 
@@ -66,9 +66,6 @@ pub(crate) struct AskArgs {
 
     #[command(flatten)]
     ollama: OllamaArgs,
-
-    #[command(flatten)]
-    pub config: ConfigArgs,
 }
 
 // Reusable generation logic for Agents
@@ -188,10 +185,7 @@ impl AskArgs {
     /// # Returns
     ///
     /// A `Result` indicating success or failure.
-    pub(crate) async fn ask(&self, end_marker: &str) -> Result<()> {
-        let mut cfg = self.config.load().await?;
-        self.config.merge_into(cfg.clone(), &mut cfg);
-
+    pub(crate) async fn ask(&self, end_marker: &str, cfg: &Value) -> Result<()> {
         let mut cio = Io::new();
         let prompt = match self.prompt.get_prompt() {
             Ok(p) => p,
@@ -215,7 +209,7 @@ impl AskArgs {
             Err(e) => return Err(e),
         };
 
-        let (ollama, model) = self.ollama.init("").await?;
+        let (ollama, model) = self.ollama.init("", cfg).await?;
         let model_name = model
             .first()
             .cloned()
@@ -225,8 +219,8 @@ impl AskArgs {
 
         let mut stream: LlamaStream =
             if config.get("Architect").is_some() || config.get("Worker").is_some() {
-                let orchestrator = Orchestrator::new(config, ollama).await?;
-                Box::pin(orchestrator.run_task_stream(prompt, self.debug_sequence.clone()))
+                let orchestrator = Orchestrator::new(config, ollama, cfg).await?;
+                Box::pin(orchestrator.run_task_stream(prompt, self.debug_sequence.clone(), cfg.clone()))
             } else {
                 // ... existing single-shot logic ...
                 let request = self
@@ -323,13 +317,14 @@ mod tests {
                     "task": "Summarize the following history of changes and feedback into a dense technical state"
                 }
             }).to_string());
+        let cfg = json!({});
         let args = AskArgs {
             agentic,
             prompt: PromptArgs::default(),
             ollama: OllamaArgs::default(),
             ..Default::default()
         };
-        assert!(args.ask("").await.is_ok());
+        assert!(args.ask("", &cfg).await.is_ok());
         assert!(args.agentic.is_some());
     }
 }

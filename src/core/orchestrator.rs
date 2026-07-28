@@ -29,28 +29,28 @@ pub(crate) struct Orchestrator {
     critics: Vec<Agent>,
     summarizer: Option<Agent>,
     validator: Option<Agent>,
-    config: Value,
+    orchestrator_config: Value,
     ollama: Ollama,
     client: Option<ChromaHttpClient>,
 }
 
 impl Orchestrator {
-    pub(crate) async fn new(mut config: Value, ollama: Ollama) -> Result<Self> {
-        let task_type = TaskType::deserialize(&config).ok();
+    pub(crate) async fn new(mut orchestrator_config: Value, ollama: Ollama, cfg: &Value) -> Result<Self> {
+        let task_type = TaskType::deserialize(&orchestrator_config).ok();
         let task_type = task_type.as_ref();
         // 1. Extract Core Agents
-        let architect = Agent::new(&mut config, "Architect", true, task_type).await?;
-        let worker = Agent::new(&mut config, "Worker", true, task_type).await?;
+        let architect = Agent::new(&mut orchestrator_config, "Architect", true, task_type).await?;
+        let worker = Agent::new(&mut orchestrator_config, "Worker", true, task_type).await?;
 
-        let validator = Agent::new(&mut config, "Validator", false, task_type)
+        let validator = Agent::new(&mut orchestrator_config, "Validator", false, task_type)
             .await
             .ok();
-        let summarizer = Agent::new(&mut config, "Summarizer", false, None)
+        let summarizer = Agent::new(&mut orchestrator_config, "Summarizer", false, None)
             .await
             .ok();
 
         let mut critics = Vec::new();
-        if let Some(critic_list) = config.get("Critics").and_then(|v| v.as_array()) {
+        if let Some(critic_list) = orchestrator_config.get("Critics").and_then(|v| v.as_array()) {
             for (i, c_val) in critic_list.iter().enumerate() {
                 // We pass a copy of the specific critic's config
                 let mut c_config = c_val.clone();
@@ -64,7 +64,7 @@ impl Orchestrator {
 
         let mut librarian = None;
         let mut client = None;
-        if let Ok(mut lib) = Agent::new(&mut config, "Librarian", false, None).await {
+        if let Ok(mut lib) = Agent::new(&mut orchestrator_config, "Librarian", false, None).await {
             let mut client_config = ChromaClientConfigArgs::default();
             lib.remove_str("chroma_client").and_then(|s| {
                 let val = s.parse::<serde_json::Value>()?;
@@ -76,7 +76,7 @@ impl Orchestrator {
             })?;
             client = Some(
                 client_config
-                    .create_client().await
+                    .create_client(cfg).await
                     .map_err(RuChatError::AnyhowError)?,
             );
 
@@ -92,7 +92,7 @@ impl Orchestrator {
             summarizer,
             critics,
             librarian,
-            config,
+            orchestrator_config,
             ollama,
             client,
         })
@@ -102,13 +102,14 @@ impl Orchestrator {
         &mut self,
         goal: String,
         tx: mpsc::Sender<Result<Vec<GenerationResponse>>>,
+        cfg: &Value,
     ) -> Result<()> {
         let iterations = self
-            .config
+            .orchestrator_config
             .get("iterations")
             .and_then(|v| v.as_u64())
             .unwrap_or(3);
-        let history_limit = self.config.get("history_limit").and_then(|v| v.as_u64());
+        let history_limit = self.orchestrator_config.get("history_limit").and_then(|v| v.as_u64());
         let mut ctx = Context::new(goal);
         let ctx = &mut ctx;
         let ollama = &self.ollama;
@@ -122,7 +123,7 @@ impl Orchestrator {
         }
 
         for round in 1..=iterations {
-            self.architect.query_stream(ollama, ctx, &tx).await?;
+            self.architect.query_stream(ollama, ctx, &tx, cfg).await?;
 
             if round == 1
                 && let Some(librarian) = self.librarian.as_mut()
@@ -132,7 +133,7 @@ impl Orchestrator {
                 ))?;
 
                 // Ask the LLM to formulate the query
-                librarian.query_stream(ollama, ctx, &tx).await?;
+                librarian.query_stream(ollama, ctx, &tx, cfg).await?;
 
                 ctx.trace(
                     &tx,
@@ -172,16 +173,16 @@ impl Orchestrator {
             }
 
             // Worker now generates implementation (using documents/plan from Architect + Librarian RAG)
-            self.worker.query_stream(ollama, ctx, &tx).await?;
+            self.worker.query_stream(ollama, ctx, &tx, cfg).await?;
 
-            if let Validation::Failure(err) = self.worker.execute_and_verify(ctx).await? {
+            if let Validation::Failure(err) = self.worker.execute_and_verify(ctx, cfg).await? {
                 ctx.trace(&tx, format!("Round {round} failed verification: {err}"))
                     .await;
                 continue;
             }
 
             if let Some(validator) = self.validator.as_mut() {
-                validator.query_stream(ollama, ctx, &tx).await?;
+                validator.query_stream(ollama, ctx, &tx, cfg).await?;
 
                 // Auto-Rejection Logic
                 if ctx.output.contains("REJECTED") {
@@ -194,7 +195,7 @@ impl Orchestrator {
                 }
             }
             for critic in &mut self.critics {
-                critic.query_stream(ollama, ctx, &tx).await?;
+                critic.query_stream(ollama, ctx, &tx, cfg).await?;
             }
 
             if ctx.is_approved() {
@@ -205,7 +206,7 @@ impl Orchestrator {
                     && ctx.history.len() as u64
                         > history_limit.unwrap_or(summarizer.get_dynamic_history_limit())
                 {
-                    summarizer.query_stream(ollama, ctx, &tx).await?;
+                    summarizer.query_stream(ollama, ctx, &tx, cfg).await?;
                 }
                 ctx.history.push_str("\nREJECTIONS: ");
                 ctx.history.push_str(&ctx.rejections);
@@ -220,15 +221,16 @@ impl Orchestrator {
         mut self,
         goal: String,
         debug_sequence: Option<String>,
+        cfg: Value,
     ) -> impl Stream<Item = OrchestratorResult> {
         let (tx, rx) = mpsc::channel(100);
         tokio::spawn(async move {
             if let Some(path) = debug_sequence {
-                if let Err(e) = self.debug_orchestration(goal, path, tx.clone()).await {
+                if let Err(e) = self.debug_orchestration(goal, path, tx.clone(), &cfg).await {
                     let _ = tx.send(Err(e)).await;
                 }
             } else {
-                if let Err(e) = self.execute_orchestration(goal, tx.clone()).await {
+                if let Err(e) = self.execute_orchestration(goal, tx.clone(), &cfg).await {
                     let _ = tx.send(Err(e)).await;
                 }
             }
@@ -242,6 +244,7 @@ impl Orchestrator {
         goal: String,
         path: String,
         tx: mpsc::Sender<Result<Vec<GenerationResponse>>>,
+        cfg: &Value,
     ) -> Result<()> {
         let debug_json: Value = serde_json::from_str(&tokio::fs::read_to_string(path).await?)?;
         let sequence: Vec<String> = debug_json["sequence"]
@@ -283,7 +286,7 @@ impl Orchestrator {
                 }
                 _ => return Err(RuChatError::Is(format!("Unknown agent: {role}"))),
             };
-            agent.query_stream(&self.ollama, &mut ctx, &tx).await?;
+            agent.query_stream(&self.ollama, &mut ctx, &tx, cfg).await?;
             if role == "Librarian" {
                 let client = self.client.as_ref().ok_or(RuChatError::Is(
                     "Librarian provided without chroma client config".into(),

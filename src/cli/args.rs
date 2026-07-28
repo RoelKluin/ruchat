@@ -8,6 +8,7 @@ use crate::chroma::modify::ModifyArgs;
 use crate::chroma::query::QueryArgs;
 use crate::chroma::retrieve::RetrieveArgs;
 use crate::chroma::search::SearchArgs;
+use crate::cli::config::ConfigArgs;
 use crate::core::embed::EmbedPromptArgs;
 use crate::ollama::ask::AskArgs;
 use crate::ollama::chat::ChatArgs;
@@ -32,35 +33,40 @@ pub(crate) struct Args {
     /// Toggle verbose mode.
     #[arg(short, long, default_value = "false")]
     verbose: bool,
+
+    #[command(flatten)]
+    pub config: ConfigArgs,
 }
 
 impl Args {
     pub(crate) async fn handle_request(self) -> Result<()> {
+        let mut cfg = self.config.load().await?;
+        self.config.merge_into(cfg.clone(), &mut cfg);
         let default = Commands::Pipe(AskArgs::default());
         if self.verbose {
             let command_line = std::env::args().collect::<Vec<String>>().join(" ");
             println!("Command line: {}", command_line);
         }
         match self.command.unwrap_or(default) {
-            Commands::Ask(args) => args.ask("").await,
-            Commands::Pipe(args) => args.ask("---").await,
-            Commands::Chat(args) => args.chat().await,
-            Commands::OllamaLs(args) => args.ls().await,
-            Commands::OllamaDelete(args) => args.delete_model().await,
-            Commands::OllamaPull(args) => args.pull().await,
-            Commands::Func(args) => func(args).await,
-            Commands::FuncStruct(args) => func_struct(args).await,
-            Commands::Embed(args) => args.embed().await,
-            Commands::Retrieve(args) => args.retrieve().await,
-            Commands::ChromaQuery(args) => args.query().await,
-            Commands::ChromaGet(args) => args.get().await,
-            Commands::ChromaSearch(args) => args.search().await,
-            Commands::ChromaFork(args) => args.fork().await,
-            Commands::ChromaCreate(args) => args.create().await,
-            Commands::ChromaModify(args) => args.modify().await,
-            Commands::ChromaLs(args) => args.ls().await,
-            Commands::ChromaDelete(args) => args.delete().await,
-            Commands::Manager(args) => Manager::execute_command(args).await,
+            Commands::Ask(args) => args.ask("", &cfg).await,
+            Commands::Pipe(args) => args.ask("---", &cfg).await,
+            Commands::Chat(args) => args.chat(&cfg).await,
+            Commands::OllamaLs(args) => args.ls(&cfg).await,
+            Commands::OllamaDelete(args) => args.delete_model(&cfg).await,
+            Commands::OllamaPull(args) => args.pull(&cfg).await,
+            Commands::Func(args) => func(args, &cfg).await,
+            Commands::FuncStruct(args) => func_struct(args, &cfg).await,
+            Commands::Embed(args) => args.embed(&cfg).await,
+            Commands::Retrieve(args) => args.retrieve(&cfg).await,
+            Commands::ChromaQuery(args) => args.query(&cfg).await,
+            Commands::ChromaGet(args) => args.get(&cfg).await,
+            Commands::ChromaSearch(args) => args.search(&cfg).await,
+            Commands::ChromaFork(args) => args.fork(&cfg).await,
+            Commands::ChromaCreate(args) => args.create(&cfg).await,
+            Commands::ChromaModify(args) => args.modify(&cfg).await,
+            Commands::ChromaLs(args) => args.ls(&cfg).await,
+            Commands::ChromaDelete(args) => args.delete(&cfg).await,
+            Commands::Manager(args) => Manager::execute_command(args, &cfg).await,
         }
     }
 }

@@ -2,6 +2,7 @@ use crate::chroma::{ChromaClientConfigArgs, WhereArgs};
 use crate::{Result, RuChatError};
 use clap::Parser;
 use log::info;
+use serde_json::Value;
 
 #[derive(Parser, Debug, Clone, PartialEq)]
 pub(crate) struct ChromaDeleteArgs {
@@ -29,10 +30,10 @@ pub(crate) struct ChromaDeleteArgs {
 }
 
 impl ChromaDeleteArgs {
-    pub(crate) async fn delete(&self) -> Result<()> {
+    pub(crate) async fn delete(&self, cfg: &Value) -> Result<()> {
         let client = self
             .client_config
-            .create_client()
+            .create_client(cfg)
             .await
             .map_err(RuChatError::AnyhowError)?;
 

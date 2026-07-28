@@ -1,5 +1,4 @@
 use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs, UpdateMetadataArrayArgs};
-use crate::cli::config::ConfigArgs;
 use crate::ollama::OllamaArgs;
 use crate::{Result, RuChatError};
 use chroma::types::UpdateMetadataValue;
@@ -10,6 +9,7 @@ use log::info;
 use md5::{Digest, Md5};
 use ollama_rs::generation::embeddings::request::{EmbeddingsInput, GenerateEmbeddingsRequest};
 use serde::Deserialize;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::result::Result as StdResult;
 use uuid::Builder;
@@ -45,14 +45,14 @@ pub(crate) struct EmbedArgs {
 }
 
 impl EmbedArgs {
-    pub(crate) async fn embed(&self, prompt: &str, mode: UpsertMode) -> Result<()> {
-        let (ollama, models) = self.ollama_args.init("all-minilm:l6-v2").await?;
+    pub(crate) async fn embed(&self, prompt: &str, mode: UpsertMode, cfg: &Value) -> Result<()> {
+        let (ollama, models) = self.ollama_args.init("all-minilm:l6-v2", cfg).await?;
         let model = models
             .last()
             .ok_or_else(|| RuChatError::InternalError("No model found".into()))?
             .to_string();
 
-        let client = self.client_config.create_client().await?;
+        let client = self.client_config.create_client(cfg).await?;
         let collection = self
             .collection_config
             .get_collection(&client, "default")
@@ -246,15 +246,10 @@ pub(crate) struct EmbedPromptArgs {
 
     #[command(flatten)]
     args: EmbedArgs,
-
-    #[command(flatten)]
-    config_args: ConfigArgs,
 }
 
 impl EmbedPromptArgs {
-    pub(crate) async fn embed(&self) -> Result<()> {
-        let mut cfg = self.config_args.load().await?;
-        self.config_args.merge_into(cfg.clone(), &mut cfg);
-        self.args.embed(self.prompt.as_str(), self.mode).await
+    pub(crate) async fn embed(&self, cfg: &Value) -> Result<()> {
+        self.args.embed(self.prompt.as_str(), self.mode, cfg).await
     }
 }

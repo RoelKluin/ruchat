@@ -3,6 +3,7 @@ use crate::{Result, RuChatError};
 use chroma::types::IndexStatusResponse;
 use clap::Parser;
 use serde::Serialize;
+use serde_json::Value;
 
 /// Formatting helper to group collection data for JSON output
 #[derive(Serialize)]
@@ -40,10 +41,10 @@ pub(crate) struct ChromaLsArgs {
 }
 
 impl ChromaLsArgs {
-    pub(crate) async fn ls(&self) -> Result<()> {
+    pub(crate) async fn ls(&self, cfg: &Value) -> Result<()> {
         let client = self
             .client
-            .create_client()
+            .create_client(cfg)
             .await
             .map_err(RuChatError::AnyhowError)?;
 

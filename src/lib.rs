@@ -35,14 +35,14 @@ pub async fn run() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::args::Commands;
-    use crate::ollama::ModelArgs;
-    use crate::ollama::OllamaArgs;
-    use crate::ollama::ServerArgs;
-    use crate::ollama::ask::AskArgs;
-    use args::Args;
-    use cli::prompt::PromptArgs;
+    
+    
+    
+    
+    
+    
+    
+    
 
     /* TODO: meka new functions for testing
 

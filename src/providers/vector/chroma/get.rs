@@ -4,6 +4,7 @@ use crate::chroma::{
 };
 use crate::{Result, RuChatError};
 use clap::Parser;
+use serde_json::Value;
 
 /// Command-line arguments for geting a Chroma database.
 ///
@@ -41,10 +42,10 @@ pub(crate) struct GetArgs {
 }
 
 impl GetArgs {
-    pub(crate) async fn get(&self) -> Result<()> {
+    pub(crate) async fn get(&self, cfg: &Value) -> Result<()> {
         let client = self
             .client
-            .create_client()
+            .create_client(cfg)
             .await
             .map_err(RuChatError::AnyhowError)?;
         let collection = self.collection.get_collection(&client, "default").await?;

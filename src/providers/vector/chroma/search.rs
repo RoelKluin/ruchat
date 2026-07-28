@@ -6,6 +6,7 @@ use chroma::types::SearchPayload;
 use chroma::types::{Key, QueryVector, RankExpr};
 use chroma_types::plan::ReadLevel;
 use clap::Parser;
+use serde_json::Value;
 
 /// Command-line arguments for searching a Chroma collection.
 #[derive(Parser, Debug, Clone, PartialEq)]
@@ -38,10 +39,10 @@ pub(crate) struct SearchArgs {
 }
 
 impl SearchArgs {
-    pub(crate) async fn search(&self) -> Result<()> {
+    pub(crate) async fn search(&self, cfg: &Value) -> Result<()> {
         let client = self
             .client
-            .create_client()
+            .create_client(cfg)
             .await
             .map_err(RuChatError::AnyhowError)?;
         let collection = self.collection.get_collection(&client, "default").await?;

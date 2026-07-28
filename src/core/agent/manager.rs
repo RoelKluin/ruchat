@@ -1,11 +1,12 @@
-use crate::agent::Team;
 use crate::agent::worker::Agent;
+use crate::agent::Team;
 use crate::ollama::ServerArgs;
 use crate::serde::{load_manager, save_manager}; // We will add these
 use crate::{Result, RuChatError};
 use clap::{Parser, Subcommand};
 use ollama_rs::Ollama;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Parser, Debug, Clone, PartialEq)]
 pub(crate) struct ManagerArgs {
@@ -56,7 +57,7 @@ impl Manager {
             .ok_or(RuChatError::ActiveTeamIndexOutOfBounds)
     }
 
-    pub async fn execute_command(args: ManagerArgs) -> Result<()> {
+    pub async fn execute_command(args: ManagerArgs, _cfg: &Value) -> Result<()> {
         let ollama = args.server_args.init()?;
         let config_path = args
             .path

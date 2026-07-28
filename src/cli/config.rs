@@ -9,7 +9,7 @@ use tokio::fs;
 #[derive(Parser, Debug, Clone, Default, PartialEq, Deserialize)]
 pub(crate) struct ConfigArgs {
     /// Path to config file (JSON). Defaults to ~/.config/ruchat/config.json or ./ruchat.json
-    #[arg(long, env = "RUCHAT_CONFIG", help_heading = "Configuration")]
+    #[arg(long, env = "RUCHAT_CONFIG", help_heading = "Configuration", global=true)]
     config: Option<PathBuf>,
 
     /// Profile name inside config (default: "default")
@@ -17,7 +17,8 @@ pub(crate) struct ConfigArgs {
         long,
         env = "RUCHAT_PROFILE",
         default_value_t = String::from("default"),
-        help_heading = "Configuration"
+        help_heading = "Configuration",
+        global = true
     )]
     profile: String,
 }

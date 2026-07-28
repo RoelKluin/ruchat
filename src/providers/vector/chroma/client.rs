@@ -1,4 +1,3 @@
-use crate::cli::config::ConfigArgs;
 use anyhow::Result;
 use chroma::client::{ChromaAuthMethod, ChromaHttpClientOptions, ChromaRetryOptions};
 use chroma::ChromaHttpClient;
@@ -82,9 +81,6 @@ pub(crate) struct ChromaClientConfigArgs {
         help_heading = "Chroma Connection"
     )]
     pub chroma_database: Option<String>,
-
-    #[command(flatten)]
-    pub config: ConfigArgs,
 }
 
 impl ChromaClientConfigArgs {
@@ -97,10 +93,7 @@ impl ChromaClientConfigArgs {
     /// # Returns
     ///
     /// A `Result` containing the `ChromaClient` or an error.
-    pub(crate) async fn create_client(&self) -> Result<ChromaHttpClient> {
-        let mut cfg = self.config.load().await?;
-        self.config.merge_into(cfg.clone(), &mut cfg);
-
+    pub(crate) async fn create_client(&self, cfg: &Value) -> Result<ChromaHttpClient> {
         // Apply config values (lowest priority)
         let mut args = self.clone();
         if let Some(v) = cfg.get("chroma") {
@@ -171,7 +164,6 @@ impl Default for ChromaClientConfigArgs {
             jitter: true,
             tenant_id: Some("default_tenant".to_string()),
             chroma_database: Some("default".to_string()),
-            config: ConfigArgs::default(),
         }
     }
 }

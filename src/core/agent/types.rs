@@ -10,7 +10,7 @@ pub(crate) struct Context {
     pub(crate) context: String,
     pub(crate) rejections: String,
     pub(crate) documents: String,
-    pub(crate) config: Value,
+    pub(crate) context_config: Value,
 }
 
 impl Context {
@@ -22,12 +22,12 @@ impl Context {
             context: String::new(),
             rejections: String::new(),
             documents: String::new(),
-            config: Value::Null,
+            context_config: Value::Null,
         }
     }
     pub(crate) fn read_config_file(&mut self, path: &str) -> Result<()> {
         let config_str = std::fs::read_to_string(path)?;
-        self.config = serde_json::from_str(&config_str)?;
+        self.context_config = serde_json::from_str(&config_str)?;
         Ok(())
     }
     pub(crate) fn is_approved(&self) -> bool {
@@ -51,7 +51,11 @@ impl Context {
     pub(crate) fn build_collections_summary(&self) -> String {
         let mut summary = String::from("AVAILABLE COLLECTIONS (loaded from config):\n");
 
-        if let Some(collections) = self.config.get("collections").and_then(|v| v.as_array()) {
+        if let Some(collections) = self
+            .context_config
+            .get("collections")
+            .and_then(|v| v.as_array())
+        {
             for coll in collections {
                 let name = coll["name"].as_str().unwrap_or("unknown");
                 let desc = coll["description"].as_str().unwrap_or("");
@@ -88,7 +92,7 @@ impl Context {
 
         // Global settings
         if let Some(includes) = self
-            .config
+            .context_config
             .get("allowed_include_fields")
             .and_then(|v| v.as_array())
         {
@@ -96,7 +100,7 @@ impl Context {
             summary.push_str(&format!(
                 "GLOBAL OPTIONS:\n- Allowed \"include\" fields (any combination): {}\n- Default n_results: {}\n",
                 inc_list.join(", "),
-                self.config.get("default_n_results").and_then(|v| v.as_u64()).unwrap_or(5)
+                self.context_config.get("default_n_results").and_then(|v| v.as_u64()).unwrap_or(5)
             ));
         }
 
