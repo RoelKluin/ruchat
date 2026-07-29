@@ -201,8 +201,9 @@ impl Orchestrator {
                 commit_feature_branch(ctx).await?;
                 break;
             } else {
+                const CHARS_PER_TOKEN: u64 = 4; // roughly, for english text.
                 if let Some(summarizer) = self.summarizer.as_mut()
-                    && ctx.history.len() as u64
+                    && (ctx.history.len() as u64 / CHARS_PER_TOKEN)
                         > history_limit.unwrap_or(summarizer.get_dynamic_history_limit())
                 {
                     summarizer.query_stream(ollama, ctx, &tx).await?;
