@@ -54,12 +54,10 @@ pub(crate) async fn func(args: OllamaArgs, cfg: &Value) -> Result<()> {
         if input.eq_ignore_ascii_case("q") {
             break;
         }
-
-        let response = coordinator
-            .chat(vec![ChatMessage::user(input)])
-            .await
-            .unwrap();
-        cio.write_line(&response.message.content).await?;
+        match coordinator.chat(vec![ChatMessage::user(input)]).await {
+            Ok(response) => cio.write_line(&response.message.content).await?,
+            Err(e) => cio.write_error_line(&format!("Chat error: {e}")).await?,
+        }
     }
     Ok(())
 }
