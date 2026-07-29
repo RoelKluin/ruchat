@@ -817,4 +817,16 @@ mod tests {
         let where_clause = parse_where(input);
         assert!(where_clause.is_err());
     }
+    #[test]
+    fn test_tokenize_negative_number() {
+        let tokens = tokenize("count > -5").unwrap();
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Identifier("count".to_string()),
+                Token::Operator(">".to_string()),
+                Token::Literal("-5".to_string()),
+            ]
+        );
+    }
 }
