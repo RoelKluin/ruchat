@@ -124,9 +124,9 @@ mod tests {
 
     #[test]
     fn test_subcommand_parsing() {
-        let args = Args::parse_from(&["test", "ask"]);
+        let args = Args::parse_from(&["test", "pipe"]);
         match args.command {
-            Some(Commands::Ask(_)) => assert!(true),
+            Some(Commands::Pipe(_)) => assert!(true),
             _ => assert!(false, "Expected Ask subcommand"),
         }
     }

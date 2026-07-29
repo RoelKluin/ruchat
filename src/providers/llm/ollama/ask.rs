@@ -315,7 +315,7 @@ mod tests {
             ollama: OllamaArgs::default(),
             ..Default::default()
         };
-        assert!(args.ask("", &cfg).await.is_ok());
+        assert!(args.ask(&cfg).await.is_ok());
         assert!(args.agentic.is_some());
     }
 }
