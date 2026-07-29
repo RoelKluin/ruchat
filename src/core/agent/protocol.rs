@@ -1,8 +1,9 @@
 use super::types::Context;
 use crate::Result;
 use regex::Regex;
-use std::process::Command;
 use std::sync::OnceLock;
+use std::time::Duration;
+use tokio::process::Command;
 
 pub(crate) enum Tool {
     Memorize { content: String },
@@ -18,7 +19,9 @@ impl ToolCall {
         static REGEX: OnceLock<Regex> = OnceLock::new();
         // Simple string parsing to detect TOOL CALLS in the format: ### TOOL CALL: TOOL_NAME\nCONTENT\n### END TOOL CALL
         REGEX
-            .get_or_init(|| Regex::new(r"### TOOL CALL: (\w+)\n(.*?)\n### END TOOL CALL").unwrap())
+            .get_or_init(|| {
+                Regex::new(r"(?s)### TOOL CALL: (\w+)\n(.*?)\n### END TOOL CALL").unwrap()
+            })
             .captures(output)
             .and_then(|caps| {
                 Some(Self {
@@ -47,9 +50,31 @@ pub(crate) enum Validation {
 }
 
 impl Validation {
-    pub(crate) async fn execute_shell_script(script: &str, ctx: &mut Context) -> Result<Self> {
+    pub(crate) async fn execute_shell_script(
+        script: &str,
+        ctx: &mut Context,
+        allow_shell: bool,
+    ) -> Result<Self> {
+        if !allow_shell {
+            ctx.rejections
+                .push_str("\nShell execution is disabled (pass --allow-shell to enable).");
+            return Ok(Validation::Skip);
+        }
         // Logic to run sed and awk script and capture output
-        match Command::new("bash").arg("-c").arg(script).output() {
+        let run = tokio::time::timeout(
+            Duration::from_secs(30),
+            Command::new("bash").arg("-c").arg(script).output(),
+        )
+        .await;
+        let output = match run {
+            Ok(inner) => inner,
+            Err(_) => {
+                ctx.rejections
+                    .push_str("\nShell Error: command timed out after 30s");
+                return Ok(Validation::Failure("timeout".into()));
+            }
+        };
+        match output {
             Ok(output) if output.status.success() => {
                 if script.contains(".rs") {
                     let check_res = Self::run_cargo_check().await?;
@@ -76,16 +101,36 @@ impl Validation {
         }
     }
     pub(crate) async fn run_cargo_check() -> Result<Self> {
-        let output = Command::new("cargo")
-            .args(["check"])
-            .output()
-            .expect("failed to execute cargo check");
-
-        if output.status.success() {
-            Ok(Validation::Success)
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-            Ok(Validation::Failure(stderr))
+        let output = tokio::time::timeout(
+            Duration::from_secs(30),
+            Command::new("cargo").args(["check"]).output(),
+        )
+        .await;
+        match output {
+            Ok(Ok(output)) if output.status.success() => Ok(Validation::Success),
+            Ok(Ok(output)) => {
+                let err = String::from_utf8_lossy(&output.stderr).to_string();
+                Ok(Validation::Failure(err))
+            }
+            Ok(Err(e)) => Ok(Validation::Failure(format!(
+                "Failed to execute cargo check: {e}"
+            ))),
+            Err(_) => Ok(Validation::Failure(
+                "Cargo check timed out after 30s".into(),
+            )),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_multiline_shell_payload() {
+        let input = "### TOOL CALL: SHELL\nls -la\necho done\n### END TOOL CALL";
+        let call = ToolCall::parse(input).expect("should match multi-line body");
+        assert_eq!(call.name, "SHELL");
+        assert_eq!(call.content, "ls -la\necho done");
     }
 }

@@ -208,7 +208,13 @@ impl Agent {
         };
 
         match tool_call.to_tool() {
-            Some(Tool::Shell { command }) => Validation::execute_shell_script(&command, ctx).await,
+            Some(Tool::Shell { command }) => {
+                let allow_shell = self.agent_config
+                    .get("allow_shell")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                Validation::execute_shell_script(&command, ctx, allow_shell).await
+            }
             Some(Tool::Memorize { content }) => self
                 .embed(
                     &content,
