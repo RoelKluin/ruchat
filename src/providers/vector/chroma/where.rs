@@ -67,7 +67,7 @@ impl WhereArgs {
 }
 
 fn parse_where(input: &str) -> Result<Where> {
-    let tokens = tokenize(input);
+    let tokens = tokenize(input)?;
     let mut pos = 0;
     if tokens.is_empty() {
         return Err(RuChatError::InternalError("Empty metadata query".into()));
@@ -82,7 +82,7 @@ fn parse_where(input: &str) -> Result<Where> {
     Ok(result)
 }
 
-fn tokenize(input: &str) -> Vec<Token> {
+fn tokenize(input: &str) -> Result<Vec<Token>> {
     let mut tokens = Vec::new();
     let mut chars = input.chars().peekable();
     while let Some(&c) = chars.peek() {
@@ -125,6 +125,23 @@ fn tokenize(input: &str) -> Vec<Token> {
                 }
                 tokens.push(Token::Operator(op));
             }
+            '-' => {
+                chars.next();
+                let mut s = String::from("-");
+                while let Some(&nc) = chars.peek() {
+                    if nc.is_ascii_digit() || nc == '.' {
+                        s.push(chars.next().unwrap());
+                    } else {
+                        break;
+                    }
+                }
+                if s == "-" {
+                    return Err(RuChatError::InternalError(
+                        "Unexpected '-' with no following numeric literal in query".to_string(),
+                    ));
+                }
+                tokens.push(Token::Literal(s));
+            }
             _ => {
                 let mut s = String::new();
                 while let Some(&nc) = chars.peek() {
@@ -159,7 +176,7 @@ fn tokenize(input: &str) -> Vec<Token> {
             }
         }
     }
-    tokens
+    Ok(tokens)
 }
 // OR Logic (Lowest Precedence)
 fn parse_expression(tokens: &[Token], pos: &mut usize) -> Result<Where> {
@@ -408,7 +425,7 @@ mod tests {
     #[test]
     fn test_tokenizer() {
         let input = "key1 = 'value' AND key2 > 5 OR document CONTAINS 'pattern'";
-        let tokens = tokenize(input);
+        let tokens = tokenize(input).unwrap();
         assert_eq!(
             tokens,
             vec![
