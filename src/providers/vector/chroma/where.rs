@@ -154,8 +154,9 @@ fn tokenize(input: &str) -> Result<Vec<Token>> {
                 }
 
                 if s.is_empty() {
-                    chars.next(); // Consume unknown character to avoid infinite loop
-                    continue;
+                    return Err(RuChatError::InternalError(format!(
+                        "Unexpected character '{c}' in where clause"
+                    )));
                 }
 
                 match s.to_uppercase().as_str() {
