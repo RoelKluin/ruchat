@@ -98,6 +98,27 @@ impl Orchestrator {
         })
     }
 
+    pub(crate) fn run_task_stream(
+        mut self,
+        goal: String,
+        debug_sequence: Option<String>,
+    ) -> impl Stream<Item = OrchestratorResult> {
+        let (tx, rx) = mpsc::channel(100);
+        tokio::spawn(async move {
+            if let Some(path) = debug_sequence {
+                if let Err(e) = self.debug_orchestration(goal, path, tx.clone()).await {
+                    let _ = tx.send(Err(e)).await;
+                }
+            } else {
+                if let Err(e) = self.execute_orchestration(goal, tx.clone()).await {
+                    let _ = tx.send(Err(e)).await;
+                }
+            }
+        });
+
+        ReceiverStream::new(rx)
+    }
+
     async fn execute_orchestration(
         &mut self,
         goal: String,
@@ -215,27 +236,6 @@ impl Orchestrator {
         }
         ctx.trace(&tx, String::new()).await;
         Ok(())
-    }
-
-    pub(crate) fn run_task_stream(
-        mut self,
-        goal: String,
-        debug_sequence: Option<String>,
-    ) -> impl Stream<Item = OrchestratorResult> {
-        let (tx, rx) = mpsc::channel(100);
-        tokio::spawn(async move {
-            if let Some(path) = debug_sequence {
-                if let Err(e) = self.debug_orchestration(goal, path, tx.clone()).await {
-                    let _ = tx.send(Err(e)).await;
-                }
-            } else {
-                if let Err(e) = self.execute_orchestration(goal, tx.clone()).await {
-                    let _ = tx.send(Err(e)).await;
-                }
-            }
-        });
-
-        ReceiverStream::new(rx)
     }
 
     async fn debug_orchestration(

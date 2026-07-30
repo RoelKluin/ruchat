@@ -50,6 +50,26 @@ pub(crate) enum Validation {
 }
 
 impl Validation {
+    pub(crate) async fn run_cargo_check() -> Result<Self> {
+        let output = tokio::time::timeout(
+            Duration::from_secs(30),
+            Command::new("cargo").args(["check"]).output(),
+        )
+        .await;
+        match output {
+            Ok(Ok(output)) if output.status.success() => Ok(Validation::Success),
+            Ok(Ok(output)) => {
+                let err = String::from_utf8_lossy(&output.stderr).to_string();
+                Ok(Validation::Failure(err))
+            }
+            Ok(Err(e)) => Ok(Validation::Failure(format!(
+                "Failed to execute cargo check: {e}"
+            ))),
+            Err(_) => Ok(Validation::Failure(
+                "Cargo check timed out after 30s".into(),
+            )),
+        }
+    }
     pub(crate) async fn execute_shell_script(
         script: &str,
         ctx: &mut Context,
@@ -98,26 +118,6 @@ impl Validation {
                     "Failed to execute sed/awk: {e}"
                 )))
             }
-        }
-    }
-    pub(crate) async fn run_cargo_check() -> Result<Self> {
-        let output = tokio::time::timeout(
-            Duration::from_secs(30),
-            Command::new("cargo").args(["check"]).output(),
-        )
-        .await;
-        match output {
-            Ok(Ok(output)) if output.status.success() => Ok(Validation::Success),
-            Ok(Ok(output)) => {
-                let err = String::from_utf8_lossy(&output.stderr).to_string();
-                Ok(Validation::Failure(err))
-            }
-            Ok(Err(e)) => Ok(Validation::Failure(format!(
-                "Failed to execute cargo check: {e}"
-            ))),
-            Err(_) => Ok(Validation::Failure(
-                "Cargo check timed out after 30s".into(),
-            )),
         }
     }
 }
