@@ -201,6 +201,16 @@ impl Orchestrator {
                 continue;
             }
 
+            let build_report = Validation::run_build_and_test().await?;
+            if !build_report.compiled || !build_report.tests_passed {
+                ctx.rejections.push_str(&format!(
+                    "\nBUILD/TEST FAILURE:\n{}",
+                    build_report.diagnostics
+                ));
+                ctx.trace(&tx, format!("Round {round}: build/test failed")).await;
+                continue;
+            }
+
             if let Some(validator) = self.validator.as_mut() {
                 validator.query_stream(ollama, ctx, &tx).await?;
 

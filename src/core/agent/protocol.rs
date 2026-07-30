@@ -55,6 +55,12 @@ pub(crate) enum Validation {
     Skip,
 }
 
+pub(crate) struct BuildReport {
+    pub(crate) compiled: bool,
+    pub(crate) tests_passed: bool,
+    pub(crate) diagnostics: String,
+}
+
 impl Validation {
     pub(crate) async fn apply_patch(diff_text: &str, ctx: &mut Context) -> Result<Self> {
         let patch = match diffy::Patch::from_str(diff_text) {
@@ -102,6 +108,47 @@ impl Validation {
                 "Cargo check timed out after 30s".into(),
             )),
         }
+    }
+
+    pub(crate) async fn run_build_and_test() -> Result<BuildReport> {
+        let check = tokio::time::timeout(
+            Duration::from_secs(60),
+            Command::new("cargo")
+                .args(["check", "--message-format=short"])
+                .output(),
+        )
+        .await;
+        let (compiled, mut diagnostics) = match check {
+            Ok(Ok(o)) => (
+                o.status.success(),
+                String::from_utf8_lossy(&o.stderr).into_owned(),
+            ),
+            Ok(Err(e)) => (false, format!("cargo check failed to run: {e}")),
+            Err(_) => (false, "cargo check timed out after 60s".to_string()),
+        };
+        let mut tests_passed = false;
+        if compiled {
+            let test = tokio::time::timeout(
+                Duration::from_secs(120),
+                Command::new("cargo")
+                    .args(["test", "--", "--nocapture"])
+                    .output(),
+            )
+            .await;
+            match test {
+                Ok(Ok(o)) => {
+                    tests_passed = o.status.success();
+                    diagnostics.push_str(&String::from_utf8_lossy(&o.stdout));
+                }
+                Ok(Err(e)) => diagnostics.push_str(&format!("\ncargo test failed to run: {e}")),
+                Err(_) => diagnostics.push_str("\ncargo test timed out after 120s"),
+            }
+        }
+        Ok(BuildReport {
+            compiled,
+            tests_passed,
+            diagnostics,
+        })
     }
 
     // FIXME: remove:
