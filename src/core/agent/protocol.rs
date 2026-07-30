@@ -7,6 +7,8 @@ use tokio::process::Command;
 
 pub(crate) enum Tool {
     Memorize { content: String },
+    ApplyPatch { diff: String },
+    // FIXME: remove:
     Shell { command: String },
 }
 
@@ -35,6 +37,10 @@ impl ToolCall {
             "MEMORIZE" => Some(Tool::Memorize {
                 content: self.content.clone(),
             }),
+            "APPLY_PATCH" => Some(Tool::ApplyPatch {
+                diff: self.content.clone(),
+            }),
+            // FIXME: remove:
             "SHELL" => Some(Tool::Shell {
                 command: self.content.clone(),
             }),
@@ -50,6 +56,33 @@ pub(crate) enum Validation {
 }
 
 impl Validation {
+    pub(crate) async fn apply_patch(diff_text: &str, ctx: &mut Context) -> Result<Self> {
+        let patch = match diffy::Patch::from_str(diff_text) {
+            Ok(p) => p,
+            Err(e) => {
+                ctx.rejections
+                    .push_str(&format!("\nPatch parse error: {e}"));
+                return Ok(Validation::Failure(e.to_string()));
+            }
+        };
+        // Resolve target file from the patch header rather than trusting free text elsewhere.
+        let target = patch
+            .original()
+            .unwrap_or("unknown")
+            .trim_start_matches("a/");
+        let original = tokio::fs::read_to_string(target).await.unwrap_or_default();
+        match diffy::apply(&original, &patch) {
+            Ok(patched) => {
+                tokio::fs::write(target, patched).await?;
+                Ok(Validation::Success)
+            }
+            Err(e) => {
+                ctx.rejections
+                    .push_str(&format!("\nPatch apply failed on {target}: {e}"));
+                Ok(Validation::Failure(e.to_string()))
+            }
+        }
+    }
     pub(crate) async fn run_cargo_check() -> Result<Self> {
         let output = tokio::time::timeout(
             Duration::from_secs(30),
@@ -70,6 +103,8 @@ impl Validation {
             )),
         }
     }
+
+    // FIXME: remove:
     pub(crate) async fn execute_shell_script(
         script: &str,
         ctx: &mut Context,
