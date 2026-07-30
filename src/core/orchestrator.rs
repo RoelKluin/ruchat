@@ -231,8 +231,9 @@ impl Orchestrator {
                 let mut scratch = Context::new(ctx.goal.clone());
                 scratch.output = snapshot_output.clone();
                 scratch.context = snapshot_context.clone();
+                let txc = tx.clone();
                 futs.push(async move {
-                    critic.query_stream(ollama, &mut scratch, &tx).await.map(|_| scratch.output)
+                    critic.query_stream(ollama, &mut scratch, &txc).await.map(|_| scratch.output)
                 });
             }
             let critic_outputs: Vec<Result<String>> = futures_util::future::join_all(futs).await;
