@@ -3,6 +3,12 @@ use ollama_rs::generation::completion::GenerationResponse;
 use serde_json::Value;
 use tokio::sync::mpsc;
 
+#[derive(Debug, Clone)]
+pub(crate) struct Issue {
+    pub(crate) source: String,
+    pub(crate) text: String,
+}
+
 pub(crate) struct Context {
     pub(crate) goal: String,
     pub(crate) history: String,
@@ -129,5 +135,15 @@ impl Context {
             self.goal, self.context, self.history, self.rejections, self.documents
         );
         self.trace(tx, debug_info).await;
+    }
+    /// Deduplicate near-identical rejection lines before they re-enter the prompt.
+    pub(crate) fn reconcile_rejections(&mut self) {
+        let mut seen = std::collections::HashSet::new();
+        let deduped: Vec<&str> = self
+            .rejections
+            .lines()
+            .filter(|l| !l.trim().is_empty() && seen.insert(l.trim().to_string()))
+            .collect();
+        self.rejections = deduped.join("\n");
     }
 }

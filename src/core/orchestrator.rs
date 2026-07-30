@@ -141,11 +141,17 @@ impl Orchestrator {
                     .unwrap_or("db_config.json"),
             )?;
         }
+        // FIxME: a crude heuristic, a placemholder for a real triage agent call. Not final design.
+        let trivial = ctx.goal.split_whitespace().count() < 12
+            && self.orchestrator_config.get("force_full_pipeline").is_none();
+        if trivial {
+            ctx.trace(&tx, "Triage: trivial goal, skipping Librarian/Critics".to_string()).await;
+        }
 
         for round in 1..=iterations {
             self.architect.query_stream(ollama, ctx, &tx).await?;
 
-            if round == 1
+            if round == 1 && !trivial
                 && let Some(librarian) = self.librarian.as_mut()
             {
                 let client = client.ok_or(RuChatError::Is(
@@ -224,22 +230,24 @@ impl Orchestrator {
                     continue;
                 }
             }
-            let snapshot_output = ctx.output.clone();
-            let snapshot_context = ctx.context.clone();
-            let mut futs = Vec::new();
-            for critic in &mut self.critics {
-                let mut scratch = Context::new(ctx.goal.clone());
-                scratch.output = snapshot_output.clone();
-                scratch.context = snapshot_context.clone();
-                let txc = tx.clone();
-                futs.push(async move {
-                    critic.query_stream(ollama, &mut scratch, &txc).await.map(|_| scratch.output)
-                });
-            }
-            let critic_outputs: Vec<Result<String>> = futures_util::future::join_all(futs).await;
-            for res in critic_outputs {
-                if let Ok(text) = res {
-                    ctx.rejections.push_str(&format!("\n- Critic: {text}\n"));
+            if !trivial {
+                let snapshot_output = ctx.output.clone();
+                let snapshot_context = ctx.context.clone();
+                let mut futs = Vec::new();
+                for critic in &mut self.critics {
+                    let mut scratch = Context::new(ctx.goal.clone());
+                    scratch.output = snapshot_output.clone();
+                    scratch.context = snapshot_context.clone();
+                    let txc = tx.clone();
+                    futs.push(async move {
+                        critic.query_stream(ollama, &mut scratch, &txc).await.map(|_| scratch.output)
+                    });
+                }
+                let critic_outputs: Vec<Result<String>> = futures_util::future::join_all(futs).await;
+                for res in critic_outputs {
+                    if let Ok(text) = res {
+                        ctx.rejections.push_str(&format!("\n- Critic: {text}\n"));
+                    }
                 }
             }
 
@@ -254,6 +262,7 @@ impl Orchestrator {
                 {
                     summarizer.query_stream(ollama, ctx, &tx).await?;
                 }
+                ctx.reconcile_rejections();
                 ctx.history.push_str("\nREJECTIONS: ");
                 ctx.history.push_str(&ctx.rejections);
                 ctx.rejections.clear();
