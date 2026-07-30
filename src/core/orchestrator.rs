@@ -214,8 +214,22 @@ impl Orchestrator {
                     continue;
                 }
             }
+            let snapshot_output = ctx.output.clone();
+            let snapshot_context = ctx.context.clone();
+            let mut futs = Vec::new();
             for critic in &mut self.critics {
-                critic.query_stream(ollama, ctx, &tx).await?;
+                let mut scratch = Context::new(ctx.goal.clone());
+                scratch.output = snapshot_output.clone();
+                scratch.context = snapshot_context.clone();
+                futs.push(async move {
+                    critic.query_stream(ollama, &mut scratch, &tx).await.map(|_| scratch.output)
+                });
+            }
+            let critic_outputs: Vec<Result<String>> = futures_util::future::join_all(futs).await;
+            for res in critic_outputs {
+                if let Ok(text) = res {
+                    ctx.rejections.push_str(&format!("\n- Critic: {text}\n"));
+                }
             }
 
             if ctx.is_approved() {
