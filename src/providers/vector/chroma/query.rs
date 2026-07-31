@@ -1,4 +1,5 @@
 use crate::chroma::{
+    rerank::{rerank_query_results, RerankWeights},
     ChromaClientConfigArgs, ChromaCollectionConfigArgs, ChromaResponse, IncludeArgs, OutputArgs,
     WhereArgs,
 };
@@ -76,6 +77,7 @@ impl Query {
         let mut query_result = collection
             .query(query_embeddings, self.n_results, r#where, ids, include)
             .await?;
+        rerank_query_results(&self.query, &mut query_result, &RerankWeights::default());
         ChromaResponse::Query(&mut query_result).as_string(&self.output)
     }
     pub(crate) fn update_from_json(&mut self, v: Value) -> Result<()> {

@@ -9,6 +9,7 @@ pub(crate) mod ls;
 pub(crate) mod metadata;
 pub(crate) mod modify;
 pub(crate) mod query;
+pub(crate) mod rerank;
 pub(crate) mod retrieve;
 pub(crate) mod search;
 pub(crate) mod r#where;

@@ -1,4 +1,5 @@
 use crate::chroma::{
+    rerank::{rerank_query_results, RerankWeights},
     ChromaClientConfigArgs, ChromaCollectionConfigArgs, ChromaResponse, IncludeArgs, OutputArgs,
     WhereArgs,
 };
@@ -194,6 +195,8 @@ impl RetrieveArgs {
             .await
             .map_err(RuChatError::ChromaHttpClientError)?;
 
+        let query_texts = vec![query_text.clone()];
+        rerank_query_results(&query_texts, &mut result, &RerankWeights::default());
         let _ = ChromaResponse::Query(&mut result).render(&self.output);
         Ok(())
     }
