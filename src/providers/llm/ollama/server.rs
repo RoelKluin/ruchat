@@ -40,7 +40,7 @@ impl ServerArgs {
     }
     pub(crate) fn update_from_json(&mut self, json: &serde_json::Value) -> Result<()> {
         if json.is_string() {
-            self.server = json.to_string();
+            self.server = json.to_string().trim_matches('"').to_string();
             Ok(())
         } else {
             Err(RuChatError::InternalError(
