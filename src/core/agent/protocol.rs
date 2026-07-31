@@ -40,10 +40,6 @@ impl ToolCall {
             "APPLY_PATCH" => Some(Tool::ApplyPatch {
                 diff: self.content.clone(),
             }),
-            // FIXME: remove:
-            "SHELL" => Some(Tool::Shell {
-                command: self.content.clone(),
-            }),
             _ => None,
         }
     }
@@ -149,60 +145,6 @@ impl Validation {
             tests_passed,
             diagnostics,
         })
-    }
-
-    // FIXME: remove:
-    pub(crate) async fn execute_shell_script(
-        script: &str,
-        ctx: &mut Context,
-        allow_shell: bool,
-    ) -> Result<Self> {
-        if !allow_shell {
-            let content = "Shell execution is disabled (pass --allow-shell to enable).".to_string();
-            ctx.push_turn(TurnKind::Rejection, "Validator", content);
-            return Ok(Validation::Skip);
-        }
-        // Logic to run sed and awk script and capture output
-        let run = tokio::time::timeout(
-            Duration::from_secs(30),
-            Command::new("bash").arg("-c").arg(script).output(),
-        )
-        .await;
-        let output = match run {
-            Ok(inner) => inner,
-            Err(_) => {
-                let content = "Shell command timed out after 30s".to_string();
-                ctx.push_turn(TurnKind::Rejection, "Validator", content);
-                return Ok(Validation::Failure("timeout".into()));
-            }
-        };
-        match output {
-            Ok(output) if output.status.success() => {
-                if script.contains(".rs") {
-                    let check_res = Self::run_cargo_check().await?;
-                    if let Self::Failure(ref err) = check_res {
-                        let content = format!("Cargo check failed: {err}");
-                        ctx.push_turn(TurnKind::Rejection, "Validator", content);
-                    }
-                    Ok(check_res)
-                } else {
-                    Ok(Validation::Success)
-                }
-            }
-            Ok(output) => {
-                let err = String::from_utf8_lossy(&output.stderr).to_string();
-                let content = format!("Shell command failed: {err}");
-                ctx.push_turn(TurnKind::Rejection, "Validator", content);
-                Ok(Validation::Failure(err))
-            }
-            Err(e) => {
-                let content = format!("Shell command execution error: {e}");
-                ctx.push_turn(TurnKind::Rejection, "Validator", content);
-                Ok(Validation::Failure(format!(
-                    "Failed to execute sed/awk: {e}"
-                )))
-            }
-        }
     }
 }
 

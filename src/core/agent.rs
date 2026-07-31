@@ -222,14 +222,6 @@ impl Agent {
                     |e| Ok(Validation::Failure(e.to_string())),
                     |_| Ok(Validation::Success),
                 ),
-            // FIXME: remove this tool
-            Some(Tool::Shell { command }) => {
-                let allow_shell = self.agent_config
-                    .get("allow_shell")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                Validation::execute_shell_script(&command, ctx, allow_shell).await
-            }
             None => Ok(Validation::Failure(format!(
                 "Unknown tool: {}",
                 tool_call.name
