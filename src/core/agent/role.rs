@@ -43,6 +43,7 @@ impl Role {
         &self,
         task: Option<&str>,
         ctx: &Context,
+        round: u64,
         hint: Option<&str>,
     ) -> String {
         let system = format!("SYSTEM: You are the {self} agent.\n");
@@ -51,18 +52,18 @@ impl Role {
             hint.map_or_else(|| "".to_string(), |h| format!("CONTEXTUAL HINT: {h}.\n"));
         let goal = format!("GOAL: {}.", ctx.goal);
         match self {
-            Role::Architect if ctx.history.is_empty() => {
+            Role::Architect if ctx.turns.is_empty() => {
                 format!("{system}{hint_section}{goal}{task}",)
             }
             Role::Architect => format!(
                 "{system}{hint_section}\n{goal}{task}HISTORY: {}.",
-                ctx.history
+                ctx.history_view(round.saturating_sub(1))
             ),
             Self::Worker => format!(
                 "{system}{hint_section}DOCUMENTS: {}\nPLAN: {}\n{goal}{task}",
-                ctx.documents, ctx.context,
+                ctx.documents_view(round), ctx.context_view(),
             ),
-            Role::Summarizer => format!("{system}{task}RAW HISTORY TO COMPRESS: {}", ctx.history),
+            Role::Summarizer => format!("{system}{task}RAW HISTORY TO COMPRESS: {}", ctx.history_view(round)),
             Role::Librarian => {
                 let collections_summary = ctx.build_collections_summary();
                 format!(
@@ -109,11 +110,11 @@ impl Role {
             ),
             _ => format!(
                 "{system}{hint_section}\n{goal}{task}CODE/WORK TO REVIEW: {}",
-                ctx.context
+                ctx.context_view()
             ),
         }
     }
-    pub(crate) fn update_context(&self, ctx: &mut Context, signal: &str) {
+    /*pub(crate) fn update_context(&self, ctx: &mut Context, signal: &str) {
         ctx.history
             .push_str(&format!("### {self} response:\n{}\n\n", ctx.output));
         match self {
@@ -129,7 +130,7 @@ impl Role {
                 }
             }
         }
-    }
+    }*/
 }
 
 impl FromStr for Role {

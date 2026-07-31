@@ -1,4 +1,4 @@
-use super::types::Context;
+use super::types::{Context, TurnKind};
 use crate::Result;
 use regex::Regex;
 use std::sync::OnceLock;
@@ -66,8 +66,9 @@ impl Validation {
         let patch = match diffy::Patch::from_str(diff_text) {
             Ok(p) => p,
             Err(e) => {
-                ctx.rejections
-                    .push_str(&format!("\nPatch parse error: {e}"));
+                let round = ctx.turns.last().map_or(0, |t| t.round);
+                let content = format!("Patch parse error: {e}");
+                ctx.push_turn(round, TurnKind::Rejection, "Validator", content);
                 return Ok(Validation::Failure(e.to_string()));
             }
         };
@@ -83,8 +84,9 @@ impl Validation {
                 Ok(Validation::Success)
             }
             Err(e) => {
-                ctx.rejections
-                    .push_str(&format!("\nPatch apply failed on {target}: {e}"));
+                let round = ctx.turns.last().map_or(0, |t| t.round);
+                let content = format!("Patch apply failed on {target}: {e}");
+                ctx.push_turn(round, TurnKind::Rejection, "Validator", content);
                 Ok(Validation::Failure(e.to_string()))
             }
         }
@@ -158,8 +160,9 @@ impl Validation {
         allow_shell: bool,
     ) -> Result<Self> {
         if !allow_shell {
-            ctx.rejections
-                .push_str("\nShell execution is disabled (pass --allow-shell to enable).");
+            let round = ctx.turns.last().map_or(0, |t| t.round);
+            let content = "Shell execution is disabled (pass --allow-shell to enable).".to_string();
+            ctx.push_turn(round, TurnKind::Rejection, "Validator", content);
             return Ok(Validation::Skip);
         }
         // Logic to run sed and awk script and capture output
@@ -171,8 +174,9 @@ impl Validation {
         let output = match run {
             Ok(inner) => inner,
             Err(_) => {
-                ctx.rejections
-                    .push_str("\nShell Error: command timed out after 30s");
+                let round = ctx.turns.last().map_or(0, |t| t.round);
+                let content = "Shell command timed out after 30s".to_string();
+                ctx.push_turn(round, TurnKind::Rejection, "Validator", content);
                 return Ok(Validation::Failure("timeout".into()));
             }
         };
@@ -181,8 +185,9 @@ impl Validation {
                 if script.contains(".rs") {
                     let check_res = Self::run_cargo_check().await?;
                     if let Self::Failure(ref err) = check_res {
-                        ctx.rejections
-                            .push_str(&format!("\nCargo Check Failed: {err}"));
+                        let round = ctx.turns.last().map_or(0, |t| t.round);
+                        let content = format!("Cargo check failed: {err}");
+                        ctx.push_turn(round, TurnKind::Rejection, "Validator", content);
                     }
                     Ok(check_res)
                 } else {
@@ -191,11 +196,15 @@ impl Validation {
             }
             Ok(output) => {
                 let err = String::from_utf8_lossy(&output.stderr).to_string();
-                ctx.rejections.push_str(&format!("\nShell Error: {err}"));
+                let round = ctx.turns.last().map_or(0, |t| t.round);
+                let content = format!("Shell command failed: {err}");
+                ctx.push_turn(round, TurnKind::Rejection, "Validator", content);
                 Ok(Validation::Failure(err))
             }
             Err(e) => {
-                ctx.rejections.push_str(&format!("\nShell Error: {e}"));
+                let round = ctx.turns.last().map_or(0, |t| t.round);
+                let content = format!("Shell command execution error: {e}");
+                ctx.push_turn(round, TurnKind::Rejection, "Validator", content);
                 Ok(Validation::Failure(format!(
                     "Failed to execute sed/awk: {e}"
                 )))

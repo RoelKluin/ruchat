@@ -21,7 +21,7 @@ use std::str::FromStr;
 pub(crate) use team::Team;
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
-use types::Context;
+use types::{Context, TurnKind};
 
 pub(crate) struct Agent {
     options: ModelOptions,
@@ -135,13 +135,18 @@ impl Agent {
         } else {
             EmbedArgs::default().embed(prompt, mode, &self.cfg).await
         }
-        .map(|()| ctx.history.push_str(&format!("\n### SYSTEM: {msg}")))
+        .map(|()| {
+            let msg = format!("\n### SYSTEM: {msg}");
+            let round = ctx.turns.last().map_or(0, |t| t.round);
+            ctx.push_turn(round, TurnKind::System, "MEMORIZE", msg);
+        })
     }
 
     pub(crate) async fn query_stream(
         &mut self,
         ollama: &Ollama,
         ctx: &mut Context,
+        round: u64,
         tx: &mpsc::Sender<Result<Vec<GenerationResponse>>>,
     ) -> Result<()> {
         let role = self.get_str("role")?.to_lowercase();
@@ -151,6 +156,7 @@ impl Agent {
         let full_prompt = role.build_prompt(
             self.get_str("task").ok(),
             ctx,
+            round,
             self.get_str("task_hint").ok(),
         );
 
@@ -197,9 +203,7 @@ impl Agent {
         tx.send(Err(RuChatError::ColorChange(Role::no_color())))
             .await
             .map_err(|e| RuChatError::Is(e.to_string()))?;
-        self.parse_tool_call(ctx).await?;
-        role.update_context(ctx, self.get_str("approval_signal").unwrap_or("APPROVED"));
-        Ok(())
+        self.parse_tool_call(ctx).await
     }
     pub(super) async fn execute_and_verify(&self, ctx: &mut Context) -> Result<Validation> {
         let tool_call = match ToolCall::parse(&ctx.output) {

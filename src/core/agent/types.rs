@@ -9,13 +9,28 @@ pub(crate) struct Issue {
     pub(crate) text: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TurnKind {
+    Plan,           // Architect output
+    Implementation, // Worker output
+    Retrieval,      // Librarian / on-demand Retrieve tool output
+    Rejection,      // Validator / Tester / Critic feedback
+    Summary,        // Summarizer output, replaces collapsed turns
+    System,         // system-level confirmations (e.g. MEMORIZE ack) - visible in history_view
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct Turn {
+    pub(crate) round: u64,
+    pub(crate) kind: TurnKind,
+    pub(crate) source: String,
+    pub(crate) content: String,
+}
+
 pub(crate) struct Context {
     pub(crate) goal: String,
-    pub(crate) history: String,
-    pub(crate) output: String,
-    pub(crate) context: String,
-    pub(crate) rejections: String,
-    pub(crate) documents: String,
+    pub(crate) turns: Vec<Turn>,
+    pub(crate) output: String, // last agent's raw output — transient scratch, unchanged
     pub(crate) context_config: Value,
 }
 
@@ -23,13 +38,19 @@ impl Context {
     pub(crate) fn new(goal: String) -> Self {
         Self {
             goal,
-            history: String::new(),
+            turns: Vec::new(),
             output: String::new(),
-            context: String::new(),
-            rejections: String::new(),
-            documents: String::new(),
             context_config: Value::Null,
         }
+    }
+
+    pub(crate) fn push_turn(&mut self, round: u64, kind: TurnKind, source: &str, content: String) {
+        self.turns.push(Turn {
+            round,
+            kind,
+            source: source.to_string(),
+            content,
+        });
     }
     pub(crate) fn read_config_file(&mut self, path: &str) -> Result<()> {
         let config_str = std::fs::read_to_string(path)?;
@@ -37,7 +58,7 @@ impl Context {
         Ok(())
     }
     pub(crate) fn is_approved(&self) -> bool {
-        self.rejections.is_empty()
+        self.turns.iter().all(|t| t.kind != TurnKind::Rejection)
     }
     pub(crate) async fn trace(
         &mut self,
@@ -45,12 +66,15 @@ impl Context {
         err: String,
     ) {
         if !err.is_empty() {
-            self.rejections.push_str(&format!("\n{err}"));
+            let round = self.turns.last().map_or(0, |t| t.round);
+            self.push_turn(round, TurnKind::Rejection, "Validator", err.clone());
             tx.send(Err(RuChatError::Trace(err))).await.ok();
         }
         let trace_output = format!(
-            "# Orchestration Trace\n\n## Goal\n{}\n\n## Context\n{}\n\n## History\n{}\n\n## Rejections\n{}",
-            self.goal, self.context, self.history, self.rejections
+            "# Orchestration Trace\n\n## Goal\n{}\n\n## Context\n{}\n\n## History\n{}\n",
+            self.goal,
+            self.context_view(),
+            self.history_view(u64::MAX)
         );
         let _ = tokio::fs::write(".ruchat_trace.md", trace_output).await;
     }
@@ -116,13 +140,28 @@ impl Context {
     /// Called exactly once per debug run.
     pub(crate) fn apply_debug_imputations(&mut self, imputations: &Value) {
         if let Some(d) = imputations.get("documents").and_then(|v| v.as_str()) {
-            self.documents = d.to_string();
+            self.turns.push(Turn {
+                round: 0,
+                kind: TurnKind::Retrieval,
+                source: "DebugImputation".to_string(),
+                content: d.to_string(),
+            });
         }
         if let Some(c) = imputations.get("context").and_then(|v| v.as_str()) {
-            self.context = c.to_string();
+            self.turns.push(Turn {
+                round: 0,
+                kind: TurnKind::Plan,
+                source: "DebugImputation".to_string(),
+                content: c.to_string(),
+            });
         }
         if let Some(h) = imputations.get("history").and_then(|v| v.as_str()) {
-            self.history = h.to_string();
+            self.turns.push(Turn {
+                round: 0,
+                kind: TurnKind::Summary,
+                source: "DebugImputation".to_string(),
+                content: h.to_string(),
+            });
         }
     }
     pub(crate) async fn print_debug_info(
@@ -130,20 +169,84 @@ impl Context {
         tx: &mpsc::Sender<Result<Vec<GenerationResponse>>>,
         role: &str,
     ) {
+        let context = self.context_view();
         let debug_info = format!(
-            "DEBUG INFO FOR ROLE: {role}\n\nGOAL:\n{}\n\nCONTEXT:\n{}\n\nHISTORY:\n{}\n\nREJECTIONS:\n{}\n\nDOCUMENTS:\n{}",
-            self.goal, self.context, self.history, self.rejections, self.documents
-        );
+            "DEBUG INFO FOR ROLE: {role}\n\nGOAL:\n{}\n\nCONTEXT:\n{}\n\nHISTORY:\n{}\n\nDOCUMENTS:\n{}",
+            self.goal, context, self.history_view(u64::MAX), self.documents_view(u64::MAX));
         self.trace(tx, debug_info).await;
     }
-    /// Deduplicate near-identical rejection lines before they re-enter the prompt.
-    pub(crate) fn reconcile_rejections(&mut self) {
+
+    /// Replaces the old `ctx.history` string: chronological transcript up to `round`,
+    /// excluding retrieval payloads (those are rendered separately via `documents_view`).
+    pub(crate) fn history_view(&self, upto_round: u64) -> String {
+        self.turns
+            .iter()
+            .filter(|t| t.round <= upto_round && t.kind != TurnKind::Retrieval)
+            .map(|t| {
+                format!(
+                    "### {} [{:?}, round {}]:\n{}\n",
+                    t.source, t.kind, t.round, t.content
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Replaces the old `ctx.context` string: latest Plan + latest Implementation only.
+    pub(crate) fn context_view(&self) -> String {
+        let plan = self.turns.iter().rev().find(|t| t.kind == TurnKind::Plan);
+        let implementation = self
+            .turns
+            .iter()
+            .rev()
+            .find(|t| t.kind == TurnKind::Implementation);
+        match (plan, implementation) {
+            (Some(p), Some(i)) => format!("PLAN:\n{}\n\nIMPLEMENTATION:\n{}", p.content, i.content),
+            (Some(p), None) => format!("PLAN:\n{}", p.content),
+            (None, Some(i)) => format!("IMPLEMENTATION:\n{}", i.content),
+            (None, None) => String::new(),
+        }
+    }
+
+    /// Replaces the old `ctx.documents` string: all retrieval turns for the given round,
+    /// most recent first so newly-retrieved (on-demand) context isn't buried.
+    pub(crate) fn documents_view(&self, upto_round: u64) -> String {
+        self.turns
+            .iter()
+            .filter(|t| t.round <= upto_round && t.kind == TurnKind::Retrieval)
+            .rev()
+            .map(|t| t.content.clone())
+            .collect::<Vec<_>>()
+            .join("\n---\n")
+    }
+
+    /// Dedup rejection turns for the current round in place; returns true if any remain.
+    pub(crate) fn reconcile_rejections(&mut self, round: u64) -> bool {
         let mut seen = std::collections::HashSet::new();
-        let deduped: Vec<&str> = self
-            .rejections
-            .lines()
-            .filter(|l| !l.trim().is_empty() && seen.insert(l.trim().to_string()))
-            .collect();
-        self.rejections = deduped.join("\n");
+        self.turns.retain(|t| {
+            if t.kind == TurnKind::Rejection && t.round == round {
+                seen.insert(t.content.trim().to_string())
+            } else {
+                true
+            }
+        });
+        self.turns
+            .iter()
+            .any(|t| t.kind == TurnKind::Rejection && t.round == round)
+    }
+
+    /// Collapses all turns up to `round` into a single Summary turn — this is what
+    /// the Summarizer role's output now does instead of overwriting `ctx.history`.
+    pub(crate) fn collapse_to_summary(&mut self, summary_text: String, round: u64) {
+        self.turns.retain(|t| t.round > round);
+        self.turns.insert(
+            0,
+            Turn {
+                round,
+                kind: TurnKind::Summary,
+                source: "Summarizer".to_string(),
+                content: summary_text,
+            },
+        );
     }
 }
