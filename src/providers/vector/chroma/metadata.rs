@@ -79,7 +79,7 @@ mod tests {
     #[test]
     fn test_get_metadata_valid() {
         let metadata_str = "key1:value1,key2:value2";
-        let result = parse_metadata::<Metadata>(&metadata_str);
+        let result = parse_metadata::<Metadata>(metadata_str);
         assert!(result.is_ok());
         let metadata = result.unwrap();
         assert_eq!(metadata["key1"], "value1".into());
@@ -89,7 +89,7 @@ mod tests {
     #[test]
     fn test_get_metadata_invalid() {
         let metadata_str = "key1value1";
-        let result = parse_metadata::<Metadata>(&metadata_str);
+        let result = parse_metadata::<Metadata>(metadata_str);
         assert!(result.is_err());
     }
 }

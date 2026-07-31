@@ -13,7 +13,7 @@ use crate::providers::llm::ollama::get_dynamic_history_limit;
 use crate::providers::vector::chroma::query::Query;
 use crate::{Result, RuChatError, options::get_options};
 use chroma::ChromaHttpClient;
-use ollama_rs::generation::completion::{GenerationResponse, request::GenerationRequest};
+use ollama_rs::generation::completion::request::GenerationRequest;
 use ollama_rs::{Ollama, models::ModelOptions};
 use protocol::{Tool, ToolCall, Validation};
 use role::Role;

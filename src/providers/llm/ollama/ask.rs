@@ -6,7 +6,6 @@ use crate::orchestrator::Orchestrator;
 use crate::{Result, RuChatError};
 use clap::Parser;
 use futures_util::TryStreamExt;
-use ollama_rs::generation::completion::GenerationResponse;
 use ollama_rs::{Ollama, generation::completion::request::GenerationRequest, models::ModelOptions};
 use std::pin::Pin;
 use tokio_stream::Stream;

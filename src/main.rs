@@ -1,4 +1,3 @@
-use std::process::Command;
 
 /// main function for RuChat
 #[tokio::main]

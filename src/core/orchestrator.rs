@@ -215,11 +215,10 @@ impl Orchestrator {
         }
         let results = futures_util::future::join_all(futs).await;
         for res in results {
-            if let Ok((text, approval_signal)) = res {
-                if !text.contains(&approval_signal) {
+            if let Ok((text, approval_signal)) = res
+                && !text.contains(&approval_signal) {
                     ctx.push_turn(TurnKind::Rejection, "Critic", text);
                 }
-            }
         }
         Ok(())
     }
@@ -307,13 +306,12 @@ impl Orchestrator {
                 Stage::Implement => {
                     self.worker.query_stream(&self.ollama, ctx, &tx).await?;
 
-                    if let Some(call) = ToolCall::parse(&ctx.output) {
-                        if call.name == "RETRIEVE" && retrieve_budget > 0 {
+                    if let Some(call) = ToolCall::parse(&ctx.output)
+                        && call.name == "RETRIEVE" && retrieve_budget > 0 {
                             retrieve_budget -= 1;
                             self.handle_retrieve(&call.content, ctx).await?;
                             self.worker.query_stream(&self.ollama, ctx, &tx).await?;
                         }
-                    }
                     ctx.push_turn(TurnKind::Implementation, "Worker", ctx.output.clone());
 
                     match self.worker.execute_and_verify(ctx).await? {

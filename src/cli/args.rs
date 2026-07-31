@@ -118,13 +118,13 @@ mod tests {
 
     #[test]
     fn test_args_parsing() {
-        let args = Args::parse_from(&["test", "-v"]);
+        let args = Args::parse_from(["test", "-v"]);
         assert!(args.verbose);
     }
 
     #[test]
     fn test_subcommand_parsing() {
-        let args = Args::parse_from(&["test", "pipe"]);
+        let args = Args::parse_from(["test", "pipe"]);
         match args.command {
             Some(Commands::Pipe(_)) => assert!(true),
             _ => assert!(false, "Expected Ask subcommand"),
@@ -132,14 +132,14 @@ mod tests {
     }
     #[tokio::test]
     async fn test_handle_request_default() {
-        let args = Args::parse_from(&["test", "-h"]);
+        let args = Args::parse_from(["test", "-h"]);
         let result = args.handle_request().await;
         assert!(result.is_ok());
     }
 
     #[tokio::test]
     async fn test_handle_request_ask() {
-        let args = Args::parse_from(&["test", "ollama-ls"]);
+        let args = Args::parse_from(["test", "ollama-ls"]);
         let result = args.handle_request().await;
         assert!(result.is_ok());
     }
