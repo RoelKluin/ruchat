@@ -49,10 +49,98 @@ pub(crate) enum Validation {
     Skip,
 }
 
+/// A single compiler diagnostic parsed from `cargo ... --message-format=json`.
+#[derive(Debug, Clone)]
+pub(crate) struct Diagnostic {
+    pub(crate) level: String, // "error", "warning"
+    pub(crate) message: String,
+    pub(crate) file: Option<String>,
+    pub(crate) line: Option<usize>,
+    pub(crate) column: Option<usize>,
+}
+
+impl std::fmt::Display for Diagnostic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match (&self.file, self.line, self.column) {
+            (Some(file), Some(line), Some(col)) => {
+                write!(f, "{file}:{line}:{col}: {}: {}", self.level, self.message)
+            }
+            _ => write!(f, "{}: {}", self.level, self.message),
+        }
+    }
+}
+
+/// Parses `cargo ... --message-format=json` stdout (one JSON object per line)
+/// into `error`/`warning` diagnostics. Lines that aren't JSON, or JSON messages
+/// that aren't `reason: "compiler-message"`, are ignored — cargo's json output
+/// also emits `build-finished`/`artifact` lines interleaved on the same stream.
+fn parse_cargo_json_diagnostics(stdout: &str) -> Vec<Diagnostic> {
+    let mut out = Vec::new();
+    for line in stdout.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if value.get("reason").and_then(|r| r.as_str()) != Some("compiler-message") {
+            continue;
+        }
+        let Some(message) = value.get("message") else {
+            continue;
+        };
+        let level = message
+            .get("level")
+            .and_then(|v| v.as_str())
+            .unwrap_or("note")
+            .to_string();
+        // "note" often just restates an already-reported error/warning; skip to
+        // keep the Worker/Validator prompt focused on actionable items.
+        if level != "error" && level != "warning" {
+            continue;
+        }
+        let text = message
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let spans = message.get("spans").and_then(|s| s.as_array());
+        let primary = spans.and_then(|arr| {
+            arr.iter()
+                .find(|s| s.get("is_primary").and_then(|p| p.as_bool()) == Some(true))
+                .or_else(|| arr.first())
+        });
+
+        out.push(Diagnostic {
+            level,
+            message: text,
+            file: primary
+                .and_then(|s| s.get("file_name"))
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            line: primary
+                .and_then(|s| s.get("line_start"))
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize),
+            column: primary
+                .and_then(|s| s.get("column_start"))
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize),
+        });
+    }
+    out
+}
+
 pub(crate) struct BuildReport {
     pub(crate) compiled: bool,
     pub(crate) tests_passed: bool,
     pub(crate) diagnostics: String,
+    /// Structured form of the same diagnostics, reserved for callers that want
+    /// file/line/col programmatically rather than the rendered string above.
+    #[allow(dead_code)]
+    pub(crate) parsed_diagnostics: Vec<Diagnostic>,
 }
 
 impl Validation {
@@ -108,17 +196,33 @@ impl Validation {
         let check = tokio::time::timeout(
             Duration::from_secs(60),
             Command::new("cargo")
-                .args(["check", "--message-format=short"])
+                .args(["check", "--message-format=json"])
                 .output(),
         )
         .await;
-        let (compiled, mut diagnostics) = match check {
-            Ok(Ok(o)) => (
-                o.status.success(),
-                String::from_utf8_lossy(&o.stderr).into_owned(),
+        let (compiled, parsed_diagnostics, mut diagnostics) = match check {
+            Ok(Ok(o)) => {
+                let stdout = String::from_utf8_lossy(&o.stdout);
+                let parsed = parse_cargo_json_diagnostics(&stdout);
+                let rendered = if parsed.is_empty() {
+                    // cargo can fail before emitting any JSON (e.g. no Cargo.toml
+                    // in cwd) — fall back to raw stderr so nothing is silently lost.
+                    String::from_utf8_lossy(&o.stderr).into_owned()
+                } else {
+                    parsed
+                        .iter()
+                        .map(|d| d.to_string())
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                };
+                (o.status.success(), parsed, rendered)
+            }
+            Ok(Err(e)) => (false, Vec::new(), format!("cargo check failed to run: {e}")),
+            Err(_) => (
+                false,
+                Vec::new(),
+                "cargo check timed out after 60s".to_string(),
             ),
-            Ok(Err(e)) => (false, format!("cargo check failed to run: {e}")),
-            Err(_) => (false, "cargo check timed out after 60s".to_string()),
         };
         let mut tests_passed = false;
         if compiled {
@@ -142,6 +246,7 @@ impl Validation {
             compiled,
             tests_passed,
             diagnostics,
+            parsed_diagnostics,
         })
     }
 }
