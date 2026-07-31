@@ -177,6 +177,12 @@ pub enum RuChatError {
     /// A general error for any other issues that don't fit into the above categories.
     #[error("Error: {0}")]
     Is(String),
+
+    /// Orchestration was cancelled (receiver dropped / explicit shutdown) —
+    /// not a failure, just an early-exit signal distinct from semantic
+    /// rejections and transient infra errors.
+    #[error("Orchestration cancelled")]
+    Cancelled,
 }
 
 /// A type alias for `Result` that uses `RuChatError` as the error type.

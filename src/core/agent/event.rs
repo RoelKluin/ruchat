@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 /// These are UI/telemetry signals, never treated as failures by consumers —
 /// genuine errors stay on `Result::Err` of `StreamItem`, not encoded here.
 #[derive(Debug, Clone)]
-pub(crate) enum AgentEvent {
+pub enum AgentEvent {
     /// ANSI color code to prefix subsequent output with (or reset via `Role::no_color()`).
     ColorChange(&'static str),
     /// Transient status line (e.g. "... thinking"), cleared on first real chunk.
@@ -22,7 +22,7 @@ pub(crate) enum AgentEvent {
 /// A single item on the agent output stream: either generated content or an
 /// out-of-band event.
 #[derive(Debug)]
-pub(crate) enum StreamItem {
+pub enum StreamItem {
     Chunk(Vec<GenerationResponse>),
     Event(AgentEvent),
 }

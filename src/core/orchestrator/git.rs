@@ -72,3 +72,51 @@ async fn run_git_command(args: Vec<&str>) -> Result<()> {
     }
     Ok(())
 }
+
+/// Read-only `git log`, capped at `max_count` (default 20), optionally scoped
+/// to `path`. Shared verbatim by the orchestrator's structured tool dispatch
+/// and the native `#[ollama_rs::function]` wrapper in `providers::llm::ollama::func`.
+pub(crate) async fn git_log(path: Option<&str>, max_count: Option<u32>) -> Result<String> {
+    let count_flag = format!("-n{}", max_count.unwrap_or(20));
+    let mut args: Vec<&str> = vec!["log", "--oneline", count_flag.as_str()];
+    if let Some(p) = path {
+        args.push("--");
+        args.push(p);
+    }
+    run_git_command_capture(args).await
+}
+
+/// Read-only `git blame --line-porcelain` for a single file.
+pub(crate) async fn git_blame(path: &str) -> Result<String> {
+    run_git_command_capture(vec!["blame", "--line-porcelain", path]).await
+}
+
+/// Read-only `git diff`, optionally `--staged` and/or scoped to `path`.
+pub(crate) async fn git_diff(path: Option<&str>, staged: bool) -> Result<String> {
+    let mut args: Vec<&str> = vec!["diff"];
+    if staged {
+        args.push("--staged");
+    }
+    if let Some(p) = path {
+        args.push("--");
+        args.push(p);
+    }
+    run_git_command_capture(args).await
+}
+
+/// Like `run_git_command` but returns captured stdout — used by read-only
+/// tools where the output itself is the payload fed back to the LLM, unlike
+/// `run_git_command`'s write-side commands where only success/failure matters.
+async fn run_git_command_capture(args: Vec<&str>) -> Result<String> {
+    let output = tokio::process::Command::new("git")
+        .args(&args)
+        .output()
+        .await
+        .map_err(|e| RuChatError::InternalError(format!("Git exec failed: {e}")))?;
+
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr);
+        return Err(RuChatError::InternalError(format!("Git error: {err}")));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}

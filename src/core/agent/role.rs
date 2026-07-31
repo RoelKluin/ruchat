@@ -1,4 +1,5 @@
 use super::types::Context;
+use crate::agent::tools::prompt_tool_catalog;
 use crate::{Result, RuChatError};
 use std::fmt::Display;
 use std::str::FromStr;
@@ -59,8 +60,8 @@ impl Role {
                 ctx.history_view(ctx.round.saturating_sub(1))
             ),
             Self::Worker => format!(
-                "{system}{hint_section}DOCUMENTS: {}\nPLAN: {}\n{goal}{task}",
-                ctx.documents_view(ctx.round), ctx.context_view(),
+                "{system}{hint_section}DOCUMENTS: {}\nPLAN: {}\n{goal}{task}\n{}",
+                ctx.documents_view(ctx.round), ctx.context_view(), prompt_tool_catalog(),
             ),
             Role::Summarizer => format!("{system}{task}RAW HISTORY TO COMPRESS: {}", ctx.history_view(ctx.round)),
             Role::Librarian => {

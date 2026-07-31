@@ -43,7 +43,10 @@ pub(crate) async fn func(args: OllamaArgs, cfg: &Value) -> Result<()> {
         .add_tool(DDGSearcher::new())
         .add_tool(Scraper {})
         .add_tool(StockScraper::new())
-        .add_tool(Browserless {});
+        .add_tool(Browserless {})
+        .add_tool(git_log)
+        .add_tool(git_blame)
+        .add_tool(git_diff);
     // browserless requires an BROWSERLESS_TOKEN=... environment variable
 
     let mut cio = Io::new();
@@ -60,4 +63,41 @@ pub(crate) async fn func(args: OllamaArgs, cfg: &Value) -> Result<()> {
         }
     }
     Ok(())
+}
+
+// Native-tool wrapper around the read-only git helpers shared with the
+// orchestrator's structured tool dispatch (`core::orchestrator::handle_structured_tool`).
+// This is the "single dispatch path" for these three tools - same
+// implementation, different calling convention per caller.
+/// Get the git log for a repository, optionally scoped to a path and capped at max_count (default
+/// 20).
+#[ollama_rs::function]
+async fn git_log(
+    path: Option<String>,
+    max_count: Option<u32>,
+) -> std::result::Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    crate::orchestrator::git::git_log(path.as_deref(), max_count)
+        .await
+        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+}
+
+/// Get the git blame for a single file.
+#[ollama_rs::function]
+async fn git_blame(
+    path: String,
+) -> std::result::Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    crate::orchestrator::git::git_blame(&path)
+        .await
+        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+}
+
+/// Get the git diff for a repository, optionally scoped to a path and/or staged.
+#[ollama_rs::function]
+async fn git_diff(
+    path: Option<String>,
+    staged: Option<bool>,
+) -> std::result::Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    crate::orchestrator::git::git_diff(path.as_deref(), staged.unwrap_or(false))
+        .await
+        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
 }

@@ -3,6 +3,8 @@ pub(crate) mod event;
 pub(crate) mod protocol;
 mod role;
 pub(crate) mod team;
+pub(crate) mod tokens;
+pub(crate) mod tools;
 pub(crate) mod types;
 pub(crate) mod worker;
 
@@ -15,7 +17,7 @@ use crate::{Result, RuChatError, options::get_options};
 use chroma::ChromaHttpClient;
 use ollama_rs::generation::completion::request::GenerationRequest;
 use ollama_rs::{Ollama, models::ModelOptions};
-use protocol::{Tool, ToolCall, Validation};
+use protocol::Validation;
 use role::Role;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -112,11 +114,12 @@ impl Agent {
     }
 
     async fn parse_tool_call(&self, ctx: &mut Context) -> Result<()> {
-        if let Some(tool_call) = ToolCall::parse(&ctx.output)
-            && tool_call.name.as_str() == "MEMORIZE"
+        if let Ok(call) = tools::parse_tool_call(&ctx.output)
+            && call.tool == tools::ToolName::Memorize
         {
+            let content = call.args["content"].as_str().unwrap_or_default();
             self.embed(
-                tool_call.content.as_str(),
+                content,
                 UpsertMode::Upsert,
                 ctx,
                 "Information successfully committed to long-term memory.",
@@ -197,16 +200,19 @@ impl Agent {
         self.parse_tool_call(ctx).await
     }
     pub(super) async fn execute_and_verify(&self, ctx: &mut Context) -> Result<Validation> {
-        let tool_call = match ToolCall::parse(&ctx.output) {
-            Some(call) => call,
-            None => return Ok(Validation::Skip),
+        let call = match tools::parse_tool_call(&ctx.output) {
+            Ok(call) => call,
+            Err(_) => return Ok(Validation::Skip),
         };
 
-        match tool_call.to_tool() {
-            Some(Tool::ApplyPatch { diff }) => Validation::apply_patch(&diff, ctx).await,
-            Some(Tool::Memorize { content }) => self
+        match call.tool {
+            tools::ToolName::ApplyPatch => {
+                let diff = call.args["diff"].as_str().unwrap_or_default();
+                Validation::apply_patch(diff, ctx).await
+            }
+            tools::ToolName::Memorize => self
                 .embed(
-                    &content,
+                    call.args["content"].as_str().unwrap_or_default(),
                     UpsertMode::Upsert,
                     ctx,
                     "Information successfully memorized.",
@@ -216,9 +222,12 @@ impl Agent {
                     |e| Ok(Validation::Failure(e.to_string())),
                     |_| Ok(Validation::Success),
                 ),
-            None => Ok(Validation::Failure(format!(
-                "Unknown tool: {}",
-                tool_call.name
+            // Retrieve/GitLog/GitBlame/GitDiff are dispatched earlier in
+            // Stage::Implement, not here — reaching them at verify-time means
+            // the Worker emitted a read tool call where a patch/memorize was
+            // expected.
+            other => Ok(Validation::Failure(format!(
+                "Unexpected tool at verify stage: {other:?}"
             ))),
         }
     }

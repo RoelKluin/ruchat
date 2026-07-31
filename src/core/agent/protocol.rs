@@ -1,47 +1,10 @@
 use super::types::{Context, TurnKind};
-use crate::Result;
+use crate::{Result, RuChatError};
 use regex::Regex;
 use std::sync::OnceLock;
 use std::time::Duration;
 use tokio::process::Command;
-
-pub(crate) enum Tool {
-    Memorize { content: String },
-    ApplyPatch { diff: String },
-}
-
-pub(crate) struct ToolCall {
-    pub(crate) name: String,
-    pub(crate) content: String,
-}
-impl ToolCall {
-    pub(crate) fn parse(output: &str) -> Option<Self> {
-        static REGEX: OnceLock<Regex> = OnceLock::new();
-        // Simple string parsing to detect TOOL CALLS in the format: ### TOOL CALL: TOOL_NAME\nCONTENT\n### END TOOL CALL
-        REGEX
-            .get_or_init(|| {
-                Regex::new(r"(?s)### TOOL CALL: (\w+)\n(.*?)\n### END TOOL CALL").unwrap()
-            })
-            .captures(output)
-            .and_then(|caps| {
-                Some(Self {
-                    name: caps.get(1)?.as_str().to_string(),
-                    content: caps.get(2)?.as_str().to_string(),
-                })
-            })
-    }
-    pub(crate) fn to_tool(&self) -> Option<Tool> {
-        match self.name.as_str() {
-            "MEMORIZE" => Some(Tool::Memorize {
-                content: self.content.clone(),
-            }),
-            "APPLY_PATCH" => Some(Tool::ApplyPatch {
-                diff: self.content.clone(),
-            }),
-            _ => None,
-        }
-    }
-}
+use tokio_util::sync::CancellationToken;
 
 pub(crate) enum Validation {
     Success,
@@ -192,21 +155,23 @@ impl Validation {
         }
     }
 
-    pub(crate) async fn run_build_and_test() -> Result<BuildReport> {
+    pub(crate) async fn run_build_and_test(cancel: &CancellationToken) -> Result<BuildReport> {
         let check = tokio::time::timeout(
             Duration::from_secs(60),
-            Command::new("cargo")
-                .args(["check", "--message-format=json"])
-                .output(),
+            async {
+                tokio::select! {
+                    out = Command::new("cargo").args(["check", "--message-format=json"]).output() => Ok(out),
+                    _ = cancel.cancelled() => Err(()),
+                }
+            },
         )
         .await;
         let (compiled, parsed_diagnostics, mut diagnostics) = match check {
-            Ok(Ok(o)) => {
+            Ok(Ok(Ok(o))) => {
+                /* unchanged body from prior patch */
                 let stdout = String::from_utf8_lossy(&o.stdout);
                 let parsed = parse_cargo_json_diagnostics(&stdout);
                 let rendered = if parsed.is_empty() {
-                    // cargo can fail before emitting any JSON (e.g. no Cargo.toml
-                    // in cwd) — fall back to raw stderr so nothing is silently lost.
                     String::from_utf8_lossy(&o.stderr).into_owned()
                 } else {
                     parsed
@@ -217,7 +182,8 @@ impl Validation {
                 };
                 (o.status.success(), parsed, rendered)
             }
-            Ok(Err(e)) => (false, Vec::new(), format!("cargo check failed to run: {e}")),
+            Ok(Ok(Err(e))) => (false, Vec::new(), format!("cargo check failed to run: {e}")),
+            Ok(Err(())) => return Err(RuChatError::Cancelled),
             Err(_) => (
                 false,
                 Vec::new(),
@@ -228,17 +194,21 @@ impl Validation {
         if compiled {
             let test = tokio::time::timeout(
                 Duration::from_secs(120),
-                Command::new("cargo")
-                    .args(["test", "--", "--nocapture"])
-                    .output(),
+                async {
+                    tokio::select! {
+                        out = Command::new("cargo").args(["test", "--", "--nocapture"]).output() => Ok(out),
+                        _ = cancel.cancelled() => Err(()),
+                    }
+                },
             )
             .await;
             match test {
-                Ok(Ok(o)) => {
+                Ok(Ok(Ok(o))) => {
                     tests_passed = o.status.success();
                     diagnostics.push_str(&String::from_utf8_lossy(&o.stdout));
                 }
-                Ok(Err(e)) => diagnostics.push_str(&format!("\ncargo test failed to run: {e}")),
+                Ok(Ok(Err(e))) => diagnostics.push_str(&format!("\ncargo test failed to run: {e}")),
+                Ok(Err(())) => return Err(RuChatError::Cancelled),
                 Err(_) => diagnostics.push_str("\ncargo test timed out after 120s"),
             }
         }
@@ -248,18 +218,5 @@ impl Validation {
             diagnostics,
             parsed_diagnostics,
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_multiline_shell_payload() {
-        let input = "### TOOL CALL: SHELL\nls -la\necho done\n### END TOOL CALL";
-        let call = ToolCall::parse(input).expect("should match multi-line body");
-        assert_eq!(call.name, "SHELL");
-        assert_eq!(call.content, "ls -la\necho done");
     }
 }

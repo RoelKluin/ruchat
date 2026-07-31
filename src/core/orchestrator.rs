@@ -1,8 +1,9 @@
-mod git;
+pub(crate) mod git;
 pub(super) mod task;
 
 use crate::agent::event::StreamItem;
-use crate::agent::protocol::{ToolCall, Validation};
+use crate::agent::protocol::Validation;
+use crate::agent::tools::{self, ToolName};
 use crate::agent::types::{Context, TurnKind};
 use crate::agent::Agent;
 use crate::providers::vector::chroma::ChromaClientConfigArgs;
@@ -12,6 +13,7 @@ use ollama_rs::Ollama;
 use serde_json::Value;
 pub(super) use task::TaskType;
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::Stream;
 // Define what the UI receives
@@ -168,15 +170,33 @@ impl Orchestrator {
         debug_sequence: Option<String>,
     ) -> impl Stream<Item = OrchestratorResult> {
         let (tx, rx) = mpsc::channel(100);
+        let cancel = CancellationToken::new();
+
+        // Dropping the returned `ReceiverStream` drops `rx`, which makes
+        // `tx.closed()` resolve — that's our cancellation trigger. A
+        // separate watcher task (rather than polling `tx.is_closed()` inline)
+        // means cancellation is detected even while the stage machine is
+        // blocked awaiting a long-running future (LLM call, cargo test).
+        let watcher_tx = tx.clone();
+        let watcher_cancel = cancel.clone();
         tokio::spawn(async move {
-            if let Some(path) = debug_sequence {
-                if let Err(e) = self.debug_stage_machine(goal, path, tx.clone()).await {
-                    let _ = tx.send(Err(e)).await;
-                }
+            watcher_tx.closed().await;
+            watcher_cancel.cancel();
+        });
+
+        let task_cancel = cancel.clone();
+        tokio::spawn(async move {
+            let result = if let Some(path) = debug_sequence {
+                self.debug_stage_machine(goal, path, tx.clone(), task_cancel).await
             } else {
-                if let Err(e) = self.run_stage_machine(goal, tx.clone()).await {
-                    let _ = tx.send(Err(e)).await;
-                }
+                self.run_stage_machine(goal, tx.clone(), task_cancel).await
+            };
+            // `Cancelled` is an expected early-exit, not worth surfacing as
+            // an error to a receiver that's already gone (or going).
+            if let Err(e) = result
+                && !matches!(e, RuChatError::Cancelled)
+            {
+                let _ = tx.send(Err(e)).await;
             }
         });
 
@@ -260,6 +280,7 @@ impl Orchestrator {
         &mut self,
         goal: String,
         tx: mpsc::Sender<OrchestratorResult>,
+        cancel: CancellationToken,
     ) -> Result<()> {
         let max_iterations = self
             .orchestrator_config
@@ -281,6 +302,14 @@ impl Orchestrator {
         let mut stage = Stage::Plan;
 
         loop {
+            // Checked once per stage transition — this is the boundary the
+            // success metric refers to. It does NOT preempt a stage already
+            // in flight (e.g. a 120s `cargo test` won't be killed mid-run by
+            // this check alone); see `run_build_and_test`'s own cancellation
+            // wrapping below for that case.
+            if cancel.is_cancelled() {
+                return Err(RuChatError::Cancelled);
+            }
             stage = match stage {
                 Stage::Done => break,
                 Stage::Escalate(reason) => {
@@ -306,12 +335,17 @@ impl Orchestrator {
                 Stage::Implement => {
                     self.worker.query_stream(&self.ollama, ctx, &tx).await?;
 
-                    if let Some(call) = ToolCall::parse(&ctx.output)
-                        && call.name == "RETRIEVE" && retrieve_budget > 0 {
-                            retrieve_budget -= 1;
-                            self.handle_retrieve(&call.content, ctx).await?;
-                            self.worker.query_stream(&self.ollama, ctx, &tx).await?;
-                        }
+                    if let Ok(call) = tools::parse_tool_call(&ctx.output)
+                        && matches!(
+                            call.tool,
+                            ToolName::Retrieve | ToolName::GitLog | ToolName::GitBlame | ToolName::GitDiff
+                        )
+                        && retrieve_budget > 0
+                    {
+                        retrieve_budget -= 1;
+                        self.handle_structured_tool(&call, ctx).await?;
+                        self.worker.query_stream(&self.ollama, ctx, &tx).await?;
+                    }
                     ctx.push_turn(TurnKind::Implementation, "Worker", ctx.output.clone());
 
                     match self.worker.execute_and_verify(ctx).await? {
@@ -323,7 +357,7 @@ impl Orchestrator {
                     }
                 }
                 Stage::Test => {
-                    let report = Validation::run_build_and_test().await?;
+                    let report = Validation::run_build_and_test(&cancel).await?;
                     if !report.compiled || !report.tests_passed {
                         ctx.push_turn(TurnKind::Rejection, "Tester", report.diagnostics);
                         Stage::Retry
@@ -360,13 +394,11 @@ impl Orchestrator {
                         Stage::Escalate("repeated rejections, iteration budget exhausted".into())
                     } else {
                         if let Some(summarizer) = self.summarizer.as_mut() {
-                            const CHARS_PER_TOKEN: u64 = 4;
                             let approx_tokens: u64 = ctx
                                 .turns
                                 .iter()
-                                .map(|t| t.content.len() as u64)
-                                .sum::<u64>()
-                                / CHARS_PER_TOKEN;
+                                .map(|t| crate::agent::tokens::count_tokens(&t.content))
+                                .sum();
                             if approx_tokens > summarizer.get_dynamic_history_limit() {
                                 summarizer.query_stream(&self.ollama, ctx, &tx).await?;
                                 ctx.collapse_to_summary(ctx.output.clone());
@@ -391,6 +423,7 @@ impl Orchestrator {
         goal: String,
         path: String,
         tx: mpsc::Sender<OrchestratorResult>,
+        cancel: CancellationToken,
     ) -> Result<()> {
         let debug_json: Value = serde_json::from_str(&tokio::fs::read_to_string(path).await?)?;
         let sequence: Vec<String> = debug_json["sequence"]
@@ -411,6 +444,9 @@ impl Orchestrator {
         // Debug sequences have no natural "round"; number each step so round-scoped
         // views (history_view/documents_view/context_view) still window correctly.
         for (step, role) in sequence.into_iter().enumerate() {
+            if cancel.is_cancelled() {
+                return Err(RuChatError::Cancelled);
+            }
             ctx.round = step as u64 + 1;
 
             if role == "Librarian" {
@@ -491,5 +527,47 @@ impl Orchestrator {
         let docs = q.query(client, &self.ollama, &model).await?;
         ctx.push_turn(TurnKind::Retrieval, "Retrieve", docs);
         Ok(())
+    }
+
+    /// Dispatches a validated structured tool call from `Stage::Implement`.
+    /// Only the read-only tools reach here; `Memorize`/`ApplyPatch` are
+    /// handled later by `Agent::execute_and_verify` since they mutate state
+    /// tied to the agent's own config, not the orchestrator's.
+    async fn handle_structured_tool(
+        &mut self,
+        call: &tools::StructuredToolCall,
+        ctx: &mut Context,
+    ) -> Result<()> {
+        match call.tool {
+            ToolName::Retrieve => {
+                let query = call.args["query"].as_str().unwrap_or_default();
+                self.handle_retrieve(query, ctx).await
+            }
+            ToolName::GitLog => {
+                let path = call.args.get("path").and_then(|v| v.as_str());
+                let max_count = call
+                    .args
+                    .get("max_count")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as u32);
+                let out = git::git_log(path, max_count).await?;
+                ctx.push_turn(TurnKind::Retrieval, "GitLog", out);
+                Ok(())
+            }
+            ToolName::GitBlame => {
+                let path = call.args.get("path").and_then(|v| v.as_str()).unwrap_or_default();
+                let out = git::git_blame(path).await?;
+                ctx.push_turn(TurnKind::Retrieval, "GitBlame", out);
+                Ok(())
+            }
+            ToolName::GitDiff => {
+                let path = call.args.get("path").and_then(|v| v.as_str());
+                let staged = call.args.get("staged").and_then(|v| v.as_bool()).unwrap_or(false);
+                let out = git::git_diff(path, staged).await?;
+                ctx.push_turn(TurnKind::Retrieval, "GitDiff", out);
+                Ok(())
+            }
+            ToolName::Memorize | ToolName::ApplyPatch => Ok(()),
+        }
     }
 }
