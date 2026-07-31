@@ -43,7 +43,6 @@ impl Role {
         &self,
         task: Option<&str>,
         ctx: &Context,
-        round: u64,
         hint: Option<&str>,
     ) -> String {
         let system = format!("SYSTEM: You are the {self} agent.\n");
@@ -57,13 +56,13 @@ impl Role {
             }
             Role::Architect => format!(
                 "{system}{hint_section}\n{goal}{task}HISTORY: {}.",
-                ctx.history_view(round.saturating_sub(1))
+                ctx.history_view(ctx.round.saturating_sub(1))
             ),
             Self::Worker => format!(
                 "{system}{hint_section}DOCUMENTS: {}\nPLAN: {}\n{goal}{task}",
-                ctx.documents_view(round), ctx.context_view(),
+                ctx.documents_view(ctx.round), ctx.context_view(),
             ),
-            Role::Summarizer => format!("{system}{task}RAW HISTORY TO COMPRESS: {}", ctx.history_view(round)),
+            Role::Summarizer => format!("{system}{task}RAW HISTORY TO COMPRESS: {}", ctx.history_view(ctx.round)),
             Role::Librarian => {
                 let collections_summary = ctx.build_collections_summary();
                 format!(

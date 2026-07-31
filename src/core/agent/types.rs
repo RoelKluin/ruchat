@@ -32,6 +32,7 @@ pub(crate) struct Context {
     pub(crate) turns: Vec<Turn>,
     pub(crate) output: String, // last agent's raw output — transient scratch, unchanged
     pub(crate) context_config: Value,
+    pub(crate) round: u64, // current round number, incremented after each agent's turn
 }
 
 impl Context {
@@ -41,12 +42,13 @@ impl Context {
             turns: Vec::new(),
             output: String::new(),
             context_config: Value::Null,
+            round: 0,
         }
     }
 
-    pub(crate) fn push_turn(&mut self, round: u64, kind: TurnKind, source: &str, content: String) {
+    pub(crate) fn push_turn(&mut self, kind: TurnKind, source: &str, content: String) {
         self.turns.push(Turn {
-            round,
+            round: self.round,
             kind,
             source: source.to_string(),
             content,
@@ -66,8 +68,7 @@ impl Context {
         err: String,
     ) {
         if !err.is_empty() {
-            let round = self.turns.last().map_or(0, |t| t.round);
-            self.push_turn(round, TurnKind::Rejection, "Validator", err.clone());
+            self.push_turn(TurnKind::Rejection, "Validator", err.clone());
             tx.send(Err(RuChatError::Trace(err))).await.ok();
         }
         let trace_output = format!(
@@ -221,10 +222,10 @@ impl Context {
     }
 
     /// Dedup rejection turns for the current round in place; returns true if any remain.
-    pub(crate) fn reconcile_rejections(&mut self, round: u64) -> bool {
+    pub(crate) fn reconcile_rejections(&mut self) -> bool {
         let mut seen = std::collections::HashSet::new();
         self.turns.retain(|t| {
-            if t.kind == TurnKind::Rejection && t.round == round {
+            if t.kind == TurnKind::Rejection && t.round == self.round {
                 seen.insert(t.content.trim().to_string())
             } else {
                 true
@@ -232,17 +233,17 @@ impl Context {
         });
         self.turns
             .iter()
-            .any(|t| t.kind == TurnKind::Rejection && t.round == round)
+            .any(|t| t.kind == TurnKind::Rejection && t.round == self.round)
     }
 
     /// Collapses all turns up to `round` into a single Summary turn — this is what
     /// the Summarizer role's output now does instead of overwriting `ctx.history`.
-    pub(crate) fn collapse_to_summary(&mut self, summary_text: String, round: u64) {
-        self.turns.retain(|t| t.round > round);
+    pub(crate) fn collapse_to_summary(&mut self, summary_text: String) {
+        self.turns.retain(|t| t.round > self.round);
         self.turns.insert(
             0,
             Turn {
-                round,
+                round: self.round,
                 kind: TurnKind::Summary,
                 source: "Summarizer".to_string(),
                 content: summary_text,

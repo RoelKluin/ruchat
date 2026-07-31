@@ -137,8 +137,7 @@ impl Agent {
         }
         .map(|()| {
             let msg = format!("\n### SYSTEM: {msg}");
-            let round = ctx.turns.last().map_or(0, |t| t.round);
-            ctx.push_turn(round, TurnKind::System, "MEMORIZE", msg);
+            ctx.push_turn(TurnKind::System, "MEMORIZE", msg);
         })
     }
 
@@ -146,7 +145,6 @@ impl Agent {
         &mut self,
         ollama: &Ollama,
         ctx: &mut Context,
-        round: u64,
         tx: &mpsc::Sender<Result<Vec<GenerationResponse>>>,
     ) -> Result<()> {
         let role = self.get_str("role")?.to_lowercase();
@@ -156,7 +154,6 @@ impl Agent {
         let full_prompt = role.build_prompt(
             self.get_str("task").ok(),
             ctx,
-            round,
             self.get_str("task_hint").ok(),
         );
 

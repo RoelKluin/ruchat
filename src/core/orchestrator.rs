@@ -186,12 +186,12 @@ impl Orchestrator {
     async fn run_critics_parallel(
         &mut self,
         ctx: &mut Context,
-        round: u64,
         tx: &mpsc::Sender<Result<Vec<GenerationResponse>>>,
     ) -> Result<()> {
         let snapshot_output = ctx.output.clone();
         let snapshot_plan_impl = ctx.context_view();
         let mut futs = Vec::new();
+        let round = ctx.round;
         for critic in &mut self.critics {
             let approval_signal = critic
                 .get_str("approval_signal")
@@ -200,15 +200,15 @@ impl Orchestrator {
             let mut scratch = Context::new(ctx.goal.clone());
             scratch.output = snapshot_output.clone();
             scratch.push_turn(
-                round,
                 TurnKind::Implementation,
                 "snapshot",
                 snapshot_plan_impl.clone(),
             );
+            scratch.round = round;
             let ollama = &self.ollama;
             futs.push(async move {
                 critic
-                    .query_stream(ollama, &mut scratch, round, tx)
+                    .query_stream(ollama, &mut scratch, tx)
                     .await
                     .map(|_| (scratch.output, approval_signal))
             });
@@ -217,7 +217,7 @@ impl Orchestrator {
         for res in results {
             if let Ok((text, approval_signal)) = res {
                 if !text.contains(&approval_signal) {
-                    ctx.push_turn(round, TurnKind::Rejection, "Critic", text);
+                    ctx.push_turn(TurnKind::Rejection, "Critic", text);
                 }
             }
         }
@@ -227,7 +227,6 @@ impl Orchestrator {
     async fn run_librarian_retrieval(
         &mut self,
         ctx: &mut Context,
-        round: u64,
         tx: &mpsc::Sender<Result<Vec<GenerationResponse>>>,
     ) -> Result<()> {
         let client = self.client.as_ref().ok_or_else(|| {
@@ -238,7 +237,7 @@ impl Orchestrator {
             .as_mut()
             .ok_or_else(|| RuChatError::Is("Librarian not enabled".into()))?;
 
-        librarian.query_stream(&self.ollama, ctx, round, tx).await?;
+        librarian.query_stream(&self.ollama, ctx, tx).await?;
 
         let mut q = Query::default();
         if let Ok(json_val) = serde_json::from_str::<Value>(&ctx.output) {
@@ -254,7 +253,7 @@ impl Orchestrator {
         let docs = librarian
             .retrieve_and_generate(client, &self.ollama, q)
             .await?;
-        ctx.push_turn(round, TurnKind::Retrieval, "Librarian", docs);
+        ctx.push_turn(TurnKind::Retrieval, "Librarian", docs);
         Ok(())
     }
 
@@ -279,7 +278,6 @@ impl Orchestrator {
             )?;
         }
 
-        let mut round: u64 = 0;
         let mut retrieve_budget: u32 = 2; // conservative cap on Worker-initiated retrievals per run
         let mut stage = Stage::Plan;
 
@@ -291,47 +289,36 @@ impl Orchestrator {
                     break;
                 }
                 Stage::Plan => {
-                    round += 1;
-                    if round > max_iterations {
+                    ctx.round += 1;
+                    if ctx.round > max_iterations {
                         Stage::Escalate("max iterations reached without acceptance".into())
                     } else {
-                        self.architect
-                            .query_stream(&self.ollama, ctx, round, &tx)
-                            .await?;
-                        ctx.push_turn(round, TurnKind::Plan, "Architect", ctx.output.clone());
+                        self.architect.query_stream(&self.ollama, ctx, &tx).await?;
+                        ctx.push_turn(TurnKind::Plan, "Architect", ctx.output.clone());
                         Stage::Retrieve
                     }
                 }
                 Stage::Retrieve => {
-                    if round == 1 && self.librarian.is_some() {
-                        self.run_librarian_retrieval(ctx, round, &tx).await?;
+                    if ctx.round == 1 && self.librarian.is_some() {
+                        self.run_librarian_retrieval(ctx, &tx).await?;
                     }
                     Stage::Implement
                 }
                 Stage::Implement => {
-                    self.worker
-                        .query_stream(&self.ollama, ctx, round, &tx)
-                        .await?;
+                    self.worker.query_stream(&self.ollama, ctx, &tx).await?;
 
                     if let Some(call) = ToolCall::parse(&ctx.output) {
                         if call.name == "RETRIEVE" && retrieve_budget > 0 {
                             retrieve_budget -= 1;
-                            self.handle_retrieve(&call.content, ctx, round).await?;
-                            self.worker
-                                .query_stream(&self.ollama, ctx, round, &tx)
-                                .await?;
+                            self.handle_retrieve(&call.content, ctx).await?;
+                            self.worker.query_stream(&self.ollama, ctx, &tx).await?;
                         }
                     }
-                    ctx.push_turn(
-                        round,
-                        TurnKind::Implementation,
-                        "Worker",
-                        ctx.output.clone(),
-                    );
+                    ctx.push_turn(TurnKind::Implementation, "Worker", ctx.output.clone());
 
                     match self.worker.execute_and_verify(ctx).await? {
                         Validation::Failure(err) => {
-                            ctx.push_turn(round, TurnKind::Rejection, "ApplyPatch", err);
+                            ctx.push_turn(TurnKind::Rejection, "ApplyPatch", err);
                             Stage::Retry
                         }
                         _ => Stage::Test,
@@ -340,7 +327,7 @@ impl Orchestrator {
                 Stage::Test => {
                     let report = Validation::run_build_and_test().await?;
                     if !report.compiled || !report.tests_passed {
-                        ctx.push_turn(round, TurnKind::Rejection, "Tester", report.diagnostics);
+                        ctx.push_turn(TurnKind::Rejection, "Tester", report.diagnostics);
                         Stage::Retry
                     } else {
                         Stage::Validate
@@ -348,16 +335,9 @@ impl Orchestrator {
                 }
                 Stage::Validate => {
                     if let Some(validator) = self.validator.as_mut() {
-                        validator
-                            .query_stream(&self.ollama, ctx, round, &tx)
-                            .await?;
+                        validator.query_stream(&self.ollama, ctx, &tx).await?;
                         if ctx.output.trim_start().starts_with("REJECTED") {
-                            ctx.push_turn(
-                                round,
-                                TurnKind::Rejection,
-                                "Validator",
-                                ctx.output.clone(),
-                            );
+                            ctx.push_turn(TurnKind::Rejection, "Validator", ctx.output.clone());
                             Stage::Retry
                         } else {
                             Stage::Critique
@@ -367,18 +347,18 @@ impl Orchestrator {
                     }
                 }
                 Stage::Critique => {
-                    self.run_critics_parallel(ctx, round, &tx).await?;
+                    self.run_critics_parallel(ctx, &tx).await?;
                     Stage::Reconcile
                 }
                 Stage::Reconcile => {
-                    if ctx.reconcile_rejections(round) {
+                    if ctx.reconcile_rejections() {
                         Stage::Retry
                     } else {
                         Stage::Accept
                     }
                 }
                 Stage::Retry => {
-                    if round >= max_iterations {
+                    if ctx.round >= max_iterations {
                         Stage::Escalate("repeated rejections, iteration budget exhausted".into())
                     } else {
                         if let Some(summarizer) = self.summarizer.as_mut() {
@@ -390,10 +370,8 @@ impl Orchestrator {
                                 .sum::<u64>()
                                 / CHARS_PER_TOKEN;
                             if approx_tokens > summarizer.get_dynamic_history_limit() {
-                                summarizer
-                                    .query_stream(&self.ollama, ctx, round, &tx)
-                                    .await?;
-                                ctx.collapse_to_summary(ctx.output.clone(), round);
+                                summarizer.query_stream(&self.ollama, ctx, &tx).await?;
+                                ctx.collapse_to_summary(ctx.output.clone());
                             }
                         }
                         Stage::Plan
@@ -435,21 +413,21 @@ impl Orchestrator {
         // Debug sequences have no natural "round"; number each step so round-scoped
         // views (history_view/documents_view/context_view) still window correctly.
         for (step, role) in sequence.into_iter().enumerate() {
-            let round = step as u64 + 1;
+            ctx.round = step as u64 + 1;
 
             if role == "Librarian" {
-                self.run_librarian_retrieval(&mut ctx, round, &tx).await?;
+                self.run_librarian_retrieval(&mut ctx, &tx).await?;
             } else {
                 let kind = match role.as_str() {
                     "Architect" => {
                         self.architect
-                            .query_stream(&self.ollama, &mut ctx, round, &tx)
+                            .query_stream(&self.ollama, &mut ctx, &tx)
                             .await?;
                         TurnKind::Plan
                     }
                     "Worker" => {
                         self.worker
-                            .query_stream(&self.ollama, &mut ctx, round, &tx)
+                            .query_stream(&self.ollama, &mut ctx, &tx)
                             .await?;
                         TurnKind::Implementation
                     }
@@ -457,7 +435,7 @@ impl Orchestrator {
                         self.validator
                             .as_mut()
                             .ok_or(RuChatError::Is("Validator not enabled".into()))?
-                            .query_stream(&self.ollama, &mut ctx, round, &tx)
+                            .query_stream(&self.ollama, &mut ctx, &tx)
                             .await?;
                         TurnKind::Rejection
                     }
@@ -465,7 +443,7 @@ impl Orchestrator {
                         self.summarizer
                             .as_mut()
                             .ok_or(RuChatError::Is("Summarizer not enabled".into()))?
-                            .query_stream(&self.ollama, &mut ctx, round, &tx)
+                            .query_stream(&self.ollama, &mut ctx, &tx)
                             .await?;
                         TurnKind::Summary
                     }
@@ -478,13 +456,13 @@ impl Orchestrator {
                         self.critics
                             .get_mut(idx)
                             .ok_or(RuChatError::Is("Critic index out of bounds".into()))?
-                            .query_stream(&self.ollama, &mut ctx, round, &tx)
+                            .query_stream(&self.ollama, &mut ctx, &tx)
                             .await?;
                         TurnKind::Rejection
                     }
                     _ => return Err(RuChatError::Is(format!("Unknown agent: {role}"))),
                 };
-                ctx.push_turn(round, kind, &role, ctx.output.clone());
+                ctx.push_turn(kind, &role, ctx.output.clone());
             }
 
             ctx.print_debug_info(&tx, &role).await;
@@ -498,12 +476,7 @@ impl Orchestrator {
         Ok(())
     }
 
-    async fn handle_retrieve(
-        &mut self,
-        query_text: &str,
-        ctx: &mut Context,
-        round: u64,
-    ) -> Result<()> {
+    async fn handle_retrieve(&mut self, query_text: &str, ctx: &mut Context) -> Result<()> {
         let client = self.client.as_ref().ok_or_else(|| {
             RuChatError::Is("Retrieve tool called but no Chroma client is configured".into())
         })?;
@@ -518,7 +491,7 @@ impl Orchestrator {
         q.update_from_json(serde_json::json!({ "query": [query_text] }))?;
 
         let docs = q.query(client, &self.ollama, &model).await?;
-        ctx.push_turn(round, TurnKind::Retrieval, "Retrieve", docs);
+        ctx.push_turn(TurnKind::Retrieval, "Retrieve", docs);
         Ok(())
     }
 }
