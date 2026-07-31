@@ -8,31 +8,31 @@ repository = "https://github.com/RoelKluin/ruchat"
 version = "0.1.2"
 
 [dependencies]
-anyhow = "^1.0.102"
-async-trait = "^0.1.89"
-chroma = "0.13.2"
-chroma-types = "0.13.2"
-chrono = "0.4.44"
-clap = { version = "^4.6.0", features = ["derive", "env"] }
+anyhow = "^1.0.104"
+async-trait = "^0.1.91"
+chroma = "0.13.3"
+chroma-types = "0.13.3"
+chrono = "0.4.45"
+clap = { version = "^4.6.4", features = ["derive", "env"] }
 crossterm = "^0.29.0"
 diffy = "0.5.1"
 fs2 = "^0.4.3"
-futures-util = "0.3.32"
-http = "^1.4.0"
-log = "^0.4.29"
+futures-util = "0.3.33"
+http = "^1.5.0"
+log = "^0.4.33"
 md-5 = "^0.10.6"
-ollama-rs = { version = "^0.3.4", features = ["stream", "headers", "tool-implementations", "macros", "modelfile"] }
-regex = "1.12.3"
-reqwest = "^0.13.2"
-schemars = "^1.2.1"
-serde = { version = "^1.0.228", features = ["derive"] }
-serde_json = "^1.0.149"
-thiserror = "^2.0.18"
-tokio = "^1.50.0"
-tokio-stream = "^0.1.18"
+ollama-rs = { version = "^0.3.6", features = ["stream", "headers", "tool-implementations", "macros", "modelfile"] }
+regex = "1.13.1"
+reqwest = "^0.13.4"
+schemars = "^1.2.2"
+serde = { version = "^1.0.229", features = ["derive"] }
+serde_json = "^1.0.151"
+thiserror = "^2.0.19"
+tokio = "^1.53.1"
+tokio-stream = "^0.1.19"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
-uuid = "^1.22.0"
+uuid = "^1.24.0"
 
 [dev-dependencies]
 tempfile = "3.27.0"
