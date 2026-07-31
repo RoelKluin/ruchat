@@ -15,6 +15,7 @@ use crate::ollama::func::func;
 use crate::ollama::func::func_struct;
 use crate::ollama::OllamaArgs;
 use crate::ollama::ServerArgs;
+use crate::serde::load_merged_config;
 use crate::Result;
 use clap::{Parser, Subcommand};
 
@@ -39,8 +40,7 @@ pub(crate) struct Args {
 
 impl Args {
     pub(crate) async fn handle_request(self) -> Result<()> {
-        let mut cfg = self.config.load().await?;
-        self.config.merge_into(cfg.clone(), &mut cfg);
+        let cfg = load_merged_config(&self.config).await?;
         let default = Commands::Pipe(AskArgs::default());
         if self.verbose {
             let command_line = std::env::args().collect::<Vec<String>>().join(" ");

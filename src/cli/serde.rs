@@ -6,10 +6,14 @@ use std::path::Path;
 use tokio::fs;
 
 pub(crate) async fn load_merged_config(config_args: &ConfigArgs) -> Result<Value> {
-    let base = config_args.load().await?;
-
-    // Future: env var overrides, CLI flags will be merged on top in each subcommand
-    Ok(base)
+    // Config file (with `--profile` selection) is the sole source of subcommand
+    // defaults today. Per-flag CLI overrides are NOT merged generically at this
+    // layer — each subcommand already applies its own flags over `cfg` downstream,
+    // e.g. `ChromaClientConfigArgs::create_client`/`update_from_json`,
+    // `OllamaArgs::init`. A generic merge here would require every `*Args` struct
+    // to serialize itself to `Value`, which doesn't exist yet; tracked as a
+    // follow-up rather than implemented speculatively.
+    config_args.load().await
 }
 
 pub(crate) async fn read_config_file(config_path: &str) -> Result<Value> {

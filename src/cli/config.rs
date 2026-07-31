@@ -58,18 +58,6 @@ impl ConfigArgs {
         }
         Ok(PathBuf::from("ruchat.json"))
     }
-
-    // Merge config into target (CLI overrides win)
-    pub(crate) fn merge_into(&self, config: Value, target: &mut Value) {
-        if let Value::Object(c) = config
-            && let Value::Object(t) = target {
-                for (k, v) in c {
-                    if !v.is_null() {
-                        t.insert(k, v);
-                    }
-                }
-            }
-    }
 }
 
 #[cfg(test)]

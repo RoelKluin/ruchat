@@ -24,13 +24,12 @@ pub(crate) struct OllamaArgs {
 impl OllamaArgs {
     /// see [ServerArgs::init]
     pub(crate) async fn init(&self, default: &str, cfg: &Value) -> Result<(Ollama, Vec<String>)> {
-        // Apply config to server and model (existing update_from_json)
+        let mut server = self.server.clone();
         if let Some(s) = cfg.get("ollama").or_else(|| cfg.get("server")) {
-            let mut server = self.server.clone();
             server.update_from_json(s)?;
         }
 
-        let ollama = self.server.init()?;
+        let ollama = server.init()?;
         let mut models = Vec::new();
         for nr in 0..self.model.get_nr_of_models() {
             let model = self.model.get_model(&ollama, nr, default).await?;
