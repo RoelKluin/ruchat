@@ -1,4 +1,4 @@
-use ollama_rs::generation::completion::GenerationResponse;
+use crate::agent::event::StreamItem;
 use std::result::Result as StdResult;
 use thiserror::Error;
 
@@ -167,8 +167,7 @@ pub enum RuChatError {
     /// Error when sending a message through a channel fails.
     #[error("Channel send error: {0}")]
     ChannelError(
-        #[from]
-        tokio::sync::mpsc::error::SendError<StdResult<Vec<GenerationResponse>, Box<RuChatError>>>,
+        #[from] tokio::sync::mpsc::error::SendError<StdResult<StreamItem, Box<RuChatError>>>,
     ),
 
     /// Error when a role is invalid.
@@ -178,19 +177,6 @@ pub enum RuChatError {
     /// A general error for any other issues that don't fit into the above categories.
     #[error("Error: {0}")]
     Is(String),
-
-    // below here are not usually an error, can be used to signal a color change in the output.
-    #[error("An {0}Error\x1b[0m occurred")]
-    ColorChange(&'static str), // The payload is the ANSI code
-
-    #[error("{0}")]
-    StatusUpdate(String),
-
-    #[error("{0}")]
-    Trace(String),
-
-    #[error("Progress: {0:.2}%")]
-    Progress(f32),
 }
 
 /// A type alias for `Result` that uses `RuChatError` as the error type.

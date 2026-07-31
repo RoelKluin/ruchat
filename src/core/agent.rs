@@ -1,4 +1,5 @@
 pub(crate) mod manager;
+pub(crate) mod event;
 pub(crate) mod protocol;
 mod role;
 pub(crate) mod team;
@@ -7,6 +8,7 @@ pub(crate) mod worker;
 
 use crate::core::embed::{EmbedArgs, UpsertMode};
 use crate::core::orchestrator::TaskType;
+use event::{send_event, AgentEvent, StreamItem};
 use crate::providers::llm::ollama::get_dynamic_history_limit;
 use crate::providers::vector::chroma::query::Query;
 use crate::{Result, RuChatError, options::get_options};
@@ -145,7 +147,7 @@ impl Agent {
         &mut self,
         ollama: &Ollama,
         ctx: &mut Context,
-        tx: &mpsc::Sender<Result<Vec<GenerationResponse>>>,
+        tx: &mpsc::Sender<Result<StreamItem>>,
     ) -> Result<()> {
         let role = self.get_str("role")?.to_lowercase();
         let role = Role::from_str(role.as_str())?;
@@ -167,14 +169,10 @@ impl Agent {
             GenerationRequest::new(model.to_string(), full_prompt).options(self.options.clone());
 
         if let Ok(msg) = self.get_str("status_msg") {
-            tx.send(Err(RuChatError::StatusUpdate(msg.to_string())))
-                .await
-                .map_err(|e| RuChatError::Is(e.to_string()))?;
+            send_event(tx, AgentEvent::StatusUpdate(msg.to_string())).await?;
         }
         // Inject the color change into the stream
-        tx.send(Err(RuChatError::ColorChange(role.get_color())))
-            .await
-            .map_err(|e| RuChatError::Is(e.to_string()))?;
+        send_event(tx, AgentEvent::ColorChange(role.get_color())).await?;
 
         let mut stream = ollama
             .generate_stream(request)
@@ -182,9 +180,7 @@ impl Agent {
             .map_err(RuChatError::OllamaError)?;
         if self.get_str("status_msg").is_ok() {
             // Clear the status message after the first chunk arrives
-            tx.send(Err(RuChatError::StatusUpdate("\x1b[2K".to_string())))
-                .await
-                .map_err(|e| RuChatError::Is(e.to_string()))?;
+            send_event(tx, AgentEvent::StatusUpdate("\x1b[2K".to_string())).await?;
         }
 
         ctx.output.clear();
@@ -193,13 +189,11 @@ impl Agent {
             for resp in &chunk {
                 ctx.output.push_str(&resp.response);
             }
-            tx.send(Ok(chunk))
+            tx.send(Ok(StreamItem::Chunk(chunk)))
                 .await
                 .map_err(|e| RuChatError::Is(e.to_string()))?;
         }
-        tx.send(Err(RuChatError::ColorChange(Role::no_color())))
-            .await
-            .map_err(|e| RuChatError::Is(e.to_string()))?;
+        send_event(tx, AgentEvent::ColorChange(Role::no_color())).await?;
         self.parse_tool_call(ctx).await
     }
     pub(super) async fn execute_and_verify(&self, ctx: &mut Context) -> Result<Validation> {

@@ -1,4 +1,5 @@
 use crate::cli::prompt::PromptArgs;
+use crate::agent::event::{AgentEvent, StreamItem};
 use crate::io::Io;
 use crate::ollama::OllamaArgs;
 use crate::orchestrator::Orchestrator;
@@ -12,7 +13,7 @@ use tokio_stream::Stream;
 use tokio_stream::StreamExt;
 use serde_json::Value;
 
-type LlamaStream = Pin<Box<dyn Stream<Item = Result<Vec<GenerationResponse>>> + Send>>;
+type LlamaStream = Pin<Box<dyn Stream<Item = Result<StreamItem>> + Send>>;
 
 const DEFAULT_MODEL: &str = "qwen2.5vl:latest";
 
@@ -222,28 +223,33 @@ impl AskArgs {
                     ollama
                         .generate_stream(request)
                         .await
-                        .map(|res| res.map_err(RuChatError::OllamaError))
+                        .map(|s|
+                            s.map_ok(StreamItem::Chunk)
+                                .map_err(RuChatError::OllamaError))
                         .map_err(RuChatError::OllamaError)?,
                 )
             };
         while let Some(res) = stream.next().await {
             match res {
-                Ok(responses) => {
+                Ok(StreamItem::Chunk(responses)) => {
                     for resp in responses {
                         cio.write_line(&resp.response).await?;
                     }
                 }
-                Err(RuChatError::ColorChange(ansi_code)) => {
+                Ok(StreamItem::Event(AgentEvent::ColorChange(ansi_code))) => {
                     // Write the color code directly to the output without a newline
                     cio.write_line(ansi_code).await?;
                 }
-                Err(RuChatError::StatusUpdate(msg)) => {
+                Ok(StreamItem::Event(AgentEvent::StatusUpdate(msg))) => {
                     cio.write_line(&format!("\x1b[2m   ... {msg} \x1b[0m\r"))
                         .await?;
                 }
-                // ADD THIS: For printing persistent trace events (dimmed/gray so it doesn't clutter the main agent output)
-                Err(RuChatError::Trace(msg)) => {
+                Ok(StreamItem::Event(AgentEvent::Trace(msg))) => {
                     cio.write_line(&format!("\n\x1b[90m[TRACE] {msg}\x1b[0m\n"))
+                        .await?;
+                }
+                Ok(StreamItem::Event(AgentEvent::Progress(pct))) => {
+                    cio.write_line(&format!("\x1b[2m   ... {pct:.0}% \x1b[0m\r"))
                         .await?;
                 }
                 Err(e) => return Err(e), // Real errors still break the loop

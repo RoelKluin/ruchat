@@ -1,5 +1,5 @@
-use crate::{Result, RuChatError};
-use ollama_rs::generation::completion::GenerationResponse;
+use crate::agent::{AgentEvent, StreamItem};
+use crate::Result;
 use serde_json::Value;
 use tokio::sync::mpsc;
 
@@ -62,14 +62,10 @@ impl Context {
     pub(crate) fn is_approved(&self) -> bool {
         self.turns.iter().all(|t| t.kind != TurnKind::Rejection)
     }
-    pub(crate) async fn trace(
-        &mut self,
-        tx: &mpsc::Sender<Result<Vec<GenerationResponse>>>,
-        err: String,
-    ) {
+    pub(crate) async fn trace(&mut self, tx: &mpsc::Sender<Result<StreamItem>>, err: String) {
         if !err.is_empty() {
             self.push_turn(TurnKind::Rejection, "Validator", err.clone());
-            tx.send(Err(RuChatError::Trace(err))).await.ok();
+            let _ = tx.send(Ok(StreamItem::Event(AgentEvent::Trace(err)))).await;
         }
         let trace_output = format!(
             "# Orchestration Trace\n\n## Goal\n{}\n\n## Context\n{}\n\n## History\n{}\n",
@@ -167,7 +163,7 @@ impl Context {
     }
     pub(crate) async fn print_debug_info(
         &mut self,
-        tx: &mpsc::Sender<Result<Vec<GenerationResponse>>>,
+        tx: &mpsc::Sender<Result<StreamItem>>,
         role: &str,
     ) {
         let context = self.context_view();

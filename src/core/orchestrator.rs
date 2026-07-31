@@ -1,13 +1,13 @@
 mod git;
 pub(super) mod task;
 
+use crate::agent::event::StreamItem;
 use crate::agent::protocol::{ToolCall, Validation};
 use crate::agent::types::{Context, TurnKind};
 use crate::agent::Agent;
 use crate::providers::vector::chroma::ChromaClientConfigArgs;
 use crate::{Result, RuChatError};
 use chroma::ChromaHttpClient;
-use ollama_rs::generation::completion::GenerationResponse;
 use ollama_rs::Ollama;
 use serde_json::Value;
 pub(super) use task::TaskType;
@@ -15,7 +15,7 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::Stream;
 // Define what the UI receives
-pub type OrchestratorResult = Result<Vec<GenerationResponse>>;
+pub type OrchestratorResult = Result<StreamItem>;
 use crate::providers::vector::chroma::query::Query;
 use git::commit_feature_branch;
 use serde::Deserialize;
@@ -186,7 +186,7 @@ impl Orchestrator {
     async fn run_critics_parallel(
         &mut self,
         ctx: &mut Context,
-        tx: &mpsc::Sender<Result<Vec<GenerationResponse>>>,
+        tx: &mpsc::Sender<OrchestratorResult>,
     ) -> Result<()> {
         let snapshot_output = ctx.output.clone();
         let snapshot_plan_impl = ctx.context_view();
@@ -227,7 +227,7 @@ impl Orchestrator {
     async fn run_librarian_retrieval(
         &mut self,
         ctx: &mut Context,
-        tx: &mpsc::Sender<Result<Vec<GenerationResponse>>>,
+        tx: &mpsc::Sender<OrchestratorResult>,
     ) -> Result<()> {
         let client = self.client.as_ref().ok_or_else(|| {
             RuChatError::Is("Librarian provided without chroma client config".into())
@@ -260,7 +260,7 @@ impl Orchestrator {
     async fn run_stage_machine(
         &mut self,
         goal: String,
-        tx: mpsc::Sender<Result<Vec<GenerationResponse>>>,
+        tx: mpsc::Sender<OrchestratorResult>,
     ) -> Result<()> {
         let max_iterations = self
             .orchestrator_config
@@ -392,7 +392,7 @@ impl Orchestrator {
         &mut self,
         goal: String,
         path: String,
-        tx: mpsc::Sender<Result<Vec<GenerationResponse>>>,
+        tx: mpsc::Sender<OrchestratorResult>,
     ) -> Result<()> {
         let debug_json: Value = serde_json::from_str(&tokio::fs::read_to_string(path).await?)?;
         let sequence: Vec<String> = debug_json["sequence"]
