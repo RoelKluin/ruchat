@@ -8,8 +8,6 @@ use tokio::process::Command;
 pub(crate) enum Tool {
     Memorize { content: String },
     ApplyPatch { diff: String },
-    // FIXME: remove:
-    Shell { command: String },
 }
 
 pub(crate) struct ToolCall {
