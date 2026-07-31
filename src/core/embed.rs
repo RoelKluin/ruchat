@@ -10,7 +10,7 @@ use md5::{Digest, Md5};
 use ollama_rs::generation::embeddings::request::{EmbeddingsInput, GenerateEmbeddingsRequest};
 use serde::Deserialize;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::result::Result as StdResult;
 use uuid::Builder;
 
@@ -130,12 +130,17 @@ impl EmbedArgs {
         let mut final_docs = Vec::new();
         let mut final_metadatas = Vec::new();
 
+        // Batched existence check: one round trip for all chunk IDs instead of
+        // one `collection.get()` per chunk. `.get()` returning an error (e.g.
+        // collection empty) is treated the same as "nothing exists yet".
+        let existing_ids: HashSet<String> = collection
+            .get(Some(chunk_ids.clone()), None, None, None, None)
+            .await
+            .map(|r| r.ids.into_iter().collect())
+            .unwrap_or_default();
+
         for (i, id) in chunk_ids.iter().enumerate() {
-            // Deduplication check: only act if record is missing or we are in Upsert mode
-            let exists = collection
-                .get(Some(vec![id.clone()]), None, None, None, None)
-                .await
-                .is_ok();
+            let exists = existing_ids.contains(id);
 
             if mode == UpsertMode::Upsert || !exists {
                 let mut meta = chunk_metadatas
