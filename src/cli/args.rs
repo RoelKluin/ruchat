@@ -17,7 +17,8 @@ use crate::ollama::OllamaArgs;
 use crate::ollama::ServerArgs;
 use crate::serde::load_merged_config;
 use crate::Result;
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
+use clap_complete::Shell;
 
 /// Main command line interface for RuChat.
 ///
@@ -36,6 +37,12 @@ pub(crate) struct Args {
 
     #[command(flatten)]
     pub config: ConfigArgs,
+}
+
+#[derive(Parser, Debug, Clone, PartialEq)]
+pub(crate) struct CompletionsArgs {
+    #[arg(value_enum)]
+    pub shell: Shell,
 }
 
 impl Args {
@@ -64,6 +71,17 @@ impl Args {
             Commands::ChromaLs(args) => args.ls(&cfg).await,
             Commands::ChromaDelete(args) => args.delete(&cfg).await,
             Commands::Manager(args) => Manager::execute_command(args, &cfg).await,
+            Commands::Completions(args) => {
+                let mut cmd = Args::command();
+                let name = cmd.get_name().to_string();
+                clap_complete::generate(args.shell, &mut cmd, name, &mut std::io::stdout());
+                Ok(())
+            }
+            Commands::Manpage => {
+                let man = clap_mangen::Man::new(Args::command());
+                man.render(&mut std::io::stdout())?;
+                Ok(())
+            }
         }
     }
 }
@@ -109,6 +127,10 @@ pub(crate) enum Commands {
     ChromaDelete(ChromaDeleteArgs),
     /// Manage agents.
     Manager(ManagerArgs),
+    /// Generate shell completions (e.g. `ruchat completions bash > ruchat.bash`).
+    Completions(CompletionsArgs),
+    /// Generate a man page to stdout (e.g. `ruchat manpage > ruchat.1`).
+    Manpage,
 }
 
 #[cfg(test)]

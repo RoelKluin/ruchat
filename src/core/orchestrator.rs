@@ -21,6 +21,7 @@ pub type OrchestratorResult = Result<StreamItem>;
 use crate::providers::vector::chroma::query::Query;
 use git::commit_feature_branch;
 use serde::Deserialize;
+use crate::retry_transient;
 
 #[derive(Debug, Clone, PartialEq)]
 enum Stage {
@@ -227,9 +228,7 @@ impl Orchestrator {
             scratch.round = round;
             let ollama = &self.ollama;
             futs.push(async move {
-                critic
-                    .query_stream(ollama, &mut scratch, tx)
-                    .await
+                retry_transient!(critic.query_stream(ollama, &mut scratch, tx))
                     .map(|_| (scratch.output, approval_signal))
             });
         }
@@ -256,7 +255,7 @@ impl Orchestrator {
             .as_mut()
             .ok_or_else(|| RuChatError::Is("Librarian not enabled".into()))?;
 
-        librarian.query_stream(&self.ollama, ctx, tx).await?;
+        retry_transient!(librarian.query_stream(&self.ollama, ctx, tx))?;
 
         let mut q = Query::default();
         if let Ok(json_val) = serde_json::from_str::<Value>(&ctx.output) {
@@ -321,7 +320,7 @@ impl Orchestrator {
                     if ctx.round > max_iterations {
                         Stage::Escalate("max iterations reached without acceptance".into())
                     } else {
-                        self.architect.query_stream(&self.ollama, ctx, &tx).await?;
+                        retry_transient!(self.architect.query_stream(&self.ollama, ctx, &tx))?;
                         ctx.push_turn(TurnKind::Plan, "Architect", ctx.output.clone());
                         Stage::Retrieve
                     }
@@ -333,7 +332,7 @@ impl Orchestrator {
                     Stage::Implement
                 }
                 Stage::Implement => {
-                    self.worker.query_stream(&self.ollama, ctx, &tx).await?;
+                    retry_transient!(self.worker.query_stream(&self.ollama, ctx, &tx))?;
 
                     if let Ok(call) = tools::parse_tool_call(&ctx.output)
                         && matches!(
@@ -344,7 +343,7 @@ impl Orchestrator {
                     {
                         retrieve_budget -= 1;
                         self.handle_structured_tool(&call, ctx).await?;
-                        self.worker.query_stream(&self.ollama, ctx, &tx).await?;
+                        retry_transient!(self.worker.query_stream(&self.ollama, ctx, &tx))?;
                     }
                     ctx.push_turn(TurnKind::Implementation, "Worker", ctx.output.clone());
 
@@ -367,7 +366,7 @@ impl Orchestrator {
                 }
                 Stage::Validate => {
                     if let Some(validator) = self.validator.as_mut() {
-                        validator.query_stream(&self.ollama, ctx, &tx).await?;
+                        retry_transient!(validator.query_stream(&self.ollama, ctx, &tx))?;
                         if ctx.output.trim_start().starts_with("REJECTED") {
                             ctx.push_turn(TurnKind::Rejection, "Validator", ctx.output.clone());
                             Stage::Retry
@@ -400,7 +399,7 @@ impl Orchestrator {
                                 .map(|t| crate::agent::tokens::count_tokens(&t.content))
                                 .sum();
                             if approx_tokens > summarizer.get_dynamic_history_limit() {
-                                summarizer.query_stream(&self.ollama, ctx, &tx).await?;
+                                retry_transient!(summarizer.query_stream(&self.ollama, ctx, &tx))?;
                                 ctx.collapse_to_summary(ctx.output.clone());
                             }
                         }
