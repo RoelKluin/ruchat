@@ -138,9 +138,17 @@ impl ChromaClientConfigArgs {
     }
 
     pub(crate) fn update_from_json(&mut self, val: &Value) -> Result<()> {
+        // Shorthand form: a bare string is treated as `chroma_server`,
+        // mirroring `ServerArgs::update_from_json` and matching the format
+        // actually shipped in `ruchat.json` (`"chroma": "http://localhost:8000"`).
+        // Object form is still supported for full per-field overrides.
+        if let Some(server_str) = val.as_str() {
+            self.chroma_server = server_str.to_string();
+            return Ok(());
+        }
         val.as_object()
             .ok_or_else(|| {
-                anyhow::anyhow!("Expected a JSON object to update ChromaClientConfigArgs")
+                anyhow::anyhow!("Expected a JSON object or string to update ChromaClientConfigArgs")
             })?
             .iter()
             .for_each(|(key, value)| match key.as_str() {
@@ -177,5 +185,19 @@ impl Default for ChromaClientConfigArgs {
             tenant_id: Some("default_tenant".to_string()),
             chroma_database: Some("default".to_string()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_shipped_ruchat_json_chroma_shorthand() {
+        let cfg: Value = serde_json::from_str(include_str!("../../../../ruchat.json")).unwrap();
+        let profile = &cfg["profiles"]["default"];
+        let mut args = ChromaClientConfigArgs::default();
+        args.update_from_json(&profile["chroma"]).unwrap();
+        assert_eq!(args.chroma_server, "http://localhost:8000");
     }
 }
