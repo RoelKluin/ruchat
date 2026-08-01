@@ -1,5 +1,5 @@
 use crate::chroma::{ChromaClientConfigArgs, WhereArgs};
-use crate::{Result, RuChatError};
+use crate::{retry_transient, Result, RuChatError};
 use clap::Parser;
 use log::info;
 use serde_json::Value;
@@ -59,18 +59,22 @@ impl ChromaDeleteArgs {
                 _ => self.limit,
             };
 
-            collection_handle
-                .delete(ids, where_clause, limit)
-                .await
-                .map_err(RuChatError::ChromaHttpClientError)?;
+            retry_transient!(async {
+                collection_handle
+                    .delete(ids.clone(), where_clause.clone(), limit)
+                    .await
+                    .map_err(RuChatError::ChromaHttpClientError)
+            })?;
 
             info!("Delete with ids and where");
         } else if self.force {
             // Original behavior: Delete the entire collection via the client
-            client
-                .delete_collection(&self.collection)
-                .await
-                .map_err(RuChatError::ChromaHttpClientError)?;
+            retry_transient!(async {
+                client
+                    .delete_collection(&self.collection)
+                    .await
+                    .map_err(RuChatError::ChromaHttpClientError)
+            })?;
 
             info!("Deleted entire collection: {}", self.collection);
         } else {

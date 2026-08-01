@@ -4,7 +4,7 @@ use crate::chroma::{
     WhereArgs,
 };
 use crate::ollama::OllamaArgs;
-use crate::{Result, RuChatError};
+use crate::{retry_transient, Result, RuChatError};
 use chroma::types::SearchPayload;
 use chroma::types::{Key, QueryVector, RankExpr};
 use chroma::ChromaCollection;
@@ -81,7 +81,8 @@ impl RetrieveArgs {
             .create_client(cfg)
             .await
             .map_err(RuChatError::AnyhowError)?;
-        let collection = self.collection.get_collection(&client, "default").await?;
+        let collection =
+            retry_transient!(async { self.collection.get_collection(&client, "default").await })?;
 
         let mode = self.determine_mode()?;
 
@@ -145,10 +146,18 @@ impl RetrieveArgs {
         let where_cond = self.r#where.parse()?;
         let include_list = self.include.parse()?;
 
-        let mut result = collection
-            .get(ids_vec, where_cond, self.limit, self.offset, include_list)
-            .await
-            .map_err(RuChatError::ChromaHttpClientError)?;
+        let mut result = retry_transient!(async {
+            collection
+                .get(
+                    ids_vec.clone(),
+                    where_cond.clone(),
+                    self.limit,
+                    self.offset,
+                    include_list.clone(),
+                )
+                .await
+                .map_err(RuChatError::ChromaHttpClientError)
+        })?;
 
         let _ = ChromaResponse::Get(&mut result).render(&self.output);
         Ok(())
@@ -184,16 +193,18 @@ impl RetrieveArgs {
 
         let include = self.include.parse()?;
 
-        let mut result = collection
-            .query(
-                embeddings,
-                self.n_results.or(self.limit),
-                where_cond,
-                restrict_ids,
-                include,
-            )
-            .await
-            .map_err(RuChatError::ChromaHttpClientError)?;
+        let mut result = retry_transient!(async {
+            collection
+                .query(
+                    embeddings.clone(),
+                    self.n_results.or(self.limit),
+                    where_cond.clone(),
+                    restrict_ids.clone(),
+                    include.clone(),
+                )
+                .await
+                .map_err(RuChatError::ChromaHttpClientError)
+        })?;
 
         let query_texts = vec![query_text.clone()];
         rerank_query_results(&query_texts, &mut result, &RerankWeights::default());
@@ -229,10 +240,12 @@ impl RetrieveArgs {
             })
             .unwrap_or(ReadLevel::IndexAndWal);
 
-        let mut result = collection
-            .search_with_options(vec![search_payload], read_level)
-            .await
-            .map_err(RuChatError::ChromaHttpClientError)?;
+        let mut result = retry_transient!(async {
+            collection
+                .search_with_options(vec![search_payload.clone()], read_level)
+                .await
+                .map_err(RuChatError::ChromaHttpClientError)
+        })?;
 
         let _ = ChromaResponse::Search(&mut result).render(&self.output);
         Ok(())

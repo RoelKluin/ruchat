@@ -1,5 +1,5 @@
 use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs};
-use crate::{Result, RuChatError};
+use crate::{retry_transient, Result, RuChatError};
 use clap::Parser;
 use log::info;
 use serde_json::Value;
@@ -32,10 +32,12 @@ impl ForkArgs {
         let collection = self.collection.get_collection(&client, "default").await?;
 
         // Perform the fork operation
-        let forked_collection = collection
-            .fork(&self.new_name)
-            .await
-            .map_err(RuChatError::ChromaHttpClientError)?;
+        let forked_collection = retry_transient!(async {
+            collection
+                .fork(&self.new_name)
+                .await
+                .map_err(RuChatError::ChromaHttpClientError)
+        })?;
 
         // Log the resulting collection handle
         info!("Fork result: {:?}", forked_collection);

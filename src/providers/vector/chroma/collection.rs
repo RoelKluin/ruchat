@@ -1,4 +1,4 @@
-use crate::{Result, RuChatError};
+use crate::{retry_transient, Result, RuChatError};
 use chroma::types::{Metadata, Schema};
 use chroma::{ChromaCollection, ChromaHttpClient};
 use clap::Parser;
@@ -22,9 +22,13 @@ impl ChromaCollectionConfigArgs {
         if self.collection.is_empty() {
             return Err(RuChatError::NoCollectionSpecified);
         }
-        let collection: ChromaCollection = client
-            .get_or_create_collection(self.collection.as_str(), schema, metadata)
-            .await?;
+        let name = self.collection.as_str();
+        let collection: ChromaCollection = retry_transient!(async {
+            client
+                .get_or_create_collection(name, schema.clone(), metadata.clone())
+                .await
+                .map_err(RuChatError::from)
+        })?;
         Ok(collection)
     }
     pub(crate) async fn get_collection(
@@ -40,7 +44,12 @@ impl ChromaCollectionConfigArgs {
         } else {
             self.collection.as_str()
         };
-        let collection = client.get_collection(collection_name).await?;
+        let collection = retry_transient!(async {
+            client
+                .get_collection(collection_name)
+                .await
+                .map_err(RuChatError::from) // same verification note as above
+        })?;
         Ok(collection)
     }
     pub(crate) fn name(&self) -> &str {

@@ -4,7 +4,7 @@ use crate::chroma::{
     WhereArgs,
 };
 use crate::ollama::OllamaArgs;
-use crate::{Result, RuChatError};
+use crate::{retry_transient, Result, RuChatError};
 use chroma::ChromaHttpClient;
 use clap::Parser;
 use log::warn;
@@ -74,9 +74,18 @@ impl Query {
 
         let include = self.include.parse()?;
 
-        let mut query_result = collection
-            .query(query_embeddings, self.n_results, r#where, ids, include)
-            .await?;
+        let mut query_result = retry_transient!(async {
+            collection
+                .query(
+                    query_embeddings.clone(),
+                    self.n_results,
+                    r#where.clone(),
+                    ids.clone(),
+                    include.clone(),
+                )
+                .await
+                .map_err(RuChatError::from)
+        })?;
         rerank_query_results(&self.query, &mut query_result, &RerankWeights::default());
         ChromaResponse::Query(&mut query_result).as_string(&self.output)
     }

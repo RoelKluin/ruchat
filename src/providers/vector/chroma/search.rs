@@ -1,7 +1,7 @@
 use crate::chroma::{
     ChromaClientConfigArgs, ChromaCollectionConfigArgs, ChromaResponse, OutputArgs,
 };
-use crate::{Result, RuChatError};
+use crate::{retry_transient, Result, RuChatError};
 use chroma::types::SearchPayload;
 use chroma::types::{Key, QueryVector, RankExpr};
 use chroma_types::plan::ReadLevel;
@@ -74,15 +74,19 @@ impl SearchArgs {
             };
 
             // 3. Execute with options
-            collection
-                .search_with_options(vec![search_payload], read_level)
-                .await
-                .map_err(RuChatError::ChromaHttpClientError)?
+            retry_transient!(async {
+                collection
+                    .search_with_options(vec![search_payload.clone()], read_level)
+                    .await
+                    .map_err(RuChatError::from)
+            })?
         } else {
-            collection
-                .search(vec![search_payload])
-                .await
-                .map_err(RuChatError::ChromaHttpClientError)?
+            retry_transient!(async {
+                collection
+                    .search(vec![search_payload.clone()])
+                    .await
+                    .map_err(RuChatError::from)
+            })?
         };
         ChromaResponse::Search(&mut search_result).render(&self.output)
     }

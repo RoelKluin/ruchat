@@ -2,7 +2,7 @@ use crate::chroma::{
     ChromaClientConfigArgs, ChromaCollectionConfigArgs, ChromaResponse, IncludeArgs, OutputArgs,
     WhereArgs,
 };
-use crate::{Result, RuChatError};
+use crate::{retry_transient, Result, RuChatError};
 use clap::Parser;
 use serde_json::Value;
 
@@ -59,10 +59,18 @@ impl GetArgs {
 
         let include_list = self.include.parse()?;
 
-        let mut get_result = collection
-            .get(ids, r#where, self.limit, self.offset, include_list)
-            .await
-            .map_err(RuChatError::ChromaHttpClientError)?;
+        let mut get_result = retry_transient!(async {
+            collection
+                .get(
+                    ids.clone(),
+                    r#where.clone(),
+                    self.limit,
+                    self.offset,
+                    include_list.clone(),
+                )
+                .await
+                .map_err(RuChatError::from)
+        })?;
         ChromaResponse::Get(&mut get_result).render(&self.output)
     }
 }

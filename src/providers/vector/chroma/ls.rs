@@ -1,5 +1,5 @@
 use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs};
-use crate::{Result, RuChatError};
+use crate::{retry_transient, Result, RuChatError};
 use chroma::types::IndexStatusResponse;
 use clap::Parser;
 use serde::Serialize;
@@ -50,10 +50,12 @@ impl ChromaLsArgs {
 
         // Determine if we are listing all or one specific collection
         let collections = if self.collection.name().is_empty() {
-            client
-                .list_collections(100, None)
-                .await
-                .map_err(RuChatError::ChromaHttpClientError)?
+            retry_transient!(async {
+                client
+                    .list_collections(100, None)
+                    .await
+                    .map_err(RuChatError::ChromaHttpClientError)
+            })?
         } else {
             vec![self.collection.get_collection(&client, "").await?]
         };
@@ -61,19 +63,20 @@ impl ChromaLsArgs {
         let mut results = Vec::new();
 
         for col in collections {
-            let count = col
-                .count()
-                .await
-                .map_err(RuChatError::ChromaHttpClientError)?;
+            let count = retry_transient!(async {
+                col.count()
+                    .await
+                    .map_err(RuChatError::ChromaHttpClientError)
+            })?;
 
             let (schema, indexing_status) = if self.long {
                 (
                     col.schema().clone(),
-                    Some(
+                    Some(retry_transient!(async {
                         col.get_indexing_status()
                             .await
-                            .map_err(RuChatError::ChromaHttpClientError)?,
-                    ),
+                            .map_err(RuChatError::ChromaHttpClientError)
+                    })?),
                 )
             } else {
                 (None, None)

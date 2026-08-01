@@ -1,6 +1,6 @@
 use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs, UpdateMetadataArrayArgs};
 use crate::ollama::OllamaArgs;
-use crate::{Result, RuChatError};
+use crate::{retry_transient, Result, RuChatError};
 use chroma::types::UpdateMetadataValue;
 use chroma::types::{Metadata, MetadataValue, UpdateMetadata};
 use chrono::Utc;
@@ -152,11 +152,14 @@ impl EmbedArgs {
         // Batched existence check: one round trip for all chunk IDs instead of
         // one `collection.get()` per chunk. `.get()` returning an error (e.g.
         // collection empty) is treated the same as "nothing exists yet".
-        let existing_ids: HashSet<String> = collection
-            .get(Some(chunk_ids.clone()), None, None, None, None)
-            .await
-            .map(|r| r.ids.into_iter().collect())
-            .unwrap_or_default();
+        let existing_ids: HashSet<String> = retry_transient!(async {
+            collection
+                .get(Some(chunk_ids.clone()), None, None, None, None)
+                .await
+                .map(|r| r.ids.into_iter().collect())
+                .map_err(RuChatError::from)
+        })
+        .unwrap_or_default();
 
         for (i, id) in chunk_ids.iter().enumerate() {
             let exists = existing_ids.contains(id);
@@ -225,32 +228,50 @@ impl EmbedArgs {
                     })
                     .transpose()
                     .map_err(|e| RuChatError::MetadataConversionError(e.to_string()))?;
-                collection
-                    .add(chunk_ids, embeddings, docs_to_send, None, metadatas_to_send)
-                    .await
-                    .map_err(RuChatError::ChromaHttpClientError)?;
+                retry_transient!(async {
+                    collection
+                        .add(
+                            chunk_ids.clone(),
+                            embeddings.clone(),
+                            docs_to_send.clone(),
+                            None,
+                            metadatas_to_send.clone(),
+                        )
+                        .await
+                        .map_err(RuChatError::ChromaHttpClientError)
+                })?;
                 info!("Added records");
             }
             UpsertMode::Update => {
                 // Map embeddings for Update (Update accepts Option<Vec<Option<Vec<f32>>>>)
                 let update_embeddings = Some(embeddings.into_iter().map(Some).collect());
-                collection
-                    .update(
-                        chunk_ids,
-                        update_embeddings,
-                        docs_to_send,
-                        None,
-                        metadatas_to_send,
-                    )
-                    .await
-                    .map_err(RuChatError::ChromaHttpClientError)?;
+                retry_transient!(async {
+                    collection
+                        .update(
+                            chunk_ids.clone(),
+                            update_embeddings.clone(),
+                            docs_to_send.clone(),
+                            None,
+                            metadatas_to_send.clone(),
+                        )
+                        .await
+                        .map_err(RuChatError::ChromaHttpClientError)
+                })?;
                 info!("Updated Records");
             }
             UpsertMode::Upsert => {
-                collection
-                    .upsert(chunk_ids, embeddings, docs_to_send, None, metadatas_to_send)
-                    .await
-                    .map_err(RuChatError::ChromaHttpClientError)?;
+                retry_transient!(async {
+                    collection
+                        .upsert(
+                            chunk_ids.clone(),
+                            embeddings.clone(),
+                            docs_to_send.clone(),
+                            None,
+                            metadatas_to_send.clone(),
+                        )
+                        .await
+                        .map_err(RuChatError::ChromaHttpClientError)
+                })?;
                 info!("Upserted records");
             }
         }
