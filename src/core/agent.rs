@@ -1,5 +1,6 @@
 pub(crate) mod manager;
 pub(crate) mod event;
+pub(crate) mod json_extract;
 pub(crate) mod pipeline;
 pub(crate) mod protocol;
 mod role;

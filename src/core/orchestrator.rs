@@ -19,6 +19,7 @@ use tokio_stream::Stream;
 // Define what the UI receives
 pub type OrchestratorResult = Result<StreamItem>;
 use crate::providers::vector::chroma::query::Query;
+use super::agent::json_extract::strip_json_fences;
 use git::commit_feature_branch;
 use serde::Deserialize;
 use crate::retry_transient;
@@ -45,20 +46,6 @@ struct ValidatorVerdict {
     verdict: String,
     #[serde(default)]
     reason: String,
-}
-
-/// Strips common ```json fences before parsing — small models routinely wrap
-/// structured output this way despite being told not to. Returns `None` on
-/// anything unparseable; caller treats `None` as a rejection, not a pass,
-/// to avoid repeating the substring-prefix fragility this replaces.
-fn parse_validator_verdict(output: &str) -> Option<ValidatorVerdict> {
-    let cleaned = output
-        .trim()
-        .trim_start_matches("```json")
-        .trim_start_matches("```")
-        .trim_end_matches("```")
-        .trim();
-    serde_json::from_str(cleaned).ok()
 }
 
 pub(crate) struct Orchestrator {
@@ -294,14 +281,43 @@ impl Orchestrator {
         retry_transient!(librarian.query_stream(&self.ollama, ctx, tx))?;
 
         let mut q = Query::default();
-        if let Ok(json_val) = serde_json::from_str::<Value>(&ctx.output) {
-            let _ = q.update_from_json(json_val);
-        } else {
-            ctx.trace(
-                tx,
-                "Librarian did not output valid JSON query — skipping RAG".to_string(),
-            )
-            .await;
+        match serde_json::from_str::<Value>(strip_json_fences(&ctx.output)) {
+            Ok(json_val) => {
+                let _ = q.update_from_json(json_val);
+            }
+            Err(parse_err) => {
+                // One corrective re-ask before giving up, mirroring the
+                // Validator's "unparseable == not silently ignored" stance.
+                ctx.trace(
+                    tx,
+                    format!(
+                        "Librarian output was not valid JSON ({parse_err}); re-prompting once."
+                    ),
+                )
+                .await;
+                ctx.push_turn(
+                    crate::agent::types::TurnKind::System,
+                    "System",
+                    format!(
+                        "Your previous response was not valid JSON: {parse_err}. \
+                         Return ONLY the JSON object described in your instructions, \
+                         no fences, no preamble."
+                    ),
+                );
+                retry_transient!(librarian.query_stream(&self.ollama, ctx, tx))?;
+                match serde_json::from_str::<Value>(strip_json_fences(&ctx.output)) {
+                    Ok(json_val) => {
+                        let _ = q.update_from_json(json_val);
+                    }
+                    Err(e2) => {
+                        ctx.trace(
+                            tx,
+                            format!("Librarian still not valid JSON after retry ({e2}) — skipping RAG"),
+                        )
+                        .await;
+                    }
+                }
+            }
         }
 
         let docs = librarian
@@ -403,7 +419,8 @@ impl Orchestrator {
                 Stage::Validate => {
                     if let Some(validator) = self.validator.as_mut() {
                         retry_transient!(validator.query_stream(&self.ollama, ctx, &tx))?;
-                        match parse_validator_verdict(&ctx.output) {
+                        let stripped = strip_json_fences(&ctx.output);
+                        match serde_json::from_str::<ValidatorVerdict>(stripped).ok() {
                             Some(v) if v.verdict.eq_ignore_ascii_case("REJECTED") => {
                                 ctx.push_turn(TurnKind::Rejection, "Validator", v.reason);
                                 Stage::Retry
