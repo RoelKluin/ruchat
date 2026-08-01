@@ -114,7 +114,8 @@ impl Role {
             }
             Role::Validator => format!(
                 "{system}\n{task}WORKER_OUTPUT: {}.\n\
-                If flawed, respond with 'REJECTED: [reason]'. If perfect, respond with 'VALIDATED'.",
+                Respond with ONLY a JSON object, no preamble or fencing:\n\
+                {{\"verdict\": \"VALIDATED\" | \"REJECTED\", \"reason\": \"<string, empty if VALIDATED>\"}}",
                 ctx.output
             ),
             _ => format!(

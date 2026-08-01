@@ -40,6 +40,27 @@ enum Stage {
     Done,
 }
 
+#[derive(serde::Deserialize)]
+struct ValidatorVerdict {
+    verdict: String,
+    #[serde(default)]
+    reason: String,
+}
+
+/// Strips common ```json fences before parsing — small models routinely wrap
+/// structured output this way despite being told not to. Returns `None` on
+/// anything unparseable; caller treats `None` as a rejection, not a pass,
+/// to avoid repeating the substring-prefix fragility this replaces.
+fn parse_validator_verdict(output: &str) -> Option<ValidatorVerdict> {
+    let cleaned = output
+        .trim()
+        .trim_start_matches("```json")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim();
+    serde_json::from_str(cleaned).ok()
+}
+
 pub(crate) struct Orchestrator {
     // Core pipeline
     architect: Agent,
@@ -382,11 +403,25 @@ impl Orchestrator {
                 Stage::Validate => {
                     if let Some(validator) = self.validator.as_mut() {
                         retry_transient!(validator.query_stream(&self.ollama, ctx, &tx))?;
-                        if ctx.output.trim_start().starts_with("REJECTED") {
-                            ctx.push_turn(TurnKind::Rejection, "Validator", ctx.output.clone());
-                            Stage::Retry
-                        } else {
-                            Stage::Critique
+                        match parse_validator_verdict(&ctx.output) {
+                            Some(v) if v.verdict.eq_ignore_ascii_case("REJECTED") => {
+                                ctx.push_turn(TurnKind::Rejection, "Validator", v.reason);
+                                Stage::Retry
+                            }
+                            Some(_) => Stage::Critique,
+                            None => {
+                                // Conservative: unparseable verdict is treated
+                                // as a rejection rather than silently passing.
+                                ctx.push_turn(
+                                    TurnKind::Rejection,
+                                    "Validator",
+                                    format!(
+                                        "Validator produced unparseable output: {}",
+                                        ctx.output
+                                    ),
+                                );
+                                Stage::Retry
+                            }
                         }
                     } else {
                         Stage::Critique
