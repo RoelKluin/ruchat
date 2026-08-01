@@ -81,6 +81,18 @@ impl Io {
         self.stdout.flush().await?;
         Ok(())
     }
+
+    /// Returns the cursor to column 0 and clears to end of line — use before
+    /// writing real content whenever a `\r`-based status/spinner line may
+    /// still be showing. A bare `\r` alone (as previously used for status
+    /// updates) does NOT clear trailing characters from a longer prior
+    /// frame, which is what produces interleaved/corrupted output when a
+    /// status line and streamed content share the same line.
+    pub(crate) async fn clear_status_line(&mut self) -> Result<(), RuChatError> {
+        self.stdout.write_all(b"\r\x1b[2K").await?;
+        self.stdout.flush().await?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

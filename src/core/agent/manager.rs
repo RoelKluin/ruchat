@@ -1,7 +1,10 @@
+use crate::agent::pipeline::AgentPipeline;
 use crate::agent::worker::Agent;
 use crate::agent::Team;
+use crate::io::Io;
 use crate::ollama::ServerArgs;
 use crate::serde::{load_manager, save_manager}; // We will add these
+use crate::tui::render::render_pipeline_stream;
 use crate::{Result, RuChatError};
 use clap::{Parser, Subcommand};
 use ollama_rs::Ollama;
@@ -79,8 +82,14 @@ impl Manager {
             }
             ManagerCommands::Run => {
                 let mut manager = load_manager(config_path.as_str()).await?;
-                // We pass the ollama instance down to the team -> agent
-                manager.run_active(&ollama).await?;
+                let idx = manager.active_team;
+                if idx >= manager.teams.len() {
+                    return Err(RuChatError::ActiveTeamIndexOutOfBounds);
+                }
+                let team = manager.teams.remove(idx);
+                let pipeline = AgentPipeline::Team { team, ollama };
+                let mut cio = Io::new();
+                render_pipeline_stream(pipeline.run(), &mut cio).await?;
             }
             ManagerCommands::List => {
                 let manager = load_manager(config_path.as_str()).await?;

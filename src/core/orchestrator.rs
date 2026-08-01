@@ -655,7 +655,7 @@ impl OrchestratorRun {
     }
 }
 
-#[async_trait::async_trait]
+/*#[async_trait::async_trait]
 impl AgentPipeline for OrchestratorRun {
     /// `ollama` is ignored — `Orchestrator` already owns its own client,
     /// set at construction time via `Orchestrator::new`.
@@ -671,4 +671,4 @@ impl AgentPipeline for OrchestratorRun {
                 .await
         }
     }
-}
+}*/

@@ -7,12 +7,15 @@ use crate::{Result, RuChatError};
 use clap::Parser;
 use futures_util::TryStreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
-use ollama_rs::{Ollama, generation::completion::request::GenerationRequest, models::ModelOptions};
+use ollama_rs::models::ModelOptions;
 use std::pin::Pin;
 use std::io::Write as _;
 use tokio_stream::Stream;
 use tokio_stream::StreamExt;
 use serde_json::Value;
+use crate::agent::pipeline::AgentPipeline;
+use std::sync::Arc;
+use ollama_rs::generation::chat::ChatMessage;
 
 type LlamaStream = Pin<Box<dyn Stream<Item = Result<StreamItem>> + Send>>;
 
@@ -72,10 +75,14 @@ pub(crate) struct AskArgs {
 
 // Reusable generation logic for Agents
 pub(crate) async fn generate_oneshot(
-    ollama: &Ollama,
+    ollama: &dyn crate::agent::llm_client::LlmClient,
     model: &str,
     prompt: &str,
-    options: Option<ModelOptions>,
+    _options: Option<ModelOptions>, // NEEDS WIRING: ChatMessageRequest's options
+                                     // builder method name needs confirming
+                                     // against ollama-rs source (likely
+                                     // `.options(...)` mirroring GenerationRequest,
+                                     // unconfirmed here) before re-threading this.
 ) -> Result<String> {
     // Resolve model name if strictly needed, or trust the Agent's config
     // For safety, we verify the model exists or use default if empty, similar to pipe
@@ -85,17 +92,12 @@ pub(crate) async fn generate_oneshot(
         model.to_string()
     };
 
-    let request =
-        GenerationRequest::new(model_name, prompt.to_string()).options(options.unwrap_or_default());
-
-    // We collect the stream here because agents need the full context for post-processing
-    let mut stream = ollama.generate_stream(request).await?;
+    let messages = vec![ChatMessage::user(prompt.to_string())];
+    let mut stream = ollama.chat_stream(&model_name, messages).await?;
     let mut buffer = String::new();
 
-    while let Some(responses) = stream.next().await.transpose()? {
-        for resp in responses {
-            buffer.push_str(&resp.response);
-        }
+    while let Some(chunk) = stream.next().await.transpose()? {
+        buffer.push_str(&chunk.message.content);
     }
     Ok(buffer)
 }
@@ -209,86 +211,21 @@ impl AskArgs {
             .unwrap_or_else(|| DEFAULT_MODEL.to_string());
         let config = self.clone().into_config(&model_name)?;
 
-        let mut stream: LlamaStream =
-            if config.get("Architect").is_some() || config.get("Worker").is_some() {
-                let orchestrator = Orchestrator::new(config, std::sync::Arc::new(ollama), cfg).await?;
-                Box::pin(orchestrator.run_task_stream(prompt, self.debug_sequence.clone()))
-            } else {
-                // ... existing single-shot logic ...
-                let request = self
-                    .ollama
-                    .build_generation_request(model[0].clone(), prompt, cfg)
-                    .await?;
-                Box::pin(
-                    ollama
-                        .generate_stream(request)
-                        .await
-                        .map(|s|
-                            s.map_ok(StreamItem::Chunk)
-                                .map_err(RuChatError::OllamaError))
-                        .map_err(RuChatError::OllamaError)?,
-                )
-            };
-
-        let pb = ProgressBar::new_spinner();
-        // Falls back to a plain default style if the template string doesn't
-        // parse against this indicatif version — kept deliberately simple.
-        if let Ok(style) = ProgressStyle::with_template("{spinner:.cyan} {msg}") {
-            pb.set_style(style.tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"));
-        }
-        pb.enable_steady_tick(std::time::Duration::from_millis(80));
-        pb.set_message("working...");
-
-        // Chunk/color output is raw, partial-token text — not whole lines —
-        // so it can't go through `pb.println` (which is line-oriented).
-        // `pb.suspend` clears the bar, runs the closure, and redraws after;
-        // it's synchronous, so raw stdout writes (not the async `Io` type)
-        // are used inside it. Not stress-tested under very high token
-        // throughput — if flicker becomes visible in practice, batch writes
-        // across several chunks before suspending.
-        let mut stream_err = None;
-        while let Some(res) = stream.next().await {
-            match res {
-                Ok(StreamItem::Chunk(responses)) => {
-                    pb.suspend(|| {
-                        let mut out = std::io::stdout();
-                        for resp in &responses {
-                            let _ = out.write_all(resp.response.as_bytes());
-                        }
-                        let _ = out.flush();
-                    });
-                }
-                Ok(StreamItem::ChatChunk(chunk)) => {
-                    cio.write_line(&chunk.message.content).await?;
-                }
-                Ok(StreamItem::Event(AgentEvent::ColorChange(ansi_code))) => {
-                    pb.suspend(|| {
-                        let mut out = std::io::stdout();
-                        let _ = out.write_all(ansi_code.as_bytes());
-                        let _ = out.flush();
-                    });
-                }
-                Ok(StreamItem::Event(AgentEvent::StatusUpdate(msg))) => {
-                    pb.set_message(msg);
-                }
-                Ok(StreamItem::Event(AgentEvent::Trace(msg))) => {
-                    pb.println(format!("\x1b[90m[TRACE] {msg}\x1b[0m"));
-                }
-                Ok(StreamItem::Event(AgentEvent::Progress(pct))) => {
-                    pb.set_message(format!("{pct:.0}%"));
-                }
-                Err(e) => {
-                    stream_err = Some(e);
-                    break;
-                }
+        let pipeline = if config.get("Architect").is_some() || config.get("Worker").is_some() {
+            let orchestrator = Orchestrator::new(config, Arc::new(ollama), cfg).await?;
+            AgentPipeline::Orchestrator {
+                orchestrator,
+                goal: prompt,
+                debug_sequence: self.debug_sequence.clone(),
             }
-        }
-        pb.finish_and_clear();
-        cio.write_line("\x1b[0m").await?;
-        match stream_err {
-            Some(e) => Err(e),
-            None => Ok(()),
-        }
+        } else {
+            AgentPipeline::OneShot {
+                ollama: std::sync::Arc::new(ollama),
+                model: model_name,
+                prompt,
+            }
+        };
+        crate::tui::render::render_pipeline_stream(pipeline.run(), &mut cio).await
     }
 }
 
