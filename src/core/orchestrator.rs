@@ -22,6 +22,7 @@ use crate::providers::vector::chroma::query::Query;
 use git::commit_feature_branch;
 use serde::Deserialize;
 use crate::retry_transient;
+use crate::agent::pipeline::AgentPipeline;
 
 #[derive(Debug, Clone, PartialEq)]
 enum Stage {
@@ -567,6 +568,40 @@ impl Orchestrator {
                 Ok(())
             }
             ToolName::Memorize | ToolName::ApplyPatch => Ok(()),
+        }
+    }
+}
+
+/// Bundles an `Orchestrator` with the goal/debug-sequence it needs to run,
+/// so it can implement `AgentPipeline`'s fixed `run(&mut self, ...)` signature
+/// without changing `Orchestrator::new`'s existing constructor (which
+/// `ask.rs` already calls directly and unchanged).
+pub(crate) struct OrchestratorRun {
+    orchestrator: Orchestrator,
+    goal: String,
+    debug_sequence: Option<String>,
+}
+
+impl OrchestratorRun {
+    pub(crate) fn new(orchestrator: Orchestrator, goal: String, debug_sequence: Option<String>) -> Self {
+        Self { orchestrator, goal, debug_sequence }
+    }
+}
+
+#[async_trait::async_trait]
+impl AgentPipeline for OrchestratorRun {
+    /// `ollama` is ignored — `Orchestrator` already owns its own client,
+    /// set at construction time via `Orchestrator::new`.
+    async fn run(&mut self, _ollama: &Ollama, tx: mpsc::Sender<OrchestratorResult>) -> Result<()> {
+        let cancel = CancellationToken::new();
+        if let Some(path) = self.debug_sequence.clone() {
+            self.orchestrator
+                .debug_stage_machine(self.goal.clone(), path, tx, cancel)
+                .await
+        } else {
+            self.orchestrator
+                .run_stage_machine(self.goal.clone(), tx, cancel)
+                .await
         }
     }
 }

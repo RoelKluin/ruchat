@@ -46,6 +46,32 @@ pub(crate) struct EmbedArgs {
 
 impl EmbedArgs {
     pub(crate) async fn embed(&self, prompt: &str, mode: UpsertMode, cfg: &Value) -> Result<()> {
+        let raw_metadata = self.metadata.parse()?;
+        let metadata_items: Vec<HashMap<String, _>> = raw_metadata
+            .unwrap_or_default()
+            .into_iter()
+            .flatten()
+            .collect();
+        self.embed_with_metadata_items(prompt, mode, cfg, metadata_items)
+            .await
+    }
+
+    pub(crate) fn set_id_prefix(&mut self, prefix: String) {
+        self.id = Some(prefix);
+    }
+
+    /// Same as `embed`, but takes pre-built metadata items directly instead
+    /// of parsing them from `self.metadata`'s CLI string. Lets callers like
+    /// the ctags indexer (`core::index`) construct metadata programmatically
+    /// while reusing all the existing chunk-slicing/upsert/dedup logic below
+    /// unchanged.
+    pub(crate) async fn embed_with_metadata_items(
+        &self,
+        prompt: &str,
+        mode: UpsertMode,
+        cfg: &Value,
+        metadata_items: Vec<HashMap<String, UpdateMetadataValue>>,
+    ) -> Result<()> {
         let (ollama, models) = self.ollama_args.init("all-minilm:l6-v2", cfg).await?;
         let model = models
             .last()
@@ -58,14 +84,7 @@ impl EmbedArgs {
             .get_collection(&client, "default")
             .await?;
 
-        // 1. Processing and Slicing (Your existing logic)
-        let raw_metadata = self.metadata.parse()?;
-        let metadata_items: Vec<HashMap<String, _>> = raw_metadata
-            .unwrap_or_default()
-            .into_iter()
-            .flatten()
-            .collect();
-
+        // 1. Processing and Slicing
         let line_pool: Vec<&str> = prompt.lines().collect();
         let mut chunk_texts: Vec<String> = Vec::new();
         let mut chunk_metadatas: Vec<Option<UpdateMetadata>> = Vec::new();

@@ -1,5 +1,6 @@
 pub(crate) mod manager;
 pub(crate) mod event;
+pub(crate) mod pipeline;
 pub(crate) mod protocol;
 mod role;
 pub(crate) mod team;

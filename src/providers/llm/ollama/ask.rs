@@ -6,8 +6,10 @@ use crate::orchestrator::Orchestrator;
 use crate::{Result, RuChatError};
 use clap::Parser;
 use futures_util::TryStreamExt;
+use indicatif::{ProgressBar, ProgressStyle};
 use ollama_rs::{Ollama, generation::completion::request::GenerationRequest, models::ModelOptions};
 use std::pin::Pin;
+use std::io::Write as _;
 use tokio_stream::Stream;
 use tokio_stream::StreamExt;
 use serde_json::Value;
@@ -228,34 +230,63 @@ impl AskArgs {
                         .map_err(RuChatError::OllamaError)?,
                 )
             };
+
+        let pb = ProgressBar::new_spinner();
+        // Falls back to a plain default style if the template string doesn't
+        // parse against this indicatif version — kept deliberately simple.
+        if let Ok(style) = ProgressStyle::with_template("{spinner:.cyan} {msg}") {
+            pb.set_style(style.tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"));
+        }
+        pb.enable_steady_tick(std::time::Duration::from_millis(80));
+        pb.set_message("working...");
+
+        // Chunk/color output is raw, partial-token text — not whole lines —
+        // so it can't go through `pb.println` (which is line-oriented).
+        // `pb.suspend` clears the bar, runs the closure, and redraws after;
+        // it's synchronous, so raw stdout writes (not the async `Io` type)
+        // are used inside it. Not stress-tested under very high token
+        // throughput — if flicker becomes visible in practice, batch writes
+        // across several chunks before suspending.
+        let mut stream_err = None;
         while let Some(res) = stream.next().await {
             match res {
                 Ok(StreamItem::Chunk(responses)) => {
-                    for resp in responses {
-                        cio.write_line(&resp.response).await?;
-                    }
+                    pb.suspend(|| {
+                        let mut out = std::io::stdout();
+                        for resp in &responses {
+                            let _ = out.write_all(resp.response.as_bytes());
+                        }
+                        let _ = out.flush();
+                    });
                 }
                 Ok(StreamItem::Event(AgentEvent::ColorChange(ansi_code))) => {
-                    // Write the color code directly to the output without a newline
-                    cio.write_line(ansi_code).await?;
+                    pb.suspend(|| {
+                        let mut out = std::io::stdout();
+                        let _ = out.write_all(ansi_code.as_bytes());
+                        let _ = out.flush();
+                    });
                 }
                 Ok(StreamItem::Event(AgentEvent::StatusUpdate(msg))) => {
-                    cio.write_line(&format!("\x1b[2m   ... {msg} \x1b[0m\r"))
-                        .await?;
+                    pb.set_message(msg);
                 }
                 Ok(StreamItem::Event(AgentEvent::Trace(msg))) => {
-                    cio.write_line(&format!("\n\x1b[90m[TRACE] {msg}\x1b[0m\n"))
-                        .await?;
+                    pb.println(format!("\x1b[90m[TRACE] {msg}\x1b[0m"));
                 }
                 Ok(StreamItem::Event(AgentEvent::Progress(pct))) => {
-                    cio.write_line(&format!("\x1b[2m   ... {pct:.0}% \x1b[0m\r"))
-                        .await?;
+                    pb.set_message(format!("{pct:.0}%"));
                 }
-                Err(e) => return Err(e), // Real errors still break the loop
+                Err(e) => {
+                    stream_err = Some(e);
+                    break;
+                }
             }
         }
+        pb.finish_and_clear();
         cio.write_line("\x1b[0m").await?;
-        Ok(())
+        match stream_err {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
     }
 }
 

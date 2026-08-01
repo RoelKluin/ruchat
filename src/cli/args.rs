@@ -10,6 +10,7 @@ use crate::chroma::retrieve::RetrieveArgs;
 use crate::chroma::search::SearchArgs;
 use crate::cli::config::ConfigArgs;
 use crate::core::embed::EmbedPromptArgs;
+use crate::core::index::IndexArgs;
 use crate::ollama::ask::AskArgs;
 use crate::ollama::func::func;
 use crate::ollama::func::func_struct;
@@ -71,6 +72,7 @@ impl Args {
             Commands::ChromaLs(args) => args.ls(&cfg).await,
             Commands::ChromaDelete(args) => args.delete(&cfg).await,
             Commands::Manager(args) => Manager::execute_command(args, &cfg).await,
+            Commands::Index(args) => args.run(&cfg).await,
             Commands::Completions(args) => {
                 let mut cmd = Args::command();
                 let name = cmd.get_name().to_string();
@@ -127,6 +129,9 @@ pub(crate) enum Commands {
     ChromaDelete(ChromaDeleteArgs),
     /// Manage agents.
     Manager(ManagerArgs),
+    /// Recursively index a source directory into Chroma using ctags symbol
+    /// boundaries (requires `universal-ctags` on PATH).
+    Index(IndexArgs),
     /// Generate shell completions (e.g. `ruchat completions bash > ruchat.bash`).
     Completions(CompletionsArgs),
     /// Generate a man page to stdout (e.g. `ruchat manpage > ruchat.1`).
