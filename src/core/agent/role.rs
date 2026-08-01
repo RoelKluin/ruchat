@@ -1,4 +1,4 @@
-use super::types::Context;
+use super::types::{Context, TurnKind};
 use crate::agent::tools::prompt_tool_catalog;
 use crate::{Result, RuChatError};
 use std::fmt::Display;
@@ -75,8 +75,27 @@ impl Role {
             Role::Summarizer => format!("{system}{task}RAW HISTORY TO COMPRESS: {}", ctx.history_view(ctx.round)),
             Role::Librarian => {
                 let collections_summary = ctx.build_collections_summary();
+                // Surfaces any current-round `TurnKind::System` turns (e.g.
+                // the "your last response wasn't valid JSON" correction
+                // `run_librarian_retrieval` pushes before re-asking) so the
+                // retry actually sees the feedback instead of silently
+                // repeating the same malformed output. Empty string — and
+                // therefore a no-op — on every normal (non-retry) Librarian
+                // call, since no System turn exists for the round yet.
+                let correction: String = ctx
+                    .turns
+                    .iter()
+                    .filter(|t| t.round == ctx.round && t.kind == TurnKind::System)
+                    .map(|t| t.content.clone())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let correction_section = if correction.is_empty() {
+                    String::new()
+                } else {
+                    format!("\n\nCORRECTION FROM YOUR PREVIOUS ATTEMPT:\n{correction}\n")
+                };
                 format!(
-                    "{system}{hint_section}{goal}{task}\
+                    "{system}{hint_section}{goal}{task}{correction_section}\
                     {collections_summary}\n\n\
                     OUTPUT FORMAT — must be valid JSON, nothing else before or after:\n\
                     {{\n\
