@@ -581,7 +581,7 @@ impl Orchestrator {
         let model = self
             .librarian
             .as_ref()
-            .and_then(|l| l.get_str("model").ok())
+            .and_then(|l| l.get_str("embed_model").ok())
             .unwrap_or("all-minilm:l6-v2")
             .to_string();
 

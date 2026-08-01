@@ -169,14 +169,18 @@ impl Validation {
                 /* unchanged body from prior patch */
                 let stdout = String::from_utf8_lossy(&o.stdout);
                 let parsed = parse_cargo_json_diagnostics(&stdout);
-                let rendered = if parsed.is_empty() {
-                    String::from_utf8_lossy(&o.stderr).into_owned()
-                } else {
-                    parsed
+                let errors_only: Vec<_> = parsed.iter().filter(|d| d.level == "error").collect();
+                let rendered = if !errors_only.is_empty() {
+                    errors_only
                         .iter()
                         .map(|d| d.to_string())
                         .collect::<Vec<_>>()
                         .join("\n")
+                } else if !parsed.is_empty() {
+                    // warnings only — compile succeeded, don't block on them, but keep informational
+                    String::new()
+                } else {
+                    String::from_utf8_lossy(&o.stderr).into_owned()
                 };
                 (o.status.success(), parsed, rendered)
             }

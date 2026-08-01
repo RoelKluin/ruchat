@@ -48,6 +48,15 @@ pub(crate) struct AskArgs {
     #[arg(long, help_heading = "RAG Configuration")]
     collection: Option<String>,
 
+    /// Model for the Librarian agent's query embeddings (default: all-minilm:l6-v2)
+    #[arg(long, help_heading = "RAG Configuration")]
+    librarian_model: Option<String>,
+
+    /// Embedding model the Librarian (and Worker's `retrieve` tool) uses to
+    /// vectorize query text against Chroma (default: all-minilm:l6-v2)
+    #[arg(long, help_heading = "RAG Configuration")]
+    librarian_embed_model: Option<String>,
+
     /// Override maximum iterations
     #[arg(long, help_heading = "Agent Configuration")]
     iterations: Option<u64>,
@@ -122,6 +131,21 @@ impl AskArgs {
             });
             // Ensure the librarian uses the correct collection in the prompt
             config["task_hint"] = serde_json::json!(format!("Query the {} collection", col));
+        }
+
+        // Librarian needs a CHAT model (`model`, defaulted below like every
+        // other role) to write the JSON query, and a separate EMBEDDING
+        // model (`embed_model`) to vectorize it — these must never be the
+        // same value, one is generative, the other embedding-only.
+        if let Some(librarian) = config.get_mut("Librarian") {
+            if let Some(m) = &self.librarian_model {
+                librarian["model"] = serde_json::json!(m);
+            }
+            let embed_model = self
+                .librarian_embed_model
+                .clone()
+                .unwrap_or_else(|| "all-minilm:l6-v2".to_string());
+            librarian["embed_model"] = serde_json::json!(embed_model);
         }
 
         // Handle Multiple Critics

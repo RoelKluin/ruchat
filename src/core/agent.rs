@@ -109,7 +109,7 @@ impl Agent {
         ollama: &dyn LlmClient,
         q: Query,
     ) -> Result<String> {
-        let model = self.get_str("model")?;
+        let model = self.get_str("embed_model").unwrap_or("all-minilm:l6-v2");
         q.query(client, ollama, model).await
     }
     pub(crate) fn get_dynamic_history_limit(&self) -> u64 {
