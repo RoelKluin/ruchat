@@ -13,7 +13,7 @@ async-trait = "^0.1.91"
 chroma = "0.13.3"
 chroma-types = "0.13.3"
 chrono = "0.4.45"
-clap = { version = "^4.6.4", features = ["derive", "env"] }
+clap = { version = "^4.6.5", features = ["derive", "env"] }
 clap_complete = "4.6.8"
 clap_mangen = "0.3.0"
 crossterm = "^0.29.0"
