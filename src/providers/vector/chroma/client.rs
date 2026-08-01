@@ -100,29 +100,41 @@ impl ChromaClientConfigArgs {
             args.update_from_json(v)?;
         }
 
-        // Your original logic, unchanged
-        if let Some(token) = args.chroma_token.as_ref() {
-            let endpoint = args.chroma_server.parse()?;
-            let value = HeaderValue::from_str(token.as_str())?;
-            let header = HeaderName::from_static("x_chroma_token");
-            let auth_method = ChromaAuthMethod::HeaderAuth { header, value };
-            let retry_options = ChromaRetryOptions {
-                max_retries: args.max_retries,
-                min_delay: Duration::from_millis(args.min_delay),
-                max_delay: Duration::from_secs(args.max_delay),
-                jitter: args.jitter,
-            };
-            let client = ChromaHttpClientOptions {
-                endpoint,
-                auth_method,
-                retry_options,
-                tenant_id: args.tenant_id.clone(),
-                database_name: args.chroma_database.clone(),
-            };
-            Ok(ChromaHttpClient::new(client))
-        } else {
-            Ok(ChromaHttpClient::new(Default::default()))
-        }
+        // Endpoint/retry/tenant/database must apply regardless of whether a
+        // token is configured — the previous no-token branch discarded all
+        // of `args` and connected with library defaults instead.
+        let endpoint = args.chroma_server.parse()?;
+        let retry_options = ChromaRetryOptions {
+            max_retries: args.max_retries,
+            min_delay: Duration::from_millis(args.min_delay),
+            // BUGFIX: was `from_secs`, making the documented-as-milliseconds
+            // `max_delay` (default 100) a 100-second ceiling instead of 100ms.
+            max_delay: Duration::from_millis(args.max_delay),
+            jitter: args.jitter,
+        };
+
+        let auth_method = match args.chroma_token.as_ref() {
+            Some(token) => {
+                let value = HeaderValue::from_str(token.as_str())?;
+                let header = HeaderName::from_static("x_chroma_token");
+                ChromaAuthMethod::HeaderAuth { header, value }
+            }
+            // NEEDS VERIFICATION: the no-auth variant name for
+            // `chroma::client::ChromaAuthMethod` isn't visible in the excerpt
+            // provided (only `HeaderAuth` is shown here). Confirm the exact
+            // variant (e.g. `ChromaAuthMethod::None`) against chroma 0.13.3's
+            // docs/source before merging — placeholder below.
+            None => ChromaAuthMethod::None,
+        };
+
+        let client = ChromaHttpClientOptions {
+            endpoint,
+            auth_method,
+            retry_options,
+            tenant_id: args.tenant_id.clone(),
+            database_name: args.chroma_database.clone(),
+        };
+        Ok(ChromaHttpClient::new(client))
     }
 
     pub(crate) fn update_from_json(&mut self, val: &Value) -> Result<()> {
