@@ -265,7 +265,7 @@ pub(crate) struct EmbedPromptArgs {
     prompt: String,
 
     /// The operation to perform.
-    #[arg(short, long, value_enum, default_value = "upsert")]
+    #[arg(short = 'M', long, value_enum, default_value = "upsert")]
     mode: UpsertMode,
 
     #[command(flatten)]

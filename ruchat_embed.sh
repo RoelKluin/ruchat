@@ -1,5 +1,7 @@
 #!/bin/bash
 
+ ./ruchat chroma-ls 2>&1 | grep -q 'default' || ./ruchat chroma-create -d default -c default
+
 git ls-files | grep -v '^ruchat$' | while read -r f; do
     id="Contents of file: $f"
     ./ruchat embed -m all-minilm:l6-v2 "$id:\n\`\`\`\n$(cat "$f")\n\`\`\`"
