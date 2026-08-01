@@ -199,12 +199,6 @@ fn word_occurrences(haystack: &str, word: &str) -> usize {
 /// only enable (`--with-references`) on small-to-medium repos. Replace with
 /// real cross-referencing (rust-analyzer/LSP or a language-specific
 /// call-graph tool) when available.
-///
-/// NEEDS VERIFICATION: assumes `UpdateMetadataValue` has an array/list
-/// variant analogous to `MetadataValue::StringArray` (seen in
-/// `chroma/where.rs`). If `chroma-types` doesn't expose one for
-/// `UpdateMetadataValue`, join into a delimited string instead:
-/// `UpdateMetadataValue::Str(refs.join(","))`.
 fn attach_reference_counts(
     items: &mut [HashMap<String, UpdateMetadataValue>],
     all_file_texts: &HashMap<String, String>,

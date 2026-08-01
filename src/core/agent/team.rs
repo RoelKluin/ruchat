@@ -68,32 +68,3 @@ impl Team {
         Ok(())
     }
 }
-
-/*#[async_trait::async_trait]
-impl AgentPipeline for Team {
-    /// Same sequential-pipe logic as `execute`, but each agent's output is
-    /// emitted as an `AgentEvent::Trace` on `tx` instead of printed directly
-    /// — lets a caller that already consumes `Orchestrator`'s `StreamItem`
-    /// stream (e.g. `ask.rs`) consume a `Team` run through the identical
-    /// interface, uniformly.
-    async fn run(&mut self, ollama: &Ollama, tx: mpsc::Sender<Result<StreamItem>>) -> Result<()> {
-        let _ = tx
-            .send(Ok(StreamItem::Event(AgentEvent::Trace(format!(
-                "Team '{}' executing goal: {}",
-                self.name, self.goal
-            )))))
-            .await;
-
-        let mut context = String::new();
-        for agent in &mut self.agents {
-            context = agent.process(ollama, context).await?;
-            let _ = tx
-                .send(Ok(StreamItem::Event(AgentEvent::Trace(format!(
-                    "[{}] {}",
-                    agent.name, context
-                )))))
-                .await;
-        }
-        Ok(())
-    }
-}*/

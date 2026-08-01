@@ -651,21 +651,3 @@ impl OrchestratorRun {
         Self { orchestrator, goal, debug_sequence }
     }
 }
-
-/*#[async_trait::async_trait]
-impl AgentPipeline for OrchestratorRun {
-    /// `ollama` is ignored — `Orchestrator` already owns its own client,
-    /// set at construction time via `Orchestrator::new`.
-    async fn run(&mut self, _ollama: &Ollama, tx: mpsc::Sender<OrchestratorResult>) -> Result<()> {
-        let cancel = CancellationToken::new();
-        if let Some(path) = self.debug_sequence.clone() {
-            self.orchestrator
-                .debug_stage_machine(self.goal.clone(), path, tx, cancel)
-                .await
-        } else {
-            self.orchestrator
-                .run_stage_machine(self.goal.clone(), tx, cancel)
-                .await
-        }
-    }
-}*/

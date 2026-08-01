@@ -119,11 +119,6 @@ impl ChromaClientConfigArgs {
                 let header = HeaderName::from_static("x_chroma_token");
                 ChromaAuthMethod::HeaderAuth { header, value }
             }
-            // NEEDS VERIFICATION: the no-auth variant name for
-            // `chroma::client::ChromaAuthMethod` isn't visible in the excerpt
-            // provided (only `HeaderAuth` is shown here). Confirm the exact
-            // variant (e.g. `ChromaAuthMethod::None`) against chroma 0.13.3's
-            // docs/source before merging — placeholder below.
             None => ChromaAuthMethod::None,
         };
 

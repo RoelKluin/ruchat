@@ -194,9 +194,6 @@ pub(crate) mod fake_vector_store {
             _ids: Option<Vec<String>>,
             _include: Option<IncludeList>,
         ) -> Result<QueryResponse> {
-            // NEEDS VERIFICATION: confirm `chroma::types::QueryResponse: Clone`
-            // in the pinned `chroma`/`chroma-types` version — if not, change
-            // this fake to build fresh per call instead of cloning a stored one.
             Ok(self.response.clone())
         }
     }
