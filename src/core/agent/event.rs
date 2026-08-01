@@ -1,4 +1,5 @@
 use crate::{Result, RuChatError};
+use ollama_rs::generation::chat::ChatMessageResponse;
 use ollama_rs::generation::completion::GenerationResponse;
 use tokio::sync::mpsc;
 
@@ -24,6 +25,7 @@ pub enum AgentEvent {
 #[derive(Debug)]
 pub enum StreamItem {
     Chunk(Vec<GenerationResponse>),
+    ChatChunk(ChatMessageResponse),
     Event(AgentEvent),
 }
 

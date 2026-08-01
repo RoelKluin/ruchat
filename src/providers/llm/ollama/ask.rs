@@ -207,12 +207,11 @@ impl AskArgs {
             .first()
             .cloned()
             .unwrap_or_else(|| DEFAULT_MODEL.to_string());
-
         let config = self.clone().into_config(&model_name)?;
 
         let mut stream: LlamaStream =
             if config.get("Architect").is_some() || config.get("Worker").is_some() {
-                let orchestrator = Orchestrator::new(config, ollama, cfg).await?;
+                let orchestrator = Orchestrator::new(config, std::sync::Arc::new(ollama), cfg).await?;
                 Box::pin(orchestrator.run_task_stream(prompt, self.debug_sequence.clone()))
             } else {
                 // ... existing single-shot logic ...
@@ -258,6 +257,9 @@ impl AskArgs {
                         }
                         let _ = out.flush();
                     });
+                }
+                Ok(StreamItem::ChatChunk(chunk)) => {
+                    cio.write_line(&chunk.message.content).await?;
                 }
                 Ok(StreamItem::Event(AgentEvent::ColorChange(ansi_code))) => {
                     pb.suspend(|| {

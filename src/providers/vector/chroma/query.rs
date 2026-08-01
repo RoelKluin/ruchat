@@ -1,15 +1,14 @@
+use crate::agent::llm_client::{LlmClient, VectorStore};
 use crate::chroma::{
     rerank::{rerank_query_results, RerankWeights},
     ChromaClientConfigArgs, ChromaCollectionConfigArgs, ChromaResponse, IncludeArgs, OutputArgs,
     WhereArgs,
 };
 use crate::ollama::OllamaArgs;
-use crate::{retry_transient, Result, RuChatError};
-use chroma::ChromaHttpClient;
+use crate::{Result, RuChatError};
 use clap::Parser;
 use log::warn;
 use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
-use ollama_rs::Ollama;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -51,41 +50,43 @@ pub(crate) struct Query {
 impl Query {
     pub(crate) async fn query(
         &self,
-        client: &ChromaHttpClient,
-        ollama: &Ollama,
+        client: &dyn VectorStore,
+        ollama: &dyn LlmClient,
         model: &str,
     ) -> Result<String> {
-        let collection = self.collection.get_collection(client, "default").await?;
-
         if model != "all-minilm:l6-v2" && !model.contains("embed") {
             warn!("Model {model} might not be an embeddings model");
         }
         let request = GenerateEmbeddingsRequest::new(model.to_string(), self.query.clone().into());
         let res = ollama.generate_embeddings(request).await?;
-
         let query_embeddings = res.embeddings;
 
         let r#where = self.r#where.parse()?;
-
         let ids = self
             .ids
             .as_ref()
             .map(|s| s.split(',').map(|id| id.trim().to_string()).collect());
-
         let include = self.include.parse()?;
 
-        let mut query_result = retry_transient!(async {
-            collection
-                .query(
-                    query_embeddings.clone(),
-                    self.n_results,
-                    r#where.clone(),
-                    ids.clone(),
-                    include.clone(),
-                )
-                .await
-                .map_err(RuChatError::from)
-        })?;
+        // Collection-name resolution moved here from
+        // `ChromaCollectionConfigArgs::get_collection` (which needed a
+        // concrete `ChromaHttpClient`) — the retry-wrapped get+query round
+        // trip itself now lives in `VectorStore::query_collection`.
+        let collection_name = if self.collection.name().is_empty() {
+            "default"
+        } else {
+            self.collection.name()
+        };
+        let mut query_result = client
+            .query_collection(
+                collection_name,
+                query_embeddings,
+                self.n_results,
+                r#where,
+                ids,
+                include,
+            )
+            .await?;
         rerank_query_results(&self.query, &mut query_result, &RerankWeights::default());
         ChromaResponse::Query(&mut query_result).as_string(&self.output)
     }

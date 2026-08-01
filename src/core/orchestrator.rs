@@ -24,6 +24,8 @@ use git::commit_feature_branch;
 use serde::Deserialize;
 use crate::retry_transient;
 use crate::agent::pipeline::AgentPipeline;
+use std::sync::Arc;
+use crate::agent::llm_client::{LlmClient, VectorStore};
 
 #[derive(Debug, Clone, PartialEq)]
 enum Stage {
@@ -58,14 +60,14 @@ pub(crate) struct Orchestrator {
     summarizer: Option<Agent>,
     validator: Option<Agent>,
     orchestrator_config: Value,
-    ollama: Ollama,
-    client: Option<ChromaHttpClient>,
+    ollama: Arc<dyn LlmClient>,
+    client: Option<Arc<dyn VectorStore>>,
 }
 
 impl Orchestrator {
     pub(crate) async fn new(
         mut orchestrator_config: Value,
-        ollama: Ollama,
+        ollama: Arc<dyn LlmClient>,
         cfg: &Value,
     ) -> Result<Self> {
         let task_type = TaskType::deserialize(&orchestrator_config).ok();
@@ -149,12 +151,11 @@ impl Orchestrator {
                     e
                 }).map_err(RuChatError::AnyhowError)
             })?;
-            client = Some(
-                client_config
-                    .create_client(cfg)
-                    .await
-                    .map_err(RuChatError::AnyhowError)?,
-            );
+            let concrete_client = client_config
+                .create_client(cfg)
+                .await
+                .map_err(RuChatError::AnyhowError)?;
+            client = Some(Arc::new(concrete_client) as Arc<dyn VectorStore>);
 
             librarian = Some(lib);
         }

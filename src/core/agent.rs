@@ -1,6 +1,7 @@
 pub(crate) mod manager;
 pub(crate) mod event;
 pub(crate) mod json_extract;
+pub(crate) mod llm_client;
 pub(crate) mod pipeline;
 pub(crate) mod protocol;
 mod role;
@@ -16,9 +17,9 @@ use event::{send_event, AgentEvent, StreamItem};
 use crate::providers::llm::ollama::get_dynamic_history_limit;
 use crate::providers::vector::chroma::query::Query;
 use crate::{Result, RuChatError, options::get_options};
-use chroma::ChromaHttpClient;
-use ollama_rs::generation::completion::request::GenerationRequest;
-use ollama_rs::{Ollama, models::ModelOptions};
+use llm_client::{LlmClient, VectorStore};
+use ollama_rs::generation::chat::ChatMessage;
+use ollama_rs::models::ModelOptions;
 use protocol::Validation;
 use role::Role;
 use serde_json::Value;
@@ -104,8 +105,8 @@ impl Agent {
     }
     pub(crate) async fn retrieve_and_generate(
         &self,
-        client: &ChromaHttpClient,
-        ollama: &Ollama,
+        client: &dyn VectorStore,
+        ollama: &dyn LlmClient,
         q: Query,
     ) -> Result<String> {
         let model = self.get_str("model")?;
@@ -150,28 +151,39 @@ impl Agent {
 
     pub(crate) async fn query_stream(
         &mut self,
-        ollama: &Ollama,
+        ollama: &dyn LlmClient,
         ctx: &mut Context,
         tx: &mpsc::Sender<Result<StreamItem>>,
     ) -> Result<()> {
         let role = self.get_str("role")?.to_lowercase();
         let role = Role::from_str(role.as_str())?;
 
-        // Assemble the payload
-        let full_prompt = role.build_prompt(
+        // System instructions and retrieved/untrusted content now ride as
+        // distinct chat messages instead of one concatenated string — see
+        // prior review note on prompt-injection surface via `documents_view`.
+        let (system_text, user_text) = role.build_chat_messages(
             self.get_str("task").ok(),
             ctx,
             self.get_str("task_hint").ok(),
         );
-
         let model = self.get_str("model")?;
+
+        // System instructions and retrieved/untrusted content now ride as
+        // distinct chat messages instead of one concatenated string — see
+        // prior review note on prompt-injection surface via `documents_view`.
+        let (system_text, user_text) = role.build_chat_messages(
+            self.get_str("task").ok(),
+            ctx,
+            self.get_str("task_hint").ok(),
+        );
         ctx.trace(
             tx,
-            format!("Agent '{role}' is generating with model '{model}' and prompt:\n{full_prompt}"),
+            format!(
+                "Agent '{role}' is generating with model '{model}'.\nSYSTEM:\n{system_text}\nUSER:\n{user_text}"
+            ),
         )
         .await;
-        let request =
-            GenerationRequest::new(model.to_string(), full_prompt).options(self.options.clone());
+        let messages = vec![ChatMessage::system(system_text), ChatMessage::user(user_text)];
 
         if let Ok(msg) = self.get_str("status_msg") {
             send_event(tx, AgentEvent::StatusUpdate(msg.to_string())).await?;
@@ -179,22 +191,13 @@ impl Agent {
         // Inject the color change into the stream
         send_event(tx, AgentEvent::ColorChange(role.get_color())).await?;
 
-        let mut stream = ollama
-            .generate_stream(request)
-            .await
-            .map_err(RuChatError::OllamaError)?;
-        if self.get_str("status_msg").is_ok() {
-            // Clear the status message after the first chunk arrives
-            send_event(tx, AgentEvent::StatusUpdate("\x1b[2K".to_string())).await?;
-        }
+        let mut stream = ollama.chat_stream(model, messages).await?;
 
         ctx.output.clear();
         while let Some(res) = stream.next().await {
-            let chunk = res.map_err(RuChatError::OllamaError)?;
-            for resp in &chunk {
-                ctx.output.push_str(&resp.response);
-            }
-            tx.send(Ok(StreamItem::Chunk(chunk)))
+            let chunk = res?; // already RuChatError via ChatStream's Item type
+            ctx.output.push_str(&chunk.message.content);
+            tx.send(Ok(StreamItem::ChatChunk(chunk)))
                 .await
                 .map_err(|e| RuChatError::Is(e.to_string()))?;
         }
