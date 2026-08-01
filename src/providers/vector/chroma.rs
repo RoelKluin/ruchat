@@ -21,24 +21,29 @@ pub(crate) use collection::ChromaCollectionConfigArgs;
 pub(crate) use include::IncludeArgs;
 use log::{info, warn};
 pub(crate) use metadata::{MetadataArgs, UpdateMetadataArrayArgs};
+pub(crate) use r#where::WhereArgs;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
-pub(crate) use r#where::WhereArgs;
+
+#[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub(super) enum OutputFormat {
+    #[default]
+    Markdown,
+    Json,
+    Oneliner,
+}
 
 #[derive(clap::Args, Debug, Clone, PartialEq, Deserialize, Default)]
 pub(super) struct OutputArgs {
-    /// Output in JSON format instead of a human-readable table.
-    #[arg(short, long, default_value_t = false, help_heading = "Output Control")]
-    json: bool,
+    /// Output format: markdown (default, full content), json, or oneliner (tab-separated, one row/line).
+    #[arg(short = 'F', long, value_enum, default_value_t = OutputFormat::Markdown, help_heading = "Output Control")]
+    format: OutputFormat,
 
-    /// Sort the results by ID before displaying.
     #[arg(short, long, default_value_t = true, help_heading = "Output Control")]
     sort: bool,
 
-    /// Specify which fields to display (comma-separated:
-    /// id,doc,meta,embed,score,uri,distance,include,select).
-    /// Defaults to "id,doc,meta".
     #[arg(
         short,
         long,
@@ -47,16 +52,6 @@ pub(super) struct OutputArgs {
         help_heading = "Output Control"
     )]
     fields: Vec<String>,
-
-    /// Maximum width for the document column to prevent text wrapping issues.
-    #[arg(
-        long,
-        default_value_t = 80,
-        help_heading = "Advanced Output Control",
-        hide_short_help = true,
-        hide_long_help = false
-    )]
-    max_width: usize,
 }
 
 impl OutputArgs {
@@ -67,12 +62,26 @@ impl OutputArgs {
         if let Some(sort) = json.get("sort") {
             self.sort = sort.as_bool().unwrap_or(self.sort);
         }
-        if let Some(json_output) = json.get("json") {
-            self.json = json_output.as_bool().unwrap_or(self.json);
+        if let Some(format) = json.get("format") {
+            if let Some(format_str) = format.as_str() {
+                self.format = match format_str.to_lowercase().as_str() {
+                    "markdown" => OutputFormat::Markdown,
+                    "json" => OutputFormat::Json,
+                    "oneliner" => OutputFormat::Oneliner,
+                    _ => {
+                        return Err(RuChatError::Is(format!(
+                            "Invalid output format: {}",
+                            format_str
+                        )))
+                    }
+                };
+            } else {
+                return Err(RuChatError::Is(
+                    "Expected 'format' to be a string in JSON".to_string(),
+                ));
+            }
         }
-        if let Some(max_width) = json.get("max_width") {
-            self.max_width = max_width.as_u64().unwrap_or(self.max_width as u64) as usize;
-        }
+
         if let Some(json_fields) = json.get("fields") {
             if json_fields.is_string() {
                 self.fields = json_fields
@@ -143,148 +152,118 @@ impl ChromaResponse<'_> {
                 ChromaResponse::Search(_) => warn!("Search results are not sortable by ID"),
             }
         }
-
-        if options.json {
-            serde_json::to_string_pretty(&self)
-                .map_err(|e| RuChatError::InternalError(e.to_string()))
-        } else {
-            let mut table = String::new();
-            match self {
-                ChromaResponse::Get(r) => {
-                    let rows = flatten_get(r);
-                    table.push_str(&create_table(rows, options, false, false)?);
-                }
-                ChromaResponse::Search(r) => {
-                    for (i, _) in r.ids.iter().enumerate() {
-                        info!("\nSearch Result Set #{}", i);
-                        let rows = flatten_search(r, i);
-                        table.push_str(&create_table(rows, options, true, false)?);
+        match options.format {
+            OutputFormat::Json => serde_json::to_string_pretty(&self)
+                .map_err(|e| RuChatError::InternalError(e.to_string())),
+            _ => {
+                let mut out = String::new();
+                match self {
+                    ChromaResponse::Get(r) => out.push_str(&render_rows(flatten_get(r), options)),
+                    ChromaResponse::Search(r) => {
+                        for (i, _) in r.ids.iter().enumerate() {
+                            out.push_str(&format!("\n### Search Result Set #{i}\n\n"));
+                            out.push_str(&render_rows(flatten_search(r, i), options));
+                        }
+                    }
+                    ChromaResponse::Query(r) => {
+                        for (i, _) in r.ids.iter().enumerate() {
+                            out.push_str(&format!("\n### Query Result Set #{i}\n\n"));
+                            out.push_str(&render_rows(flatten_query(r, i), options));
+                        }
                     }
                 }
-                ChromaResponse::Query(r) => {
-                    for (i, _) in r.ids.iter().enumerate() {
-                        info!("\nQuery Result Set #{}", i);
-                        let rows = flatten_query(r, i);
-                        table.push_str(&create_table(rows, options, false, true)?);
-                    }
-                }
+                Ok(out)
             }
-            Ok(table)
         }
     }
 }
-fn create_table(
-    rows: Vec<OutputRow>,
-    options: &OutputArgs,
-    is_search: bool,
-    is_query: bool,
-) -> Result<String> {
-    // 1. Build Dynamic Header
-    let mut header = String::new();
-    if options.should_show("id") {
-        header.push_str(&format!("{:<36} ", "ID"));
-    }
-    if options.should_show("doc") {
-        header.push_str(&format!("{:<30} ", "DOCUMENT"));
-    }
-    if options.should_show("embed") {
-        header.push_str(&format!("{:<12} ", "EMBEDDING"));
-    }
 
-    if is_search && options.should_show("score") {
-        header.push_str(&format!("{:<10} ", "SCORE"));
-    }
-    if is_query && options.should_show("distance") {
-        header.push_str(&format!("{:<10} ", "DISTANCE"));
-    }
-    if options.should_show("uri") {
-        header.push_str(&format!("{:<20} ", "URI"));
-    }
-    if options.should_show("meta") {
-        header.push_str("METADATA");
-    }
+const ALL_FIELDS: &[&str] = &[
+    "id", "doc", "embed", "score", "distance", "uri", "meta", "select", "include",
+];
 
-    let mut table = String::new();
-    table.push_str(&format!("{:-<120}{header}{:-<120}\n", "", ""));
-
-    // 2. Render Rows
-    for row in rows {
-        let mut line = String::new();
-
-        if options.should_show("id") {
-            line.push_str(&format!("{:<36} ", row.id));
-        }
-
-        if options.should_show("doc") {
-            let doc = row.document.unwrap_or_else(|| "-".to_string());
-            let truncated = if doc.len() > 27 {
-                format!("{}...", &doc[..24])
-            } else {
-                format!("{:<27}", doc)
-            };
-            line.push_str(&format!("{} ", truncated));
-        }
-
-        if options.should_show("embed") {
-            let emb_str = row
-                .embedding
-                .map_or("None".to_string(), |e| format!("[dim: {}]", e.len()));
-            line.push_str(&format!("{:<12} ", emb_str));
-        }
-
-        if is_search && options.should_show("score") {
-            line.push_str(&format!("{:<10.4} ", row.score.unwrap_or(0.0)));
-        }
-
-        if is_query && options.should_show("distance") {
-            line.push_str(&format!("{:<10.4} ", row.distance.unwrap_or(0.0)));
-        }
-
-        if options.should_show("uri") {
-            let uri = row.uri.unwrap_or_else(|| "-".to_string());
-            line.push_str(&format!(
-                "{:<20} ",
-                if uri.len() > 17 {
-                    format!("{}...", &uri[..17])
-                } else {
-                    uri
-                }
-            ));
-        }
-
-        if options.should_show("meta")
-            && let Some(m) = row.metadata
-        {
-            let truncated = if m.len() > 40 {
-                format!("{}...", &m[..37])
-            } else {
-                m
-            };
-            line.push_str(&truncated);
-        }
-        if options.should_show("select") {
-            let sel = row.select.unwrap_or_else(|| "-".to_string());
-            let trunc = if sel.len() > 12 {
-                format!("{}...", &sel[..12])
-            } else {
-                format!("{:<15}", sel)
-            };
-            line.push_str(&format!("{} ", trunc));
-        }
-
-        if options.should_show("include") {
-            let inc = row.include.unwrap_or_else(|| "-".to_string());
-            let trunc = if inc.len() > 12 {
-                format!("{}...", &inc[..12])
-            } else {
-                format!("{:<15}", inc)
-            };
-            line.push_str(&format!("{} ", trunc));
-        }
-        table.push_str(&line);
-    }
-    Ok(table)
+fn columns(options: &OutputArgs) -> Vec<&'static str> {
+    ALL_FIELDS
+        .iter()
+        .copied()
+        .filter(|f| options.should_show(f))
+        .collect()
 }
+
+fn cell(row: &OutputRow, field: &str) -> String {
+    match field {
+        "id" => row.id.clone(),
+        "doc" => row.document.clone().unwrap_or_default(),
+        "embed" => row
+            .embedding
+            .as_ref()
+            .map_or(String::new(), |e| format!("[dim: {}]", e.len())),
+        "score" => row.score.map_or(String::new(), |v| format!("{v:.4}")),
+        "distance" => row.distance.map_or(String::new(), |v| format!("{v:.4}")),
+        "uri" => row.uri.clone().unwrap_or_default(),
+        "meta" => row.metadata.clone().unwrap_or_default(),
+        "select" => row.select.clone().unwrap_or_default(),
+        "include" => row.include.clone().unwrap_or_default(),
+        _ => String::new(),
+    }
+}
+// (map_or_default isn't real Option API — use `row.field.as_ref().map_or(String::new(), |v| ...)`; fix inline)
+
+fn render_rows(rows: Vec<OutputRow>, options: &OutputArgs) -> String {
+    if options.format == OutputFormat::Oneliner {
+        render_oneliner(rows, options)
+    } else {
+        render_markdown(rows, options)
+    }
+}
+
+fn escape_md(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('|', "\\|")
+        .replace('\n', "<br>")
+}
+
+fn render_markdown(rows: Vec<OutputRow>, options: &OutputArgs) -> String {
+    let cols = columns(options);
+    if cols.is_empty() || rows.is_empty() {
+        return String::new();
+    }
+    let mut out = format!(
+        "| {} |\n",
+        cols.iter()
+            .map(|c| c.to_uppercase())
+            .collect::<Vec<_>>()
+            .join(" | ")
+    );
+    out.push_str(&format!(
+        "|{}|\n",
+        cols.iter().map(|_| "---").collect::<Vec<_>>().join("|")
+    ));
+    for row in &rows {
+        out.push_str(&format!(
+            "| {} |\n",
+            cols.iter()
+                .map(|c| escape_md(&cell(row, c)))
+                .collect::<Vec<_>>()
+                .join(" | ")
+        ));
+    }
+    out
+}
+
+fn render_oneliner(rows: Vec<OutputRow>, options: &OutputArgs) -> String {
+    let cols = columns(options);
+    rows.iter()
+        .map(|row| {
+            cols.iter()
+                .map(|c| cell(row, c).replace(['\n', '\t'], " "))
+                .collect::<Vec<_>>()
+                .join("\t")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn flatten_get(r: &types::GetResponse) -> Vec<OutputRow> {
     (0..r.ids.len())
         .map(|i| OutputRow {
