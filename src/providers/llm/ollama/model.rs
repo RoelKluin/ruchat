@@ -179,6 +179,10 @@ impl ModelArgs {
 }
 
 async fn get_model_name(ollama: &Ollama, name: &str) -> Result<String> {
+    get_model_name_inner(ollama, name, 0).await
+}
+
+async fn get_model_name_inner(ollama: &Ollama, name: &str, pull_attempts: u8) -> Result<String> {
     if name.is_empty()
         || !name
             .chars()
@@ -201,8 +205,14 @@ async fn get_model_name(ollama: &Ollama, name: &str) -> Result<String> {
     match model {
         Some(model) => Ok(model.name.clone()),
         None => {
+            const MAX_PULL_ATTEMPTS: u8 = 1;
+            if pull_attempts >= MAX_PULL_ATTEMPTS {
+                return Err(RuChatError::ModelError(format!(
+                    "{name} still not found in local models after {pull_attempts} pull attempt(s)"
+                )));
+            }
             ollama.pull_model(name.to_string(), false).await?;
-            Box::pin(get_model_name(ollama, name)).await
+            Box::pin(get_model_name_inner(ollama, name, pull_attempts + 1)).await
         }
     }
 }
