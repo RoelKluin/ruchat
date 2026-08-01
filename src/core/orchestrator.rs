@@ -235,10 +235,24 @@ impl Orchestrator {
         }
         let results = futures_util::future::join_all(futs).await;
         for res in results {
-            if let Ok((text, approval_signal)) = res
-                && !text.contains(&approval_signal) {
-                    ctx.push_turn(TurnKind::Rejection, "Critic", text);
+            match res {
+                Ok((text, approval_signal)) => {
+                    if !text.contains(&approval_signal) {
+                        ctx.push_turn(TurnKind::Rejection, "Critic", text);
+                    }
                 }
+                Err(e) => {
+                    // A critic that exhausts retries must count as a
+                    // rejection, not a silent no-op — otherwise an
+                    // unreachable/erroring critic is indistinguishable from
+                    // an approving one, inverting the consensus gate's intent.
+                    ctx.push_turn(
+                        TurnKind::Rejection,
+                        "Critic",
+                        format!("critic failed to produce a verdict: {e}"),
+                    );
+                }
+            }
         }
         Ok(())
     }
