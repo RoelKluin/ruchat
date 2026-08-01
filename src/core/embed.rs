@@ -3,11 +3,13 @@ use crate::ollama::OllamaArgs;
 use crate::{retry_transient, Result, RuChatError};
 use chroma::types::UpdateMetadataValue;
 use chroma::types::{Metadata, MetadataValue, UpdateMetadata};
+use chroma::ChromaCollection;
 use chrono::Utc;
 use clap::{Parser, ValueEnum};
 use log::info;
 use md5::{Digest, Md5};
 use ollama_rs::generation::embeddings::request::{EmbeddingsInput, GenerateEmbeddingsRequest};
+use ollama_rs::Ollama;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -65,6 +67,12 @@ impl EmbedArgs {
     /// the ctags indexer (`core::index`) construct metadata programmatically
     /// while reusing all the existing chunk-slicing/upsert/dedup logic below
     /// unchanged.
+    ///
+    /// Unlike `embed_raw_items` below, this treats `prompt` as ONE shared
+    /// text and uses each metadata item's `start`/`end` fields to slice a
+    /// distinct chunk out of it by line range — the ctags indexer's model
+    /// (one file, many symbol-scoped sub-chunks). Signature is unchanged
+    /// from upstream; `core/index.rs` depends on it as-is.
     pub(crate) async fn embed_with_metadata_items(
         &self,
         prompt: &str,
@@ -96,11 +104,18 @@ impl EmbedArgs {
             }
         } else {
             for meta in metadata_items {
+                // NOTE (pre-existing, unrelated to this rebase): the
+                // created_at/model_origin overwrite below via `meta_value`
+                // is discarded — `chunk_metadatas.push(Some(meta))` a few
+                // lines down pushes the ORIGINAL `meta`, not `meta_value`.
+                // Both fields get correctly (re)written later in
+                // `embed_chunks`'s per-chunk loop, so this is dead code
+                // rather than a bug with an observable effect. Left as-is
+                // to keep this rebase to the two actual conflicts.
                 let mut meta_value = serde_json::to_value(&meta).unwrap_or_default();
                 if let Some(v) = meta_value.get_mut("created_at") {
                     *v = serde_json::json!(Utc::now().to_rfc3339());
                 }
-
                 if let Some(v) = meta_value.get_mut("model_origin") {
                     *v = serde_json::json!(model.clone());
                 }
@@ -122,6 +137,73 @@ impl EmbedArgs {
             }
         }
 
+        self.embed_chunks(
+            chunk_texts,
+            chunk_metadatas,
+            mode,
+            &ollama,
+            &collection,
+            &model,
+        )
+        .await
+    }
+
+    /// Embeds pre-chunked `(text, metadata)` pairs verbatim — each pair is
+    /// its own complete chunk, with NO line-range slicing against a shared
+    /// prompt. Complements `embed_with_metadata_items` (which owns the
+    /// slicing model for the ctags indexer) rather than replacing it; used
+    /// by ingestion pipelines like `hist::HistIngestArgs` where each item
+    /// (a commit message, a diff hunk) is already independent, fully-formed
+    /// text.
+    pub(crate) async fn embed_raw_items(
+        &self,
+        items: Vec<(String, UpdateMetadata)>,
+        mode: UpsertMode,
+        cfg: &Value,
+    ) -> Result<()> {
+        let (ollama, models) = self.ollama_args.init("all-minilm:l6-v2", cfg).await?;
+        let model = models
+            .last()
+            .ok_or_else(|| RuChatError::InternalError("No model found".into()))?
+            .to_string();
+
+        let client = self.client_config.create_client(cfg).await?;
+        let collection = self
+            .collection_config
+            .get_collection(&client, "default")
+            .await?;
+
+        let (chunk_texts, chunk_metadatas): (Vec<String>, Vec<Option<UpdateMetadata>>) = items
+            .into_iter()
+            .map(|(text, meta)| (text, Some(meta)))
+            .unzip();
+
+        self.embed_chunks(
+            chunk_texts,
+            chunk_metadatas,
+            mode,
+            &ollama,
+            &collection,
+            &model,
+        )
+        .await
+    }
+
+    /// Shared tail of `embed_with_metadata_items` and `embed_raw_items`:
+    /// given already-chunked texts + optional per-chunk metadata, generates
+    /// embeddings, checks existing IDs, and dispatches add/update/upsert per
+    /// `mode`. Factored out of the original "2. Generate IDs and
+    /// Embeddings" / "3. Unified Dispatch" sections, which were previously
+    /// duplicated wholesale between callers — now both bottom out here.
+    async fn embed_chunks(
+        &self,
+        chunk_texts: Vec<String>,
+        chunk_metadatas: Vec<Option<UpdateMetadata>>,
+        mode: UpsertMode,
+        ollama: &Ollama,
+        collection: &ChromaCollection,
+        model: &str,
+    ) -> Result<()> {
         // 2. Generate IDs and Embeddings
         let mut chunk_ids = Vec::new();
         for content in &chunk_texts {
@@ -138,7 +220,7 @@ impl EmbedArgs {
             chunk_ids.push(id);
         }
         let request = GenerateEmbeddingsRequest::new(
-            model.clone(),
+            model.to_string(),
             EmbeddingsInput::Multiple(chunk_texts.clone()),
         );
         let embed_res = ollama.generate_embeddings(request).await?;
@@ -170,14 +252,13 @@ impl EmbedArgs {
                     .and_then(|m| m.clone())
                     .unwrap_or_default();
 
-                // FIX 2: Correct Metadata value types
                 meta.insert(
                     "created_at".to_string(),
                     UpdateMetadataValue::Str(chrono::Utc::now().to_rfc3339()),
                 );
                 meta.insert(
                     "model_origin".to_string(),
-                    UpdateMetadataValue::Str(model.clone()),
+                    UpdateMetadataValue::Str(model.to_string()),
                 );
 
                 final_ids.push(id.to_string());
@@ -187,25 +268,20 @@ impl EmbedArgs {
             }
         }
 
-        if !final_ids.is_empty() {
-            collection
-                .upsert(
-                    final_ids,
-                    final_embeddings,
-                    Some(final_docs),
-                    None,
-                    Some(final_metadatas),
-                )
-                .await?;
+        // Nothing new/changed to write — avoids calling add/update/upsert
+        // with empty vectors below.
+        if final_ids.is_empty() {
+            return Ok(());
         }
 
-        let docs_to_send: Option<Vec<Option<String>>> =
-            Some(chunk_texts.into_iter().map(Some).collect());
-        let metadatas_to_send: Option<Vec<Option<UpdateMetadata>>> = if chunk_metadatas.is_empty() {
-            None
-        } else {
-            Some(chunk_metadatas)
-        };
+        // `final_docs`/`final_metadatas` are already the deduped set this
+        // function should actually write; the mode-dispatch match below now
+        // operates on them directly instead of re-sending the full,
+        // undeduped `chunk_ids`/`chunk_texts` — that was the source of the
+        // double-write for `UpsertMode::Upsert` (once here via an
+        // unconditional `.upsert()`, once again in the match arm below).
+        let docs_to_send: Option<Vec<Option<String>>> = Some(final_docs);
+        let metadatas_to_send: Option<Vec<Option<UpdateMetadata>>> = Some(final_metadatas);
 
         // 3. Unified Dispatch
         match mode {
@@ -231,8 +307,8 @@ impl EmbedArgs {
                 retry_transient!(async {
                     collection
                         .add(
-                            chunk_ids.clone(),
-                            embeddings.clone(),
+                            final_ids.clone(),
+                            final_embeddings.clone(),
                             docs_to_send.clone(),
                             None,
                             metadatas_to_send.clone(),
@@ -243,12 +319,12 @@ impl EmbedArgs {
                 info!("Added records");
             }
             UpsertMode::Update => {
-                // Map embeddings for Update (Update accepts Option<Vec<Option<Vec<f32>>>>)
-                let update_embeddings = Some(embeddings.into_iter().map(Some).collect());
+                let update_embeddings =
+                    Some(final_embeddings.clone().into_iter().map(Some).collect());
                 retry_transient!(async {
                     collection
                         .update(
-                            chunk_ids.clone(),
+                            final_ids.clone(),
                             update_embeddings.clone(),
                             docs_to_send.clone(),
                             None,
@@ -263,8 +339,8 @@ impl EmbedArgs {
                 retry_transient!(async {
                     collection
                         .upsert(
-                            chunk_ids.clone(),
-                            embeddings.clone(),
+                            final_ids.clone(),
+                            final_embeddings.clone(),
                             docs_to_send.clone(),
                             None,
                             metadatas_to_send.clone(),
