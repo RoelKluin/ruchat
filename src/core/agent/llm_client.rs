@@ -139,33 +139,6 @@ impl VectorStore for ChromaHttpClient {
     }
 }
 
-#[cfg(test)]
-pub(crate) mod fake_vector_store {
-    use super::*;
-
-    pub(crate) struct FakeVectorStore {
-        pub(crate) response: QueryResponse,
-    }
-
-    #[async_trait]
-    impl VectorStore for FakeVectorStore {
-        async fn query_collection(
-            &self,
-            _collection_name: &str,
-            _embeddings: Vec<Vec<f32>>,
-            _n_results: Option<u32>,
-            _where: Option<Where>,
-            _ids: Option<Vec<String>>,
-            _include: Option<IncludeList>,
-        ) -> Result<QueryResponse> {
-            // NEEDS VERIFICATION: confirm `chroma::types::QueryResponse: Clone`
-            // in the pinned `chroma`/`chroma-types` version — if not, change
-            // this fake to build fresh per call instead of cloning a stored one.
-            Ok(self.response.clone())
-        }
-    }
-}
-
 #[async_trait]
 pub(crate) trait EmbeddingsClient: Send + Sync {
     async fn generate_embeddings(
@@ -199,5 +172,32 @@ impl EmbeddingsClient for FakeEmbeddingsClient {
         _req: GenerateEmbeddingsRequest,
     ) -> Result<GenerateEmbeddingsResponse> {
         Ok(self.response.clone())
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod fake_vector_store {
+    use super::*;
+
+    pub(crate) struct FakeVectorStore {
+        pub(crate) response: QueryResponse,
+    }
+
+    #[async_trait]
+    impl VectorStore for FakeVectorStore {
+        async fn query_collection(
+            &self,
+            _collection_name: &str,
+            _embeddings: Vec<Vec<f32>>,
+            _n_results: Option<u32>,
+            _where: Option<Where>,
+            _ids: Option<Vec<String>>,
+            _include: Option<IncludeList>,
+        ) -> Result<QueryResponse> {
+            // NEEDS VERIFICATION: confirm `chroma::types::QueryResponse: Clone`
+            // in the pinned `chroma`/`chroma-types` version — if not, change
+            // this fake to build fresh per call instead of cloning a stored one.
+            Ok(self.response.clone())
+        }
     }
 }

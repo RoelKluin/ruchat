@@ -161,7 +161,7 @@ impl Agent {
         // System instructions and retrieved/untrusted content now ride as
         // distinct chat messages instead of one concatenated string — see
         // prior review note on prompt-injection surface via `documents_view`.
-        let (system_text, user_text) = role.build_chat_messages(
+        let (_system_text, _user_text) = role.build_chat_messages(
             self.get_str("task").ok(),
             ctx,
             self.get_str("task_hint").ok(),

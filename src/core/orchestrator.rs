@@ -8,8 +8,6 @@ use crate::agent::types::{Context, TurnKind};
 use crate::agent::Agent;
 use crate::providers::vector::chroma::ChromaClientConfigArgs;
 use crate::{Result, RuChatError};
-use chroma::ChromaHttpClient;
-use ollama_rs::Ollama;
 use serde_json::Value;
 pub(super) use task::TaskType;
 use tokio::sync::mpsc;
@@ -23,7 +21,6 @@ use super::agent::json_extract::strip_json_fences;
 use git::commit_feature_branch;
 use serde::Deserialize;
 use crate::retry_transient;
-use crate::agent::pipeline::AgentPipeline;
 use std::sync::Arc;
 use crate::agent::llm_client::{LlmClient, VectorStore};
 

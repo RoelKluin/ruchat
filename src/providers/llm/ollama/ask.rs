@@ -1,15 +1,13 @@
 use crate::cli::prompt::PromptArgs;
-use crate::agent::event::{AgentEvent, StreamItem};
+use crate::agent::event::StreamItem;
 use crate::io::Io;
 use crate::ollama::OllamaArgs;
 use crate::orchestrator::Orchestrator;
 use crate::{Result, RuChatError};
 use clap::Parser;
 use futures_util::TryStreamExt;
-use indicatif::{ProgressBar, ProgressStyle};
 use ollama_rs::models::ModelOptions;
 use std::pin::Pin;
-use std::io::Write as _;
 use tokio_stream::Stream;
 use tokio_stream::StreamExt;
 use serde_json::Value;

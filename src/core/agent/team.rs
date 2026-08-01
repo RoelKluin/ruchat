@@ -1,5 +1,4 @@
 use crate::agent::event::{send_event, AgentEvent, StreamItem};
-use crate::agent::pipeline::AgentPipeline;
 use crate::agent::pipeline::PipelineStream;
 use crate::agent::worker::Agent;
 use crate::Result;
