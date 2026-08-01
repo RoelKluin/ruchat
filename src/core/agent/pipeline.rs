@@ -1,4 +1,4 @@
-use crate::agent::event::{AgentEvent, StreamItem};
+use crate::agent::event::StreamItem;
 use crate::Result;
 use ollama_rs::Ollama;
 use tokio::sync::mpsc;

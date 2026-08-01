@@ -28,11 +28,10 @@ fn walk_files(root: &Path, exts: &[&str], out: &mut Vec<PathBuf>) -> std::io::Re
                 continue;
             }
             walk_files(&path, exts, out)?;
-        } else if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-            if exts.contains(&ext) {
+        } else if let Some(ext) = path.extension().and_then(|e| e.to_str())
+            && exts.contains(&ext) {
                 out.push(path);
             }
-        }
     }
     Ok(())
 }

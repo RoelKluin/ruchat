@@ -1,7 +1,5 @@
 use super::types::{Context, TurnKind};
 use crate::{Result, RuChatError};
-use regex::Regex;
-use std::sync::OnceLock;
 use std::time::Duration;
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
