@@ -11,7 +11,21 @@ const BASE_DELAY_MS: u64 = 250;
 /// reproduce the same deterministic failure at the cost of another model
 /// call — those should surface immediately to the stage machine instead.
 pub(crate) fn is_transient(err: &RuChatError) -> bool {
-    matches!(err, RuChatError::OllamaError(_))
+    match err {
+        RuChatError::OllamaError(_) => true,
+        // NEEDS VERIFICATION: `chroma::client::ChromaHttpClientError`'s
+        // variant set isn't in the provided excerpts. Ideally this should
+        // match specific transient variants (connection refused, timeout)
+        // the same way `OllamaError` is matched wholesale-transient. Until
+        // that enum is inspected, fall back to a conservative substring
+        // check on Display output — replace with proper variant matching
+        // once the crate's error type is available.
+        RuChatError::ChromaHttpClientError(e) => {
+            let msg = e.to_string().to_lowercase();
+            msg.contains("connection") || msg.contains("timed out") || msg.contains("timeout")
+        }
+        _ => false,
+    }
 }
 
 pub(crate) fn backoff_delay(attempt: u32) -> Duration {
