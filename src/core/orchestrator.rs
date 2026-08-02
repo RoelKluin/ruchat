@@ -403,7 +403,7 @@ impl Orchestrator {
                                 "Orchestrator",
                                 "Architect repeated identical plan with no new information — likely stalled, escalating".into(),
                             );
-                            stage = Stage::Escalate("Architect stalled: repeated identical output across rounds".into());
+                            Stage::Escalate("Architect stalled: repeated identical output across rounds".into())
                         } else {
                             last_architect_output = Some(ctx.output.clone());
                             Stage::Retrieve
@@ -614,6 +614,9 @@ impl Orchestrator {
                             .ok_or(RuChatError::Is("Validator not enabled".into()))?
                             .query_stream(&self.ollama, &mut ctx, &tx)
                             .await?;
+                        let reason = strip_json_fences(&ctx.output)
+                            .to_string();
+                        ctx.trace(&tx, format!("[REJECTED] {reason}")).await;
                         TurnKind::Rejection
                     }
                     "Summarizer" => {
@@ -643,6 +646,9 @@ impl Orchestrator {
                             .ok_or(RuChatError::Is("Critic index out of bounds".into()))?
                             .query_stream(&self.ollama, &mut ctx, &tx)
                             .await?;
+                        let reason = strip_json_fences(&ctx.output)
+                            .to_string();
+                        ctx.trace(&tx, format!("[REJECTED] {reason}")).await;
                         TurnKind::Rejection
                     }
                     _ => return Err(RuChatError::Is(format!("Unknown agent: {role}"))),

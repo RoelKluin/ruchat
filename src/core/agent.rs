@@ -165,6 +165,7 @@ impl Agent {
             self.get_str("task").ok(),
             ctx,
             self.get_str("task_hint").ok(),
+            self.get_str("approval_signal").ok(),
         );
         let model = self.get_str("model")?;
 
@@ -175,6 +176,7 @@ impl Agent {
             self.get_str("task").ok(),
             ctx,
             self.get_str("task_hint").ok(),
+            self.get_str("approval_signal").ok(),
         );
         ctx.trace(
             tx,

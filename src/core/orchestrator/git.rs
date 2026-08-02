@@ -144,3 +144,12 @@ pub(crate) async fn git_search_history(
     let args_ref: Vec<&str> = args.iter().map(String::as_str).collect();
     run_git_command_capture(args_ref).await
 }
+
+/// Returns the set of paths tracked by git in the current repo (i.e.
+/// `git ls-files`). Used to gate any tool that writes to disk — apply_patch
+/// must never touch a file outside version control (build artifacts,
+/// .git internals, ignored files, paths outside the repo entirely).
+pub(crate) async fn tracked_files() -> Result<std::collections::HashSet<String>> {
+    let out = run_git_command_capture(vec!["ls-files"]).await?;
+    Ok(out.lines().map(str::to_string).collect())
+}
