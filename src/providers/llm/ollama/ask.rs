@@ -163,6 +163,9 @@ impl AskArgs {
             if config.get("Worker").is_none() {
                 config["Worker"] = serde_json::json!({ "model": model });
             }
+            if config.get("Scoper").is_none() {
+                config["Scoper"] = serde_json::json!({ "model": model });
+            }
         }
 
         // Handle validator shortcut

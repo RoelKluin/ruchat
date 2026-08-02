@@ -346,7 +346,7 @@ impl Orchestrator {
             .orchestrator_config
             .get("scope_iterations")
             .and_then(|v| v.as_u64())
-            .unwrap_or(3);
+            .unwrap_or(7);
         let mut ctx = Context::new(goal);
         let ctx = &mut ctx;
 
