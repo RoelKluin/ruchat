@@ -184,10 +184,40 @@ pub(crate) fn parse_tool_call(
         regex::Regex::new(r"(?is)```(?:tool_call|json)\s*\n(.*?)\n```").unwrap()
     });
 
+    if let Some(caps) = re.captures(output) {
+        let json_str = caps.get(1).ok_or(ToolParseError::NotFound)?.as_str();
+        let value: Value = serde_json::from_str(json_str)?;
+        return structured_call_from_value(value);
+    }
+
+    parse_bare_diff_as_apply_patch(output)
+}
+
+/// Falls back to a bare ` ```diff `/` ```patch ` fenced block as an implicit
+/// `apply_patch` call. Coder-tuned models (e.g. qwen2.5-coder) reliably
+/// answer an edit request with a raw diff instead of the requested
+/// `apply_patch` tool_call JSON — the same class of non-compliance the
+/// ```json``` fence tolerance above exists for, just for the Worker's
+/// terminal action instead of a lookup. Without this, such a diff was
+/// silently discarded (`parse_tool_call` returning `NotFound`, treated by
+/// `execute_and_verify` as `Validation::Skip`) and the round proceeded as
+/// if the Worker had done nothing, burning the iteration budget with no
+/// patch ever attempted and no diff-specific feedback ever fed back to it.
+fn parse_bare_diff_as_apply_patch(
+    output: &str,
+) -> std::result::Result<StructuredToolCall, ToolParseError> {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    let re =
+        RE.get_or_init(|| regex::Regex::new(r"(?is)```(?:diff|patch)\s*\n(.*?)\n```").unwrap());
     let caps = re.captures(output).ok_or(ToolParseError::NotFound)?;
-    let json_str = caps.get(1).ok_or(ToolParseError::NotFound)?.as_str();
-    let value: Value = serde_json::from_str(json_str)?;
-    structured_call_from_value(value)
+    let diff = caps.get(1).ok_or(ToolParseError::NotFound)?.as_str();
+    if !diff.contains("--- ") || !diff.contains("+++ ") || !diff.contains("@@") {
+        return Err(ToolParseError::NotFound);
+    }
+    Ok(StructuredToolCall {
+        tool: ToolName::ApplyPatch,
+        args: serde_json::json!({"tool": "apply_patch", "diff": diff}),
+    })
 }
 
 #[cfg(test)]
@@ -213,6 +243,29 @@ mod tests {
         let call = parse_tool_call(input).unwrap();
         assert_eq!(call.tool, ToolName::Ripgrep);
         assert_eq!(call.args["pattern"], "//.*");
+    }
+
+    #[test]
+    fn parses_bare_diff_fence_as_apply_patch() {
+        // Regression: qwen2.5-coder:14b reliably answers an edit request with
+        // a raw ```diff fence instead of the requested apply_patch tool_call
+        // JSON. Previously parse_tool_call returned NotFound for this, so
+        // execute_and_verify treated it as Validation::Skip — no patch was
+        // ever attempted and the run proceeded as if the Worker had done
+        // nothing, silently burning the iteration budget.
+        let input = "```diff\n--- a/src/foo.rs\n+++ b/src/foo.rs\n@@ -1,1 +1,1 @@\n-old\n+new\n```";
+        let call = parse_tool_call(input).unwrap();
+        assert_eq!(call.tool, ToolName::ApplyPatch);
+        assert!(call.args["diff"].as_str().unwrap().contains("+new"));
+    }
+
+    #[test]
+    fn ignores_fenced_block_that_is_not_a_real_diff() {
+        let input = "```diff\nnot actually a unified diff\n```";
+        assert!(matches!(
+            parse_tool_call(input),
+            Err(ToolParseError::NotFound)
+        ));
     }
 
     #[test]
