@@ -92,29 +92,58 @@ pub(crate) enum ToolParseError {
     MissingField(&'static str),
 }
 
+fn render_catalog(prepend: &str, tools: &[ToolName]) -> String {
+    let mut s = String::new();
+    for t in tools {
+        s.push_str(&format!("{prepend} {}\n", t.schema_hint()));
+    }
+    s
+}
+
 /// Renders the tool catalog injected into the Worker prompt — the schema
 /// strings here are exactly what `parse_tool_call` validates against, so
 /// prompt and parser can't drift independently.
 pub(crate) fn prompt_tool_catalog(prepend: &str) -> String {
-    let mut s = String::new();
-    for t in [
-        ToolName::Memorize,
-        ToolName::ApplyPatch,
-        ToolName::Retrieve,
-        ToolName::GitLog,
-        ToolName::GitBlame,
-        ToolName::GitDiff,
-        ToolName::GitSearchHistory,
-        ToolName::ReadFile,
-        ToolName::ListDir,
-        ToolName::Ripgrep,
-        ToolName::ReadTags,
-        ToolName::CargoCheck,
-        ToolName::CargoDupes,
-    ] {
-        s.push_str(&format!("{prepend} {}\n", t.schema_hint()));
-    }
-    s
+    render_catalog(
+        prepend,
+        &[
+            ToolName::Memorize,
+            ToolName::ApplyPatch,
+            ToolName::Retrieve,
+            ToolName::GitLog,
+            ToolName::GitBlame,
+            ToolName::GitDiff,
+            ToolName::GitSearchHistory,
+            ToolName::ReadFile,
+            ToolName::ListDir,
+            ToolName::Ripgrep,
+            ToolName::ReadTags,
+            ToolName::CargoCheck,
+            ToolName::CargoDupes,
+        ],
+    )
+}
+
+/// Same as `prompt_tool_catalog` but restricted to the read-only lookup
+/// tools the Scoper's own JSON schema actually declares as valid `"tool"`
+/// values (see `agent_role/scoper.md`) — it must never be offered
+/// `memorize`/`apply_patch`/`cargo_check`/`cargo_dupes`, which aren't in
+/// that enum and aren't lookups.
+pub(crate) fn prompt_scoper_tool_catalog(prepend: &str) -> String {
+    render_catalog(
+        prepend,
+        &[
+            ToolName::Retrieve,
+            ToolName::GitLog,
+            ToolName::GitBlame,
+            ToolName::GitDiff,
+            ToolName::GitSearchHistory,
+            ToolName::ReadFile,
+            ToolName::ListDir,
+            ToolName::Ripgrep,
+            ToolName::ReadTags,
+        ],
+    )
 }
 
 /// Validates an already-parsed tool-call JSON `Value` (no fence/regex

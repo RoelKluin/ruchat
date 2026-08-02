@@ -40,14 +40,15 @@ placeholder as if it were a value:
   "verdict": "READY" | "NEEDS_INFO",
   "clarified_goal": string,
   "information_needed": [
-    {
-      "tool": "read_file" | "list_dir" | "ripgrep" | "read_tags" | "retrieve"
-                | "git_log" | "git_blame" | "git_diff" | "git_search_history",
-{{TOOL_CATALOG}}
-    }
+    { "tool": "read_file" | "list_dir" | "ripgrep" | "read_tags" | "retrieve"
+              | "git_log" | "git_blame" | "git_diff" | "git_search_history", ...<that tool's own fields> }
   ],
   "notes": string
 }
+
+Each entry in "information_needed" must match exactly ONE of these schemas (pick the one
+tool you're requesting for that entry — do not combine fields from more than one):
+{{TOOL_CATALOG}}
 
 For example, if you don't yet know which file to read, the correct move is to request a
 ripgrep search with a real search term from the task (not read_file with a guessed path).

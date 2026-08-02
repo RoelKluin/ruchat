@@ -443,7 +443,7 @@ impl Orchestrator {
                             stage = Stage::Escalate("Worker stalled: repeated identical output across rounds".into());
                             continue;
                         }
-                        last_architect_output = Some(ctx.output.clone());
+                        last_worker_output = Some(ctx.output.clone());
                     }
                     ctx.push_turn(TurnKind::Implementation, "Worker", ctx.output.clone());
 

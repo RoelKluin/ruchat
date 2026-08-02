@@ -1,5 +1,5 @@
 use super::types::{Context, TurnKind};
-use crate::agent::tools::prompt_tool_catalog;
+use crate::agent::tools::{prompt_scoper_tool_catalog, prompt_tool_catalog};
 use crate::core::agent::templates;
 use crate::{Result, RuChatError};
 use std::collections::HashMap;
@@ -45,7 +45,7 @@ impl Role {
             Self::Scoper => {
                 vars.insert("DOCUMENTS", ctx.documents_view(ctx.round));
                 vars.insert("COLLECTIONS", ctx.build_collections_summary());
-                vars.insert("TOOL_CATALOG", prompt_tool_catalog("// "));
+                vars.insert("TOOL_CATALOG", prompt_scoper_tool_catalog("// "));
                 let prior_notes: String = ctx
                     .turns
                     .iter()
