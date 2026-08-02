@@ -1,6 +1,7 @@
 pub(crate) mod git;
 pub(crate) mod fs;
 pub(crate) mod search;
+pub(crate) mod scope;
 pub(crate) mod cargo;
 pub(super) mod task;
 
@@ -29,6 +30,7 @@ use crate::agent::llm_client::{LlmClient, VectorStore};
 
 #[derive(Debug, Clone, PartialEq)]
 enum Stage {
+    Scope,
     Plan,
     Retrieve,
     Implement,
@@ -52,6 +54,7 @@ struct ValidatorVerdict {
 
 pub(crate) struct Orchestrator {
     // Core pipeline
+    scoper: Option<Agent>,
     architect: Agent,
     librarian: Option<Agent>,
     worker: Agent,
@@ -108,6 +111,7 @@ impl Orchestrator {
         )
         .await
         .ok();
+        let scoper = Agent::new(&mut orchestrator_config, "Scoper", false, task_type, cfg.clone()).await.ok();
 
         let mut critics = Vec::new();
         if let Some(critic_list) = orchestrator_config
@@ -160,9 +164,8 @@ impl Orchestrator {
             librarian = Some(lib);
         }
 
-        // 2. Extract Critics (can be a list or individual named keys in JSON)
-
         Ok(Self {
+            scoper,
             architect,
             worker,
             validator,
@@ -339,6 +342,11 @@ impl Orchestrator {
             .get("iterations")
             .and_then(|v| v.as_u64())
             .unwrap_or(3);
+        let max_scope_iterations = self
+            .orchestrator_config
+            .get("scope_iterations")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(3);
         let mut ctx = Context::new(goal);
         let ctx = &mut ctx;
 
@@ -351,7 +359,8 @@ impl Orchestrator {
         }
 
         let mut retrieve_budget: u32 = 2; // conservative cap on Worker-initiated retrievals per run
-        let mut stage = Stage::Plan;
+        let mut scope_round = 0;
+        let mut stage = Stage::Scope;
 
         loop {
             // Checked once per stage transition — this is the boundary the
@@ -461,7 +470,12 @@ impl Orchestrator {
                 }
                 Stage::Retry => {
                     if ctx.round >= max_iterations {
-                        Stage::Escalate("repeated rejections, iteration budget exhausted".into())
+                        if ctx.turns.iter().any(|t| t.kind == TurnKind::Implementation) {
+                            ctx.trace(&tx, "Iteration budget exhausted — surfacing best-known implementation, NOT committed, unresolved feedback remains.".into()).await;
+                            Stage::Done // deliberately not Commit — don't auto-commit an unvalidated patch
+                        } else {
+                            Stage::Escalate("repeated rejections, iteration budget exhausted, no implementation produced".into())
+                        }
                     } else {
                         if let Some(summarizer) = self.summarizer.as_mut() {
                             let approx_tokens: u64 = ctx
@@ -481,6 +495,14 @@ impl Orchestrator {
                 Stage::Commit => {
                     commit_feature_branch(ctx).await?;
                     Stage::Done
+                }
+                Stage::Scope => {
+                    if self.scoper.is_none() || scope_round >= max_scope_iterations {
+                        Stage::Plan
+                    } else {
+                        scope_round += 1;
+                        self.run_scope_stage(ctx, &tx).await?
+                    }
                 }
             };
         }
@@ -550,6 +572,14 @@ impl Orchestrator {
                             .query_stream(&self.ollama, &mut ctx, &tx)
                             .await?;
                         TurnKind::Summary
+                    }
+                    "Scoper" => {
+                        self.scoper
+                            .as_mut()
+                            .ok_or(RuChatError::Is("Scoper not enabled".into()))?
+                            .query_stream(&self.ollama, &mut ctx, &tx)
+                            .await?;
+                        TurnKind::Plan
                     }
                     r if r.starts_with("Critic") => {
                         // "Critic_0", "Critic_1", ... — matches the naming in Orchestrator::new.
@@ -687,6 +717,56 @@ impl Orchestrator {
             }
             ToolName::Memorize | ToolName::ApplyPatch => Ok(()),
         }
+    }
+    async fn run_scope_stage(
+        &mut self,
+        ctx: &mut Context,
+        tx: &mpsc::Sender<OrchestratorResult>,
+    ) -> Result<Stage> {
+        let scoper = self
+            .scoper
+            .as_mut()
+            .ok_or_else(|| RuChatError::Is("Scoper not enabled".into()))?;
+
+        retry_transient!(scoper.query_stream(&self.ollama, ctx, tx))?;
+
+        let Some(verdict) = scope::parse_scope_verdict(&ctx.output) else {
+            ctx.trace(
+                tx,
+                "Scoper output was not valid JSON — proceeding to Plan with the goal as-is".into(),
+            )
+            .await;
+            return Ok(Stage::Plan);
+        };
+
+        if !verdict.notes.is_empty() {
+            ctx.push_turn(TurnKind::System, "Scoper", verdict.notes.clone());
+        }
+        if !verdict.clarified_goal.is_empty() {
+            ctx.goal = verdict.clarified_goal;
+        }
+
+        if verdict.verdict.eq_ignore_ascii_case("READY") {
+            return Ok(Stage::Plan);
+        }
+
+        for item in verdict.information_needed {
+            match tools::structured_call_from_value(item) {
+                Ok(call) => {
+                    if let Err(e) = self.handle_structured_tool(&call, ctx).await {
+                        ctx.push_turn(TurnKind::System, "Scoper", format!("lookup failed: {e}"));
+                    }
+                }
+                Err(e) => {
+                    ctx.push_turn(
+                        TurnKind::System,
+                        "Scoper",
+                        format!("invalid information_needed entry: {e}"),
+                    );
+                }
+            }
+        }
+        Ok(Stage::Scope)
     }
 }
 

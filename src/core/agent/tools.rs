@@ -92,21 +92,39 @@ pub(crate) enum ToolParseError {
     MissingField(&'static str),
 }
 
-/// Extracts and validates a single structured tool call from model output.
-/// Expects a fenced block: ```tool_call\n{ ... }\n```. Replaces the previous
-/// regex-only `### TOOL CALL: NAME\n...\n### END TOOL CALL` marker format —
-/// the JSON payload lets us validate required fields per tool up front
-/// instead of the callee discovering a missing field deep in dispatch.
-pub(crate) fn parse_tool_call(
-    output: &str,
+/// Renders the tool catalog injected into the Worker prompt — the schema
+/// strings here are exactly what `parse_tool_call` validates against, so
+/// prompt and parser can't drift independently.
+pub(crate) fn prompt_tool_catalog(prepend: &str) -> String {
+    let mut s = String::new();
+    for t in [
+        ToolName::Memorize,
+        ToolName::ApplyPatch,
+        ToolName::Retrieve,
+        ToolName::GitLog,
+        ToolName::GitBlame,
+        ToolName::GitDiff,
+        ToolName::GitSearchHistory,
+        ToolName::ReadFile,
+        ToolName::ListDir,
+        ToolName::Ripgrep,
+        ToolName::ReadTags,
+        ToolName::CargoCheck,
+        ToolName::CargoDupes,
+    ] {
+        s.push_str(&format!("{prepend} {}\n", t.schema_hint()));
+    }
+    s
+}
+
+/// Validates an already-parsed tool-call JSON `Value` (no fence/regex
+/// extraction) against `ToolName`'s schema. Shared by `parse_tool_call`
+/// (which extracts the `Value` from a fenced block first) and any caller
+/// that already has a structured `Value` in hand, e.g. the Scoper's
+/// `information_needed` array.
+pub(crate) fn structured_call_from_value(
+    value: Value,
 ) -> std::result::Result<StructuredToolCall, ToolParseError> {
-    static RE: OnceLock<regex::Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| regex::Regex::new(r"(?s)```tool_call\s*\n(.*?)\n```").unwrap());
-
-    let caps = re.captures(output).ok_or(ToolParseError::NotFound)?;
-    let json_str = caps.get(1).ok_or(ToolParseError::NotFound)?.as_str();
-    let value: Value = serde_json::from_str(json_str)?;
-
     let tool_str = value
         .get("tool")
         .and_then(|v| v.as_str())
@@ -122,25 +140,16 @@ pub(crate) fn parse_tool_call(
     Ok(StructuredToolCall { tool, args: value })
 }
 
-/// Renders the tool catalog injected into the Worker prompt — the schema
-/// strings here are exactly what `parse_tool_call` validates against, so
-/// prompt and parser can't drift independently.
-pub(crate) fn prompt_tool_catalog() -> String {
-    let mut s = String::from(
-        "AVAILABLE TOOLS — to call one, emit a fenced ```tool_call block \
-         containing exactly one JSON object matching one of these shapes:\n",
-    );
-    for t in [
-        ToolName::Memorize,
-        ToolName::ApplyPatch,
-        ToolName::Retrieve,
-        ToolName::GitLog,
-        ToolName::GitBlame,
-        ToolName::GitDiff,
-    ] {
-        s.push_str(&format!("- {}\n", t.schema_hint()));
-    }
-    s
+pub(crate) fn parse_tool_call(
+    output: &str,
+) -> std::result::Result<StructuredToolCall, ToolParseError> {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| regex::Regex::new(r"(?s)```tool_call\s*\n(.*?)\n```").unwrap());
+
+    let caps = re.captures(output).ok_or(ToolParseError::NotFound)?;
+    let json_str = caps.get(1).ok_or(ToolParseError::NotFound)?.as_str();
+    let value: Value = serde_json::from_str(json_str)?;
+    structured_call_from_value(value)
 }
 
 #[cfg(test)]

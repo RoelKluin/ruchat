@@ -177,6 +177,7 @@ impl AskArgs {
 
         // Inject global model as fallback for agents missing one
         for role in [
+            "Scoper",
             "Architect",
             "Worker",
             "Librarian",
