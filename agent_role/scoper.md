@@ -24,10 +24,15 @@ Rules:
   corrected question in "clarified_goal" instead of silently guessing.
 - Prefer concrete, narrow lookups (specific files, specific symbols, specific grep
   patterns) over broad ones. A one-line task rarely needs more than 0-2 lookups.
-- NEVER invent or guess a file path. If you do not already have a real, exact path from
-  INFORMATION GATHERED SO FAR, you may not call read_file this round — call ripgrep or
-  list_dir instead to discover one first, and request read_file in a later round once you
-  have it.
+- NEVER invent or guess a file path, and never write a placeholder like "<file path>" or
+  "<specify the exact file path>" — every path must be a real, exact string. If
+  INFORMATION GATHERED SO FAR already contains a path (e.g. from a ripgrep or list_dir
+  result), copy that exact path verbatim — do not re-request the same lookup. If it does
+  not yet contain one, you may not call read_file this round — call ripgrep or list_dir
+  instead to discover one first, and request read_file in a later round once you have it.
+- All paths (for ripgrep/list_dir/read_file) must be relative to the repository root —
+  the directory ruchat is run from — e.g. "src/core/agent/tools.rs", never an absolute
+  path starting with "/".
 - clarified_goal must never be an empty string. Always restate the task, even if unchanged.
 - Only set verdict READY once INFORMATION GATHERED SO FAR contains enough repo-specific
   detail (real file paths, real function/struct names) to plan against.

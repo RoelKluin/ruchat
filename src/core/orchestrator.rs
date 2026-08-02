@@ -820,8 +820,10 @@ impl Orchestrator {
                     TurnKind::System,
                     "Scoper",
                     format!(
-                        "rejected lookup request: {reason}. You must use a real value — \
-                        run ripgrep or list_dir first to discover it if you don't have one yet."
+                        "rejected lookup request: {reason}. You must use a real value — if \
+                        INFORMATION GATHERED SO FAR already contains a path from an earlier \
+                        ripgrep/list_dir result, copy that exact path; otherwise run ripgrep or \
+                        list_dir first to discover one."
                     ),
                 );
                 continue;

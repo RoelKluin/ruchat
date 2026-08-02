@@ -116,21 +116,6 @@ impl Agent {
         get_dynamic_history_limit(self.get_str("model").unwrap_or(""))
     }
 
-    async fn parse_tool_call(&self, ctx: &mut Context) -> Result<()> {
-        if let Ok(call) = tools::parse_tool_call(&ctx.output)
-            && call.tool == tools::ToolName::Memorize
-        {
-            let content = call.args["content"].as_str().unwrap_or_default();
-            self.embed(
-                content,
-                UpsertMode::Upsert,
-                ctx,
-                "Information successfully committed to long-term memory.",
-            )
-            .await?;
-        }
-        Ok(())
-    }
     pub(super) async fn embed(
         &self,
         prompt: &str,
@@ -193,7 +178,7 @@ impl Agent {
                 .map_err(|e| RuChatError::Is(e.to_string()))?;
         }
         send_event(tx, AgentEvent::ColorChange(Role::no_color())).await?;
-        self.parse_tool_call(ctx).await
+        Ok(())
     }
     pub(super) async fn execute_and_verify(&self, ctx: &mut Context) -> Result<Validation> {
         let call = match tools::parse_tool_call(&ctx.output) {

@@ -137,10 +137,12 @@ impl Validation {
             .trim_start_matches("a/");
         let tracked = crate::orchestrator::git::tracked_files().await?;
         if !tracked.contains(target) {
-            return Err(RuChatError::InternalError(format!(
+            let content = format!(
                 "refused: '{target}' is not tracked by git (not in `git ls-files`) — \
                 apply_patch may only modify files already under version control in this repo"
-            )));
+            );
+            ctx.push_turn(TurnKind::Rejection, "Validator", content.clone());
+            return Ok(Validation::Failure(content));
         }
         let original = tokio::fs::read_to_string(target).await.unwrap_or_default();
         match diffy::apply(&original, &patch) {
