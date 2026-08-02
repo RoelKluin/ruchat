@@ -34,7 +34,6 @@ Last updated: 2026-08-02
 ## Medium Priority
 
 ### Code Quality & Maintainability
-- [ ] Write unit tests for all parser modules (`where.rs`, `include.rs`, `prompt.rs`)
 - [ ] Add integration tests for full agentic flows (using test Ollama/Chroma) — `agent_debug/*.json` already contain ready-made stage sequences (`architect_only`, `worker_and_validator_rejection`, `multiple_critics`, etc.); wire these into `cargo test` against a mocked `LlmClient`/`VectorStore` instead of writing fixtures from scratch
 - [ ] Consistent error handling across Chroma subcommands
 - [ ] Refactor duplicated JSON update logic (`update_from_json` methods)
@@ -77,6 +76,7 @@ Last updated: 2026-08-02
 
 ## Done / Recently Completed
 
+- [x] Unit tests for parser modules: `include.rs`/`where.rs` had internal parse functions covered but not the `IncludeArgs`/`WhereArgs` `parse()`/`update_from_json()` wrappers CLI code actually calls (now added); `cli/prompt.rs` (`andify_list`, `get_prompt`, `promptless`) had zero tests, now covered including the external-command exit-code path
 - [x] Consolidated TODO files into single `TODO.md`
 - [x] Improved model option merging with CLI flags
 - [x] env_logger / tracing integration
