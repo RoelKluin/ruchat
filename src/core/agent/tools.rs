@@ -140,11 +140,20 @@ pub(crate) fn structured_call_from_value(
     Ok(StructuredToolCall { tool, args: value })
 }
 
+/// Matches a fenced block tagged either ```tool_call``` (what the prompt
+/// asks for) or ```json``` (what code-tuned models reliably substitute
+/// instead, since "json" is the far more common fence label in their
+/// training data). Requiring an explicit tag — rather than any bare fence —
+/// keeps this from matching unrelated fenced content elsewhere in the
+/// output; the `tool` field validated by `structured_call_from_value` is
+/// the real signal either way.
 pub(crate) fn parse_tool_call(
     output: &str,
 ) -> std::result::Result<StructuredToolCall, ToolParseError> {
     static RE: OnceLock<regex::Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| regex::Regex::new(r"(?s)```tool_call\s*\n(.*?)\n```").unwrap());
+    let re = RE.get_or_init(|| {
+        regex::Regex::new(r"(?is)```(?:tool_call|json)\s*\n(.*?)\n```").unwrap()
+    });
 
     let caps = re.captures(output).ok_or(ToolParseError::NotFound)?;
     let json_str = caps.get(1).ok_or(ToolParseError::NotFound)?.as_str();
@@ -163,6 +172,18 @@ mod tests {
         let call = parse_tool_call(input).unwrap();
         assert_eq!(call.tool, ToolName::Retrieve);
         assert_eq!(call.args["query"], "foo");
+    }
+
+    #[test]
+    fn parses_json_fenced_call() {
+        // Regression: qwen2.5-coder:14b (and others) reliably tag tool-call
+        // blocks ```json instead of the requested ```tool_call, which used
+        // to make every such call silently invisible to the orchestrator —
+        // see the "Validator always rejects with non-answer" bug report.
+        let input = "```json\n{\"tool\":\"ripgrep\",\"pattern\":\"//.*\",\"path\":\".\"}\n```";
+        let call = parse_tool_call(input).unwrap();
+        assert_eq!(call.tool, ToolName::Ripgrep);
+        assert_eq!(call.args["pattern"], "//.*");
     }
 
     #[test]
