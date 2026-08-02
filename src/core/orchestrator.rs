@@ -432,7 +432,19 @@ impl Orchestrator {
                         && retrieve_budget > 0
                     {
                         retrieve_budget -= 1;
-                        self.handle_structured_tool(&call, ctx).await?;
+                        // A failing tool call (bad git args, missing ripgrep, a
+                        // vanished file) must not abort the whole run — same
+                        // posture as the Scoper's identical dispatch below.
+                        // Record the failure as a turn and let the Worker see
+                        // it and try something else, instead of propagating a
+                        // fatal error out of the stage machine entirely.
+                        if let Err(e) = self.handle_structured_tool(&call, ctx).await {
+                            ctx.push_turn(
+                                TurnKind::System,
+                                "Orchestrator",
+                                format!("tool call failed: {e}"),
+                            );
+                        }
                         retry_transient!(self.worker.query_stream(&self.ollama, ctx, &tx))?;
                         if let Some(prev) = &last_worker_output && prev == &ctx.output {
                             ctx.push_turn(
@@ -708,7 +720,7 @@ impl Orchestrator {
                 self.handle_retrieve(query, ctx).await
             }
             ToolName::GitLog => {
-                let path = call.args.get("path").and_then(|v| v.as_str());
+                let path = opt_str(&call.args, "path");
                 let max_count = call
                     .args
                     .get("max_count")
@@ -725,7 +737,7 @@ impl Orchestrator {
                 Ok(())
             }
             ToolName::GitDiff => {
-                let path = call.args.get("path").and_then(|v| v.as_str());
+                let path = opt_str(&call.args, "path");
                 let staged = call.args.get("staged").and_then(|v| v.as_bool()).unwrap_or(false);
                 let out = git::git_diff(path, staged).await?;
                 ctx.push_turn(TurnKind::Retrieval, "GitDiff", out);
@@ -734,7 +746,7 @@ impl Orchestrator {
             ToolName::GitSearchHistory => {
                 let pattern = call.args["pattern"].as_str().unwrap_or_default();
                 let mode = call.args["mode"].as_str().unwrap_or("message");
-                let path = call.args.get("path").and_then(|v| v.as_str());
+                let path = opt_str(&call.args, "path");
                 let max_count = call.args.get("max_count").and_then(|v| v.as_u64()).map(|v| v as u32);
                 let out = git::git_search_history(pattern, mode, path, max_count).await?;
                 ctx.push_turn(TurnKind::Retrieval, "GitSearchHistory", out);
@@ -756,15 +768,15 @@ impl Orchestrator {
             }
             ToolName::Ripgrep => {
                 let pattern = call.args["pattern"].as_str().unwrap_or_default();
-                let path = call.args.get("path").and_then(|v| v.as_str());
-                let glob = call.args.get("glob").and_then(|v| v.as_str());
+                let path = opt_str(&call.args, "path");
+                let glob = opt_str(&call.args, "glob");
                 let max_count = call.args.get("max_count").and_then(|v| v.as_u64()).map(|v| v as u32);
                 let out = crate::orchestrator::search::ripgrep(pattern, path, glob, max_count).await?;
                 ctx.push_turn(TurnKind::Retrieval, "Ripgrep", out);
                 Ok(())
             }
             ToolName::ReadTags => {
-                let symbol = call.args.get("symbol").and_then(|v| v.as_str());
+                let symbol = opt_str(&call.args, "symbol");
                 let out = crate::orchestrator::search::read_tags(symbol).await?;
                 ctx.push_turn(TurnKind::Retrieval, "ReadTags", out);
                 Ok(())
@@ -845,6 +857,15 @@ impl Orchestrator {
         }
         Ok(Stage::Scope)
     }
+}
+
+/// Treats an explicit empty string the same as an omitted optional field.
+/// Models reliably emit `"path": ""` instead of leaving an optional arg out
+/// entirely, and downstream commands (e.g. `git log -- ""`) reject an empty
+/// pathspec outright rather than treating it as "no restriction" — this
+/// normalizes that before it ever reaches them.
+fn opt_str<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
+    args.get(key).and_then(|v| v.as_str()).filter(|s| !s.is_empty())
 }
 
 /// Catches values the model copied from prompt scaffolding instead of
