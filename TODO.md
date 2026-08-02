@@ -11,7 +11,7 @@ Last updated: 2026-08-02
 - [ ] Deprecate/phase out scattered JSON string hacks in favor of structured sub-configs
 
 ### 2. Error Handling & Logging
-- [ ] Replace remaining `eprintln!` and `println!` with structured `tracing` events
+- [x] Migrated genuine diagnostic `eprintln!`/`println!` call sites in `src/core`/`src/providers` to `tracing`. The rest of the `println!`s in that tree (`chroma/ls.rs`, `ollama/server.rs::ls`, `manager.rs`, `chroma/query.rs`'s result print) are each command's actual designed stdout output, not debug prints — converting those to `tracing` would hide them by default without `RUST_LOG` set, so they're staying as-is
 - [ ] Add context to all errors (`#[from]` + `thiserror` extensions where needed)
 - [ ] Improve user-facing error messages with actionable suggestions
 - [ ] Implement graceful degradation when Ollama/Chroma are unavailable
