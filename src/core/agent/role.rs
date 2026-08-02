@@ -77,60 +77,57 @@ impl Role {
                     format!("\n\nNOTES FROM YOUR PREVIOUS SCOPING ATTEMPT:\n{prior_notes}\n")
                 };
                 format!(
-                    "GOAL (as stated by the user, possibly underspecified or imprecise): {}\n\
+                    "Your ONLY task right now: decide if enough is known about THIS repository \
+                    to plan a solution for the task below, and if not, what to look up. \
+                    You are NOT solving the task. You are NOT writing a plan.\n\n\
+                    ===== YOUR ACTUAL TASK (this is what matters — everything else is formatting help) =====\n\
+                    {}\n\
+                    =============================================================================\n\
                     {prior_notes_section}\n\
                     INFORMATION GATHERED SO FAR:\n{}\n\n\
                     {collections_summary}\n\n\
-                    Your job is NOT to solve the goal. Your job is to decide whether enough is known \
-                    about THIS repository to plan a solution, and if not, what to look up.\n\n\
                     Rules:\n\
-                    - Stay as close as possible to the original goal's scope. Only widen scope if the \
-                      information needed to answer the goal as stated genuinely requires it — say why.\n\
-                    - If the goal itself asks the wrong question (e.g. references something that doesn't \
-                      exist in this repo, or a mechanism that can't work as described), say so in \"notes\" \
-                      and propose the corrected question in \"clarified_goal\" instead of silently guessing.\n\
+                    - Stay as close as possible to the task's original scope. Only widen scope if \
+                      answering it as stated genuinely requires it — say why in \"notes\".\n\
+                    - If the task asks the wrong question (references something that doesn't exist in \
+                      this repo, or a mechanism that can't work as described), say so in \"notes\" and put \
+                      the corrected question in \"clarified_goal\" instead of silently guessing.\n\
                     - Prefer concrete, narrow lookups (specific files, specific symbols, specific grep \
-                      patterns) over broad ones.\n\
-                    - Only set verdict READY once the INFORMATION GATHERED SO FAR section actually contains \
-                      enough repo-specific detail (real file paths, real function/struct names) to plan \
-                      against — not generic domain knowledge.\n\n\
-                    OUTPUT FORMAT — must be valid JSON, nothing else before or after, no markdown fences:\n\
+                      patterns) over broad ones. A one-line task rarely needs more than 0-2 lookups.\n\
+                    - Only set verdict READY once INFORMATION GATHERED SO FAR contains enough repo-specific \
+                      detail (real file paths, real function/struct names) to plan against.\n\
+                    - notes must be ONE short sentence, or empty string. Do not write paragraphs.\n\n\
+                    OUTPUT FORMAT — valid JSON only, nothing before or after, no markdown fences:\n\
                     {{\n\
                       \"verdict\": \"READY\" | \"NEEDS_INFO\",\n\
-                      \"clarified_goal\": string,        // goal restated precisely; corrected if the\n\
-                                                          //   original question was wrong; unchanged if fine\n\
-                      \"information_needed\": [          // empty array if verdict is READY\n\
+                      \"clarified_goal\": string,\n\
+                      \"information_needed\": [\n\
                         {{\n\
                           \"tool\": \"read_file\" | \"list_dir\" | \"ripgrep\" | \"read_tags\" | \"retrieve\"\n\
                                     | \"git_log\" | \"git_blame\" | \"git_diff\" | \"git_search_history\",\n\
-                          // remaining keys match that tool's own schema exactly, e.g.:\n\
-                          // 
-                          {}
+                          {}\n\
                         }}\n\
                       ],\n\
-                      \"notes\": string  // empty string if nothing to flag; otherwise: why the original\n\
-                                          //   question was wrong, why scope needed to widen, or any other\n\
-                                          //   caveat the Architect should see\n\
+                      \"notes\": string\n\
                     }}\n\n\
-                    EXAMPLE (illustrative shape only — your actual tool choices must fit THIS repo):\n\
+                    The block below shows JSON SHAPE ONLY, using <placeholders>. It is NOT a real task, \
+                    NOT related to your actual task above, and MUST NOT influence what you look up or write:\n\
                     {{\n\
                       \"verdict\": \"NEEDS_INFO\",\n\
-                      \"clarified_goal\": \"Hide advanced clap args behind a runtime flag rather than the \
-                        static hide_short_help/hide_long_help attributes currently used\",\n\
+                      \"clarified_goal\": \"<task restated precisely, or corrected if it was wrong>\",\n\
                       \"information_needed\": [\n\
-                        {{\"tool\": \"ripgrep\", \"pattern\": \"hide_short_help\", \"max_count\": 30}},\n\
-                        {{\"tool\": \"read_file\", \"path\": \"src/cli/args.rs\"}}\n\
+                        {{\"tool\": \"ripgrep\", \"pattern\": \"<search term>\", \"max_count\": 30}},\n\
+                        {{\"tool\": \"read_file\", \"path\": \"<path/found/via/search>\"}}\n\
                       ],\n\
-                      \"notes\": \"Original phrasing implied a new CLI flag can hide/show other flags at \
-                        parse time; clap's derive macro decides help visibility at compile time, so the \
-                        real options are: (1) keep hide_short_help/hide_long_help as-is, or (2) two-pass \
-                        parse with a pre-scan for an --advanced flag, or (3) a separate help-advanced \
-                        subcommand. Scope may need to include picking one of these.\"\n\
+                      \"notes\": \"<one short sentence, or empty string>\"\n\
                     }}\n\n\
-                    Return ONLY the JSON object.",
+                    Reminder — your actual task, restated one more time, verbatim: \"{}\"\n\
+                    Return ONLY the JSON object. Do not discuss, plan, or solve anything about clap, CLI \
+                    error handling, or any other topic not present in your actual task above.",
                     ctx.goal,
                     ctx.documents_view(ctx.round),
-                    prompt_tool_catalog("// ")
+                    prompt_tool_catalog("// "),
+                    ctx.goal,
                 )
             }
             Self::Librarian => {
@@ -160,28 +157,14 @@ impl Role {
                       \"ids\": [string, ...] | null,\n\
                       \"include\": [string, ...] | null           // only from the allowed list above\n\
                     }}\n\n\
-                    WHERE FILTER RULES (works for ALL collections):\n\
-                    - SQL-style: \"key = 'value' AND key2 > 5\"\n
-                    - Use any metadata key listed for the chosen collection\n\
-                    - Special key 'document' for content search: \"document CONTAINS 'foo' or \"document REGEX 'pattern'\"\n\
-                    - Operators: = != <> > >= < <= IN NOTIN CONTAINS NOTCONTAINS LIKE NOTLIKE REGEX NOTREGEX\n\
-                    - Logic: AND OR (parentheses supported)\n\
-                    - Values: 'string', 123, true/false, [1,2,3], ['a','b'], or JSON sparse vector {{'indices':[0,5],'values':[0.1,0.9]}}\n\n\
-                    EXAMPLES (illustrative - prefer the collection-specific ones from config):\n\
-                    1. Simple:\n\
-                    {{\n\
-                      \"query\": \"error handling\",\n\
-                      \"n_results\": 6,\n\
-                      \"collection\": \"repo_src-all-minilm_l6-v2\"\n\
-                    }}\n\n\
-                    2. With filter (copy style from config examples):\n\
-                    {{\n\
-                      \"query\": [\"async\", \"file reading\"],\n\
-                        \"n_results\": 5,\n\
-                        \"collection\": \"repo_src-all-minilm_l6-v2\",\n\
-                        \"where\": \"lang = 'rust' AND size_bytes > 1000\",\n\
-                        \"include\": [\"document\", \"metadata\", \"distance\"]\n\
-                    }}\n\n\
+                    WHERE clause syntax:
+                      field = 'value'          field != 'value'
+                      field > N   field >= N   field < N   field <= N     (numeric fields only)
+                      field IN ['a', 'b']       field NOT IN ['a', 'b']
+                      field CONTAINS 'value'    field NOT CONTAINS 'value' (substring on document text;
+                                                                             array-membership on metadata arrays)
+                      expr AND expr             expr OR expr               (parenthesize for grouping)
+                    Do NOT use SQL constructs beyond this list.
                     Return ONLY the JSON. Do not add extra keys. Omit optional fields when not needed.",
                     ctx.goal
                 )
@@ -201,10 +184,12 @@ impl Role {
             Self::Architect => format!(
                 "GOAL: {}.\n\
                 PLAN: {}\n\
-                HISTORY: {}",
+                HISTORY: {}\n\n\
+                Reminder — your actual goal, verbatim: \"{}\"",
                 ctx.goal,
                 ctx.context_view(),
-                ctx.history_view(ctx.round.saturating_sub(1))
+                ctx.history_view(ctx.round.saturating_sub(1)),
+                ctx.goal
             ),
         };
         (system, user)
