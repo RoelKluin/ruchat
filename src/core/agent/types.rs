@@ -62,10 +62,9 @@ impl Context {
     pub(crate) fn is_approved(&self) -> bool {
         self.turns.iter().all(|t| t.kind != TurnKind::Rejection)
     }
-    pub(crate) async fn trace(&mut self, tx: &mpsc::Sender<Result<StreamItem>>, err: String) {
-        if !err.is_empty() {
-            self.push_turn(TurnKind::Rejection, "Validator", err.clone());
-            let _ = tx.send(Ok(StreamItem::Event(AgentEvent::Trace(err)))).await;
+    pub(crate) async fn trace(&mut self, tx: &mpsc::Sender<Result<StreamItem>>, msg: String) {
+        if !msg.is_empty() {
+            let _ = tx.send(Ok(StreamItem::Event(AgentEvent::Trace(msg)))).await;
         }
         let trace_output = format!(
             "# Orchestration Trace\n\n## Goal\n{}\n\n## Context\n{}\n\n## History\n{}\n",
