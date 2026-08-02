@@ -194,3 +194,138 @@ impl PromptArgs {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn args(prompt: Option<&str>, explicit: Option<&str>, files: Vec<PathBuf>) -> PromptArgs {
+        PromptArgs {
+            prompt: prompt.map(str::to_string),
+            explicit_prompt: explicit.map(str::to_string),
+            files,
+            command: "cat".to_string(),
+            args: Vec::new(),
+            capture: "both".to_string(),
+            allowed_exit_codes: vec![0],
+        }
+    }
+
+    #[test]
+    fn andify_list_empty() {
+        assert_eq!(andify_list("the file", &[] as &[&str], "`"), "");
+    }
+
+    #[test]
+    fn andify_list_one() {
+        assert_eq!(andify_list("the file", &["a.txt"], "`"), "the file `a.txt`");
+    }
+
+    #[test]
+    fn andify_list_two() {
+        assert_eq!(
+            andify_list("the file", &["a.txt", "b.txt"], "`"),
+            "the files `a.txt` and `b.txt`"
+        );
+    }
+
+    #[test]
+    fn andify_list_three() {
+        assert_eq!(
+            andify_list("the file", &["a.txt", "b.txt", "c.txt"], "`"),
+            "the files `a.txt`, `b.txt` and `c.txt`"
+        );
+    }
+
+    #[test]
+    fn get_prompt_positional_only() {
+        let a = args(Some("hello"), None, vec![]);
+        assert_eq!(a.get_prompt().unwrap(), "hello");
+    }
+
+    #[test]
+    fn get_prompt_explicit_only() {
+        let a = args(None, Some("hello"), vec![]);
+        assert_eq!(a.get_prompt().unwrap(), "hello");
+    }
+
+    #[test]
+    fn get_prompt_matching_positional_and_explicit_is_ok() {
+        let a = args(Some("hello"), Some("hello"), vec![]);
+        assert_eq!(a.get_prompt().unwrap(), "hello");
+    }
+
+    #[test]
+    fn get_prompt_conflicting_positional_and_explicit_errors() {
+        let a = args(Some("hello"), Some("world"), vec![]);
+        assert!(matches!(
+            a.get_prompt(),
+            Err(RuChatError::ConflictingPrompts)
+        ));
+    }
+
+    #[test]
+    fn get_prompt_none_errors() {
+        let a = args(None, None, vec![]);
+        assert!(matches!(a.get_prompt(), Err(RuChatError::NoPromptProvided)));
+    }
+
+    #[test]
+    fn get_prompt_with_prompt_and_files_injects_cat_context() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("a.txt");
+        std::fs::write(&file, "file contents").unwrap();
+
+        let a = args(Some("hello"), None, vec![file]);
+        let out = a.get_prompt().unwrap();
+        assert!(out.starts_with("hello\n"));
+        assert!(out.contains("file contents"));
+    }
+
+    #[test]
+    fn get_prompt_files_only_no_prompt_uses_promptless() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("a.txt");
+        std::fs::write(&file, "file contents").unwrap();
+
+        let a = args(None, None, vec![file]);
+        let out = a.get_prompt().unwrap();
+        assert!(out.contains("file contents"));
+        assert!(!out.starts_with("hello"));
+    }
+
+    #[test]
+    fn get_prompt_missing_file_errors() {
+        let dir = tempdir().unwrap();
+        let missing = dir.path().join("does-not-exist.txt");
+
+        let a = args(Some("hello"), None, vec![missing]);
+        assert!(matches!(a.get_prompt(), Err(RuChatError::FileReadError(_))));
+    }
+
+    #[test]
+    fn promptless_external_command_captures_exit_code() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("a.txt");
+        std::fs::write(&file, "irrelevant").unwrap();
+
+        let mut a = args(None, None, vec![]);
+        a.command = "true".to_string();
+        assert!(a.promptless(&[file]).is_ok());
+    }
+
+    #[test]
+    fn promptless_external_command_rejects_unexpected_exit_code() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("a.txt");
+        std::fs::write(&file, "irrelevant").unwrap();
+
+        let mut a = args(None, None, vec![]);
+        a.command = "false".to_string();
+        assert!(matches!(
+            a.promptless(&[file]),
+            Err(RuChatError::MultipleCommandExitErrors(_))
+        ));
+    }
+}

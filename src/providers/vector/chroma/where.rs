@@ -906,4 +906,50 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn test_where_args_parse_none() {
+        let args = WhereArgs { r#where: None };
+        assert_eq!(args.parse().unwrap(), None);
+    }
+
+    #[test]
+    fn test_where_args_parse_some() {
+        let args = WhereArgs {
+            r#where: Some("key1 = 'value'".to_string()),
+        };
+        assert_eq!(args.parse().unwrap(), Some(parse_where("key1 = 'value'").unwrap()));
+    }
+
+    #[test]
+    fn test_where_args_parse_propagates_error() {
+        let args = WhereArgs {
+            r#where: Some("key1 === 'value'".to_string()),
+        };
+        assert!(args.parse().is_err());
+    }
+
+    #[test]
+    fn test_where_args_update_from_json_sets_where() {
+        let mut args = WhereArgs { r#where: None };
+        args.update_from_json(&serde_json::json!({ "where": "key1 = 'value'" }))
+            .unwrap();
+        assert_eq!(args.r#where, Some("key1 = 'value'".to_string()));
+    }
+
+    #[test]
+    fn test_where_args_update_from_json_missing_key_is_noop() {
+        let mut args = WhereArgs { r#where: None };
+        args.update_from_json(&serde_json::json!({})).unwrap();
+        assert_eq!(args.r#where, None);
+    }
+
+    #[test]
+    fn test_where_args_update_from_json_rejects_non_string() {
+        let mut args = WhereArgs { r#where: None };
+        let err = args
+            .update_from_json(&serde_json::json!({ "where": 5 }))
+            .unwrap_err();
+        assert!(matches!(err, RuChatError::Is(_)));
+    }
 }

@@ -53,13 +53,70 @@ mod tests {
             Include::Metadata,
             Include::Uri,
         ]);
-        eprintln!(
-            "Testing valid include list {}",
-            serde_json::to_string(&include_list).unwrap()
-        );
         assert_eq!(
             parse_include(r#"["distances","documents","embeddings","metadatas","uris"]"#).unwrap(),
             include_list
         );
+    }
+
+    #[test]
+    fn test_parse_include_invalid_json() {
+        let err = parse_include("not json").unwrap_err();
+        assert!(matches!(err, RuChatError::InvalidIncludeList(_)));
+    }
+
+    #[test]
+    fn test_parse_include_unknown_variant() {
+        let err = parse_include(r#"["not_a_real_field"]"#).unwrap_err();
+        assert!(matches!(err, RuChatError::InvalidIncludeList(_)));
+    }
+
+    #[test]
+    fn test_include_args_parse_none() {
+        let args = IncludeArgs { include: None };
+        assert_eq!(args.parse().unwrap(), None);
+    }
+
+    #[test]
+    fn test_include_args_parse_some() {
+        let args = IncludeArgs {
+            include: Some(r#"["distances"]"#.to_string()),
+        };
+        assert_eq!(
+            args.parse().unwrap(),
+            Some(IncludeList(vec![Include::Distance]))
+        );
+    }
+
+    #[test]
+    fn test_include_args_parse_propagates_error() {
+        let args = IncludeArgs {
+            include: Some("not json".to_string()),
+        };
+        assert!(args.parse().is_err());
+    }
+
+    #[test]
+    fn test_update_from_json_sets_include() {
+        let mut args = IncludeArgs::default();
+        args.update_from_json(&serde_json::json!({ "include": "[\"distances\"]" }))
+            .unwrap();
+        assert_eq!(args.include, Some(r#"["distances"]"#.to_string()));
+    }
+
+    #[test]
+    fn test_update_from_json_missing_key_is_noop() {
+        let mut args = IncludeArgs::default();
+        args.update_from_json(&serde_json::json!({})).unwrap();
+        assert_eq!(args.include, None);
+    }
+
+    #[test]
+    fn test_update_from_json_rejects_non_string() {
+        let mut args = IncludeArgs::default();
+        let err = args
+            .update_from_json(&serde_json::json!({ "include": ["distances"] }))
+            .unwrap_err();
+        assert!(matches!(err, RuChatError::Is(_)));
     }
 }
