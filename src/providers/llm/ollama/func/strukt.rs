@@ -27,7 +27,7 @@ use std::path::PathBuf;
 /// A `Result` containing the weather information as a `String` or an error.
 #[ollama_rs::function]
 async fn get_weather(city: String) -> Result<String, Box<dyn std::error::Error + Sync + Send>> {
-    println!("Get weather function called for {city}");
+    tracing::debug!(%city, "get_weather function called");
     Ok(
         reqwest::get(format!("https://wttr.in/{city}?format=%C+%t+%w+%P"))
             .await?

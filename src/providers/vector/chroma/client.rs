@@ -159,10 +159,7 @@ impl ChromaClientConfigArgs {
                 "jitter" => self.jitter = value.as_bool().unwrap_or(self.jitter),
                 "tenant_id" => self.tenant_id = value.as_str().map(|s| s.to_string()),
                 "chroma_database" => self.chroma_database = value.as_str().map(|s| s.to_string()),
-                _ => eprintln!(
-                    "Warning: Unrecognized field '{}' in ChromaClientConfigArgs JSON",
-                    key
-                ),
+                _ => tracing::warn!(field = %key, "Unrecognized field in ChromaClientConfigArgs JSON"),
             });
         Ok(())
     }

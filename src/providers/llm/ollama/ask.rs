@@ -77,8 +77,7 @@ impl AskArgs {
         let mut config: serde_json::Value = if let Some(ref json_str) = self.agentic {
             serde_json::from_str(json_str)
                 .map_err(|e| {
-                    eprintln!("Provided agentic config: {json_str}");
-                    tracing::error!(error = ?e, "Failed to parse agentic JSON config");
+                    tracing::error!(error = ?e, config = %json_str, "Failed to parse agentic JSON config");
                     e
                 })
                 .map_err(RuChatError::SerdeError)?

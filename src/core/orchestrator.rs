@@ -152,8 +152,7 @@ impl Orchestrator {
             lib.remove_str("chroma_client").and_then(|s| {
                 let val = s.parse::<serde_json::Value>()?;
                 client_config.update_from_json(&val).map_err(|e| {
-                    eprintln!("{s}");
-                    tracing::error!(error = ?e, "Failed to parse chroma_client config as JSON:");
+                    tracing::error!(error = ?e, config = %s, "Failed to parse chroma_client config as JSON:");
                     e
                 }).map_err(RuChatError::AnyhowError)
             })?;

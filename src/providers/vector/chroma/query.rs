@@ -155,7 +155,7 @@ impl QueryArgs {
             .last()
             .ok_or(RuChatError::ModelNotFound("all-minilm:l6-v2".to_string()))?;
         let res = self.query.query(&client, &ollama, model).await?;
-        eprintln!("got: {}", res);
+        println!("{res}");
         Ok(())
     }
 }
