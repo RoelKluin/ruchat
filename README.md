@@ -102,7 +102,7 @@ Actively developed with focus on:
 
 Contributions welcome! Please fork the repository and submit a PR.
 
-See `TODO.txt` and `more_TODO.txt` for planned improvements (error handling, testing, performance, security, etc.).
+See `TODO.md` for planned improvements (error handling, testing, performance, security, etc.) and `ROADMAP.md` for the longer-term phased plan.
 
 ## License
 

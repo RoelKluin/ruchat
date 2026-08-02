@@ -870,22 +870,6 @@ fn looks_like_placeholder(value: &Value) -> Option<String> {
     }
 }
 
-/// Bundles an `Orchestrator` with the goal/debug-sequence it needs to run,
-/// so it can implement `AgentPipeline`'s fixed `run(&mut self, ...)` signature
-/// without changing `Orchestrator::new`'s existing constructor (which
-/// `ask.rs` already calls directly and unchanged).
-pub(crate) struct OrchestratorRun {
-    orchestrator: Orchestrator,
-    goal: String,
-    debug_sequence: Option<String>,
-}
-
-impl OrchestratorRun {
-    pub(crate) fn new(orchestrator: Orchestrator, goal: String, debug_sequence: Option<String>) -> Self {
-        Self { orchestrator, goal, debug_sequence }
-    }
-}
-
 /// Runs each `agent_debug/*.json` fixture through the real stage machine
 /// (`debug_stage_machine`, via `run_task_stream`) against a scripted
 /// `FakeLlmClient`/`FakeVectorStore` instead of a live Ollama/Chroma server.

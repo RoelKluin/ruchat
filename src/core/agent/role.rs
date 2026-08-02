@@ -27,10 +27,8 @@ impl Role {
         &self,
         task: Option<&str>,
         ctx: &Context,
-        hint: Option<&str>, // still accepted for signature compatibility;
-        // needs verification which arms actually use it —
-        // none of the templates above reference it, so
-        // check callers before dropping the parameter entirely
+        hint: Option<&str>, // rendered into `system` below as "CONTEXTUAL HINT: {hint}" —
+        // shared across every role, not part of the per-role templates
         approval_signal: Option<&str>,
     ) -> Result<(String, String)> {
         let mut vars: HashMap<&str, String> = HashMap::new();
@@ -101,10 +99,7 @@ impl Role {
         };
 
         let user_text = templates::render(template_name, &vars)?;
-        Ok((system, user_text)) // adjust first element if any role previously had
-                                // real system-prompt content distinct from user_text —
-                                // needs verification against the pre-refactor arms'
-                                // actual tuple shape, which wasn't fully shown to me
+        Ok((system, user_text))
     }
 
     pub(crate) fn get_color(&self) -> &'static str {

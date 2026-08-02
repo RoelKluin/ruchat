@@ -1,6 +1,6 @@
 # Ruchat TODO
 
-Last updated: 2026-03-24
+Last updated: 2026-08-02
 
 ## High Priority
 
@@ -21,6 +21,7 @@ Last updated: 2026-03-24
 - [ ] Improve Librarian → Worker document injection further (per-document summarization before Worker, multi-collection queries — reranking/relevance scoring is done, see `providers/vector/chroma/rerank.rs`)
 - [ ] Add memory / long-term storage persistence between runs (the `memorize` tool already writes to Chroma via `Agent::embed`, but there's no automatic recall of prior-run memories at session start)
 - [ ] `apply_patch` still has no scope check against the Scoper/Architect plan (a patch can touch a file the plan never mentioned) — diff-size cap and rejection rollback are done, see Done section
+- [ ] Expose `BuildReport::parsed_diagnostics` (`agent/protocol.rs`) to callers instead of only the flattened diagnostics string — the structured `Diagnostic { level, message, file, line, column }` is already populated per `cargo check` run but currently sits behind `#[allow(dead_code)]`; feeding it to the Worker/Validator directly would let a rejection point at an exact file/line instead of a text blob
 
 ### 4. TUI Chat
 - [ ] Fix redraw artifacts and cursor handling edge cases
@@ -28,6 +29,7 @@ Last updated: 2026-03-24
 - [ ] Add syntax highlighting for code blocks in chat view
 - [ ] Support multi-line editing with proper indentation
 - [ ] Add command palette / key bindings help screen
+- [ ] Wire up an actual producer for `AgentEvent::Progress` (`agent/event.rs`) — the render loop (`tui/render.rs::render_pipeline_stream`) already has a full `Progress(pct)` match arm that draws a "...N%" status line, but nothing in the orchestrator/agent code ever sends one; likely candidates are per-round progress (`round`/`max_iterations`) or per-chunk streaming progress
 
 ## Medium Priority
 
@@ -36,7 +38,6 @@ Last updated: 2026-03-24
 - [ ] Add integration tests for full agentic flows (using test Ollama/Chroma) — `agent_debug/*.json` already contain ready-made stage sequences (`architect_only`, `worker_and_validator_rejection`, `multiple_critics`, etc.); wire these into `cargo test` against a mocked `LlmClient`/`VectorStore` instead of writing fixtures from scratch
 - [ ] Consistent error handling across Chroma subcommands
 - [ ] Refactor duplicated JSON update logic (`update_from_json` methods)
-- [ ] Remove dead code: old `conversation_tree.rs` duplicate, and the legacy `Team`/`Manager` pipeline (see Agent Orchestration section above)
 - [x] `cargo test --lib` was uncompilable (33 errors: `OutputArgs`/`create_table` test code hadn't been updated after a prior refactor to `format`/`render_rows`, and two `where.rs` tests compared a `Result<T>` against a bare `T` after `map_sql_comparison`/`map_sql_to_document_op` started returning `Result`) and, separately, `test_handle_request_default` called `Args::parse_from(["test", "-h"])`, which makes clap call `std::process::exit(0)` mid-test-run — silently killing every other test in the same process depending on thread scheduling. All fixed; the suite is green.
 - [x] **Multi-critic consensus review was completely non-functional.** `Orchestrator::new`'s Critics loop passed each critic's flat config object straight to `Agent::new` as `config`, which looks up `config.get(role)` — a key that can never exist in a flat object, so `Agent::new` always errored and `critics` stayed empty regardless of `--critic`/`"Critics"` config, silently. Even fixed, a second bug meant `query_stream` would then fail with `InvalidRole`: `Role::from_str` only recognized the bare string `"critic"`, never the `"Critic_0"`/`"Critic_1"` naming `Orchestrator::new` actually assigns. Both fixed (`orchestrator.rs`, `agent/role.rs`); caught by wiring `agent_debug/multiple_critics.json` into a real test (`core::orchestrator::tests::multiple_critics_dispatches_each_critic_once`) — nothing had ever exercised this path end-to-end before.
 - [x] Wired 9 of 10 `agent_debug/*.json` fixtures into `cargo test --lib` (`core::orchestrator::tests::*`) using a new `FakeLlmClient` (`agent/llm_client.rs` — the `FakeVectorStore`/`FakeEmbeddingsClient` fakes already existed but had never actually been wired to anything) alongside the existing `FakeVectorStore`, so the stage machine can be exercised without a live Ollama/Chroma server. Also fixed a fixture bug: `critic.json`/`multiple_critics.json` used `"Critic0"`/`"Critic1"` (no underscore), which doesn't match the `"Critic_N"` naming the code actually expects.
@@ -51,6 +52,7 @@ Last updated: 2026-03-24
 - [ ] Implement caching layer for repeated file embeddings
 - [ ] Add `ruchat chroma-import` command for git history / source trees
 - [ ] Better metadata normalization and type safety
+- [ ] `embed_script.sh`'s ctags chunk-boundary detection has two open `FIXME: improve per lang/kind handling here` markers around its closing-brace search — the language/kind match lists (Rust, Sh, TOML, Markdown) are hand-maintained and incomplete, so other ctags-supported languages fall back to a single-line chunk instead of the real symbol extent
 
 ### Performance
 - [ ] Connection pooling for Ollama and Chroma clients
@@ -90,6 +92,8 @@ Last updated: 2026-03-24
 - [x] Structured `Context` event log (`Vec<Turn>` + `TurnKind`) replacing the old flat-string `history`/`context`/`documents`/`rejections` fields
 - [x] Reconciled the legacy `Team`/`Manager` pipeline — `ruchat manager` now runs a saved `Team` preset through the real `Orchestrator` stage machine instead of a separate, unvalidated linear engine
 - [x] `apply_patch` diff-size cap (`MAX_PATCH_DIFF_BYTES`, `agent/protocol.rs`) and automatic rollback of a rejected round's patch before looping back to `Plan` (`Context::{record_patch,revert_pending_patch}`)
+- [x] Confirmed the "remove dead code" item once flagged above for `conversation_tree.rs`/legacy `Team`/`Manager` is fully resolved: `conversation_tree.rs` no longer exists and `team.rs`/`manager.rs` are the reconciled implementation this list already credits — removed the stale duplicate bullet
+- [x] Removed an unused `OrchestratorRun` struct (`orchestrator.rs`) whose doc comment described bundling an `Orchestrator` to implement `AgentPipeline`'s "fixed `run(&mut self, ...)` signature" — `AgentPipeline` (`agent/pipeline.rs`) is an enum with its own `run(self)`, not a trait anything implements, so both the struct and its rationale were stale leftovers; `ask.rs`/`manager.rs` already construct `AgentPipeline::Orchestrator` directly
 
 ---
 
