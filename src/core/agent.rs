@@ -178,9 +178,7 @@ impl Agent {
         );
         ctx.trace(
             tx,
-            format!(
-                "Agent '{role}' is generating with model '{model}'.\nSYSTEM:\n{system_text}\nUSER:\n{user_text}"
-            ),
+            format!("[{role}'s input] querying '{model}' — full prompt in .ruchat_trace.md"),
         )
         .await;
         let messages = vec![ChatMessage::system(system_text), ChatMessage::user(user_text)];
