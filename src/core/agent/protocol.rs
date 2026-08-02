@@ -111,6 +111,38 @@ pub(crate) struct BuildReport {
 /// spirit to `orchestrator::fs::MAX_READ_BYTES`, just on the write side.
 const MAX_PATCH_DIFF_BYTES: usize = 8_000;
 
+/// Repairs the single most common diff mistake coder-tuned local models make:
+/// dropping the mandatory leading space on an unchanged (context) line inside
+/// a hunk. Unified diff requires every hunk-body line to start with ' '
+/// (context), '+' (added), '-' (removed), or '\' (no-newline marker) —
+/// `diffy::Patch::from_str` rejects anything else outright ("unexpected line
+/// in hunk body"), which is easy for a model to trigger since the leading
+/// space is invisible whitespace. Any hunk-body line missing one of those
+/// prefixes is treated as an implicit context line and given one; this does
+/// not change what the diff says to add/remove, only makes an
+/// otherwise-valid diff parseable. A genuinely wrong diff (bad content,
+/// mismatched context, wrong file) still fails at parse or apply time same
+/// as before.
+fn normalize_diff_hunk_lines(diff: &str) -> String {
+    let mut out = String::with_capacity(diff.len());
+    let mut in_hunk = false;
+    for line in diff.split_inclusive('\n') {
+        let trimmed = line.trim_end_matches('\n');
+        if trimmed.starts_with("--- ") || trimmed.starts_with("+++ ") {
+            in_hunk = false;
+        } else if trimmed.starts_with("@@") {
+            in_hunk = true;
+        } else if in_hunk
+            && !trimmed.is_empty()
+            && !trimmed.starts_with([' ', '+', '-', '\\'])
+        {
+            out.push(' ');
+        }
+        out.push_str(line);
+    }
+    out
+}
+
 impl Validation {
     pub(crate) async fn apply_patch(diff_text: &str, ctx: &mut Context) -> Result<Self> {
         if diff_text.len() > MAX_PATCH_DIFF_BYTES {
@@ -122,7 +154,8 @@ impl Validation {
             ctx.push_turn(TurnKind::Rejection, "Validator", content.clone());
             return Ok(Validation::Failure(content));
         }
-        let patch = match diffy::Patch::from_str(diff_text) {
+        let normalized = normalize_diff_hunk_lines(diff_text);
+        let patch = match diffy::Patch::from_str(&normalized) {
             Ok(p) => p,
             Err(e) => {
                 let content = format!("Patch parse error: {e}");
@@ -249,5 +282,41 @@ impl Validation {
             diagnostics,
             parsed_diagnostics,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_adds_missing_leading_space_on_context_lines() {
+        // Regression: qwen2.5-coder:14b reliably drops the mandatory leading
+        // space on unchanged hunk lines, which diffy::Patch::from_str used to
+        // reject outright ("unexpected line in hunk body") even though the
+        // diff's actual add/remove intent was perfectly clear.
+        let diff = "--- a/src/foo.rs\n+++ b/src/foo.rs\n@@ -1,3 +1,3 @@\nfn foo() {\n-    old();\n+    new();\n}\n";
+        let normalized = normalize_diff_hunk_lines(diff);
+        assert_eq!(
+            normalized,
+            "--- a/src/foo.rs\n+++ b/src/foo.rs\n@@ -1,3 +1,3 @@\n fn foo() {\n-    old();\n+    new();\n }\n"
+        );
+        // And the repaired diff must now actually parse.
+        diffy::Patch::from_str(&normalized).expect("repaired diff should parse");
+    }
+
+    #[test]
+    fn normalize_leaves_well_formed_diff_unchanged() {
+        let diff = "--- a/src/foo.rs\n+++ b/src/foo.rs\n@@ -1,3 +1,3 @@\n fn foo() {\n-    old();\n+    new();\n }\n";
+        assert_eq!(normalize_diff_hunk_lines(diff), diff);
+    }
+
+    #[test]
+    fn normalize_does_not_touch_file_header_lines() {
+        // "--- "/"+++ " lines are real filenames, not hunk content — must
+        // never gain a spurious leading space even though they don't start
+        // with one of the hunk-body prefixes either.
+        let diff = "--- a/src/foo.rs\n+++ b/src/foo.rs\n@@ -1,1 +1,1 @@\n-old\n+new\n";
+        assert_eq!(normalize_diff_hunk_lines(diff), diff);
     }
 }
