@@ -1,4 +1,7 @@
 pub(crate) mod git;
+pub(crate) mod fs;
+pub(crate) mod search;
+pub(crate) mod cargo;
 pub(super) mod task;
 
 use crate::agent::event::StreamItem;
@@ -387,7 +390,10 @@ impl Orchestrator {
                     if let Ok(call) = tools::parse_tool_call(&ctx.output)
                         && matches!(
                             call.tool,
-                            ToolName::Retrieve | ToolName::GitLog | ToolName::GitBlame | ToolName::GitDiff
+                            ToolName::Retrieve | ToolName::GitLog | ToolName::GitBlame 
+                            | ToolName::GitDiff | ToolName::GitSearchHistory | ToolName::ReadFile
+                            | ToolName::ListDir | ToolName::Ripgrep | ToolName::ReadTags
+                            | ToolName::CargoCheck | ToolName::CargoDupes
                         )
                         && retrieve_budget > 0
                     {
@@ -629,6 +635,54 @@ impl Orchestrator {
                 let staged = call.args.get("staged").and_then(|v| v.as_bool()).unwrap_or(false);
                 let out = git::git_diff(path, staged).await?;
                 ctx.push_turn(TurnKind::Retrieval, "GitDiff", out);
+                Ok(())
+            }
+            ToolName::GitSearchHistory => {
+                let pattern = call.args["pattern"].as_str().unwrap_or_default();
+                let mode = call.args["mode"].as_str().unwrap_or("message");
+                let path = call.args.get("path").and_then(|v| v.as_str());
+                let max_count = call.args.get("max_count").and_then(|v| v.as_u64()).map(|v| v as u32);
+                let out = git::git_search_history(pattern, mode, path, max_count).await?;
+                ctx.push_turn(TurnKind::Retrieval, "GitSearchHistory", out);
+                Ok(())
+            }
+            ToolName::ReadFile => {
+                let path = call.args["path"].as_str().unwrap_or_default();
+                let start = call.args.get("start").and_then(|v| v.as_u64()).map(|v| v as u32);
+                let end = call.args.get("end").and_then(|v| v.as_u64()).map(|v| v as u32);
+                let out = crate::orchestrator::fs::read_file(path, start, end).await?;
+                ctx.push_turn(TurnKind::Retrieval, "ReadFile", out);
+                Ok(())
+            }
+            ToolName::ListDir => {
+                let path = call.args["path"].as_str().unwrap_or_default();
+                let out = crate::orchestrator::fs::list_dir(path).await?;
+                ctx.push_turn(TurnKind::Retrieval, "ListDir", out);
+                Ok(())
+            }
+            ToolName::Ripgrep => {
+                let pattern = call.args["pattern"].as_str().unwrap_or_default();
+                let path = call.args.get("path").and_then(|v| v.as_str());
+                let glob = call.args.get("glob").and_then(|v| v.as_str());
+                let max_count = call.args.get("max_count").and_then(|v| v.as_u64()).map(|v| v as u32);
+                let out = crate::orchestrator::search::ripgrep(pattern, path, glob, max_count).await?;
+                ctx.push_turn(TurnKind::Retrieval, "Ripgrep", out);
+                Ok(())
+            }
+            ToolName::ReadTags => {
+                let symbol = call.args.get("symbol").and_then(|v| v.as_str());
+                let out = crate::orchestrator::search::read_tags(symbol).await?;
+                ctx.push_turn(TurnKind::Retrieval, "ReadTags", out);
+                Ok(())
+            }
+            ToolName::CargoCheck => {
+                let out = crate::orchestrator::cargo::cargo_check().await?;
+                ctx.push_turn(TurnKind::Retrieval, "CargoCheck", out);
+                Ok(())
+            }
+            ToolName::CargoDupes => {
+                let out = crate::orchestrator::cargo::cargo_dupes().await?;
+                ctx.push_turn(TurnKind::Retrieval, "CargoDupes", out);
                 Ok(())
             }
             ToolName::Memorize | ToolName::ApplyPatch => Ok(()),

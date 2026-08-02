@@ -1,21 +1,15 @@
 use crate::cli::prompt::PromptArgs;
-use crate::agent::event::StreamItem;
 use crate::io::Io;
 use crate::ollama::OllamaArgs;
 use crate::orchestrator::Orchestrator;
 use crate::{Result, RuChatError};
 use clap::Parser;
-use futures_util::TryStreamExt;
 use ollama_rs::models::ModelOptions;
-use std::pin::Pin;
-use tokio_stream::Stream;
 use tokio_stream::StreamExt;
 use serde_json::Value;
 use crate::agent::pipeline::AgentPipeline;
 use std::sync::Arc;
 use ollama_rs::generation::chat::ChatMessage;
-
-type LlamaStream = Pin<Box<dyn Stream<Item = Result<StreamItem>> + Send>>;
 
 const DEFAULT_MODEL: &str = "qwen2.5vl:latest";
 

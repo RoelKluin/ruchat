@@ -18,6 +18,13 @@ pub(crate) enum ToolName {
     GitLog,
     GitBlame,
     GitDiff,
+    GitSearchHistory,
+    ReadFile,
+    ListDir,
+    Ripgrep,
+    ReadTags,
+    CargoCheck,
+    CargoDupes,
 }
 
 impl ToolName {
@@ -26,9 +33,26 @@ impl ToolName {
             ToolName::Memorize => r#"{"tool":"memorize","content":"<string>"}"#,
             ToolName::ApplyPatch => r#"{"tool":"apply_patch","diff":"<unified diff string>"}"#,
             ToolName::Retrieve => r#"{"tool":"retrieve","query":"<string>"}"#,
-            ToolName::GitLog => r#"{"tool":"git_log","path":"<string|omit>","max_count":<int|omit>}"#,
+            ToolName::GitLog => {
+                r#"{"tool":"git_log","path":"<string|omit>","max_count":<int|omit>}"#
+            }
             ToolName::GitBlame => r#"{"tool":"git_blame","path":"<string>"}"#,
-            ToolName::GitDiff => r#"{"tool":"git_diff","path":"<string|omit>","staged":<bool|omit>}"#,
+            ToolName::GitDiff => {
+                r#"{"tool":"git_diff","path":"<string|omit>","staged":<bool|omit>}"#
+            }
+            ToolName::GitSearchHistory => {
+                r#"{"tool":"git_search_history","pattern":"<string>","mode":"message"|"content","path":"<string|omit>","max_count":<int|omit>}"#
+            }
+            ToolName::ReadFile => {
+                r#"{"tool":"read_file","path":"<string>","start":<int|omit>,"end":<int|omit>}"#
+            }
+            ToolName::ListDir => r#"{"tool":"list_dir","path":"<string>"}"#,
+            ToolName::Ripgrep => {
+                r#"{"tool":"ripgrep","pattern":"<string>","path":"<string|omit>","glob":"<string|omit>","max_count":<int|omit>}"#
+            }
+            ToolName::ReadTags => r#"{"tool":"read_tags","symbol":"<string|omit>"}"#,
+            ToolName::CargoCheck => r#"{"tool":"cargo_check"}"#,
+            ToolName::CargoDupes => r#"{"tool":"cargo_dupes"}"#,
         }
     }
     fn required_fields(self) -> &'static [&'static str] {
@@ -39,6 +63,13 @@ impl ToolName {
             ToolName::GitLog => &[],
             ToolName::GitBlame => &["path"],
             ToolName::GitDiff => &[],
+            ToolName::GitSearchHistory => &["pattern", "mode"],
+            ToolName::ReadFile => &["path"],
+            ToolName::ListDir => &["path"],
+            ToolName::Ripgrep => &["pattern"],
+            ToolName::ReadTags => &[],
+            ToolName::CargoCheck => &[],
+            ToolName::CargoDupes => &[],
         }
     }
 }
@@ -118,7 +149,8 @@ mod tests {
 
     #[test]
     fn parses_valid_retrieve_call() {
-        let input = "some text\n```tool_call\n{\"tool\":\"retrieve\",\"query\":\"foo\"}\n```\nmore text";
+        let input =
+            "some text\n```tool_call\n{\"tool\":\"retrieve\",\"query\":\"foo\"}\n```\nmore text";
         let call = parse_tool_call(input).unwrap();
         assert_eq!(call.tool, ToolName::Retrieve);
         assert_eq!(call.args["query"], "foo");
@@ -136,6 +168,9 @@ mod tests {
     #[test]
     fn rejects_unknown_tool() {
         let input = "```tool_call\n{\"tool\":\"nonexistent\"}\n```";
-        assert!(matches!(parse_tool_call(input), Err(ToolParseError::UnknownTool)));
+        assert!(matches!(
+            parse_tool_call(input),
+            Err(ToolParseError::UnknownTool)
+        ));
     }
 }

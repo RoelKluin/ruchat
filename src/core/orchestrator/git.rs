@@ -120,3 +120,27 @@ async fn run_git_command_capture(args: Vec<&str>) -> Result<String> {
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
+
+/// Search commit history: `mode: "message"` uses `git log --grep`,
+/// `mode: "content"` uses pickaxe search (`git log -S<pattern>`, commits
+/// that added/removed occurrences of `pattern`). Read-only, same
+/// `run_git_command_capture` plumbing as `git_log`/`git_diff`.
+pub(crate) async fn git_search_history(
+    pattern: &str,
+    mode: &str,
+    path: Option<&str>,
+    max_count: Option<u32>,
+) -> Result<String> {
+    let count_flag = format!("-n{}", max_count.unwrap_or(20));
+    let mut args: Vec<String> = vec!["log".into(), "--oneline".into(), count_flag];
+    match mode {
+        "content" => args.push(format!("-S{pattern}")),
+        _ => args.push(format!("--grep={pattern}")),
+    }
+    if let Some(p) = path {
+        args.push("--".into());
+        args.push(p.into());
+    }
+    let args_ref: Vec<&str> = args.iter().map(String::as_str).collect();
+    run_git_command_capture(args_ref).await
+}
