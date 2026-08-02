@@ -35,14 +35,17 @@ We prioritize **predictability**, **performance**, **token efficiency**, and **t
 
 **Goal**: Make the fixed pipeline significantly more powerful while staying local
 
-- [ ] Structured tool calling framework (replace regex parsing with proper schema + execution)
-- [ ] Persistent memory layer (Chroma-based long-term memory for agents)
+- [x] Structured tool calling framework (`agent/tools.rs::ToolName` — schema-validated, 13 typed tools, no more regex-only parsing)
+- [x] Parallel critic execution (`Orchestrator::run_critics_parallel`) — note: the execution mechanism itself was correct, but a separate construction bug meant `critics` was always empty in practice until fixed (see TODO.md's Done section)
+- [x] Token-aware history management + automatic summarization triggers (`Stage::Retry` → Summarizer when the token estimate exceeds the model's history limit)
+- [~] Persistent memory layer — the `memorize` tool writes to Chroma today (`Agent::embed`), but there's no automatic recall of prior-run memories at session start; that part is still open
+- [~] Improved RAG — relevance scoring/reranking is done (`providers/vector/chroma/rerank.rs`); document summarization before the Worker and multi-collection queries are still open
 - [ ] Automatic collection management (`ruchat chroma-init` from `db_config.json`)
-- [ ] Parallel critic execution (run security/perf critics concurrently)
-- [ ] Improved RAG: relevance scoring, document summarization before Worker, multi-collection queries
-- [ ] Built-in code execution sandbox (safe `SHELL` tool with timeout + resource limits)
-- [ ] Token-aware history management + automatic summarization triggers
-- [ ] Debug mode improvements (step-by-step execution, breakpoint support)
+- [ ] Resource-limited sandboxing for tool-invoked subprocesses (`cargo_check`/`cargo_test` currently have timeouts but no memory/CPU caps) — note: there is deliberately no generic `SHELL` tool anymore; the Worker/Scoper only get specific typed tools, which is a stronger safety posture than a sandboxed-shell approach
+- [ ] Debug mode improvements (step-by-step execution, breakpoint support) — the fixed-sequence debug mode itself exists (`--debug-sequence`, `agent_debug/*.json`), but isn't wired into `cargo test` yet and has no breakpoints
+- [x] Reconciled the legacy `Team`/`Manager` pipeline — `ruchat manager` now expands a saved `Team` preset into an `Orchestrator` config and runs the real stage machine
+- [x] `apply_patch` hardening: diff-size cap, and automatic rollback of a rejected round's patch before looping back to `Plan`
+- [ ] `apply_patch` scope check against the Scoper/Architect plan (still open — no guard today against a patch touching a file the plan never mentioned)
 
 **Milestone**: Best-in-class local coding agent (plan → code → review → commit) that beats Python frameworks in speed and reliability.
 

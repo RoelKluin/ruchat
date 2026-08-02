@@ -562,7 +562,7 @@ mod tests {
     fn test_parse_metadata_value() {
         assert_eq!(parse_metadata_value("true"), MetadataValue::Bool(true));
         assert_eq!(parse_metadata_value("123"), MetadataValue::Int(123));
-        assert_eq!(parse_metadata_value("3.14"), MetadataValue::Float(3.14));
+        assert_eq!(parse_metadata_value("2.5"), MetadataValue::Float(2.5));
         assert_eq!(
             parse_metadata_value("a,b,c"),
             MetadataValue::StringArray(vec!["a".to_string(), "b".to_string(), "c".to_string()])
@@ -584,8 +584,8 @@ mod tests {
             MetadataSetValue::Int(vec![1, 2, 3])
         );
         assert_eq!(
-            parse_metadata_set_value("[3.14,2.71]"),
-            MetadataSetValue::Float(vec![3.14, 2.71])
+            parse_metadata_set_value("[2.5,4.75]"),
+            MetadataSetValue::Float(vec![2.5, 4.75])
         );
         assert_eq!(
             parse_metadata_set_value("[a,b,c]"),
@@ -596,54 +596,54 @@ mod tests {
     #[test]
     fn test_map_sql_comparison() {
         assert_eq!(
-            map_sql_comparison("IN", "1,2,3"),
+            map_sql_comparison("IN", "1,2,3").unwrap(),
             MetadataComparison::Set(SetOperator::In, MetadataSetValue::Int(vec![1, 2, 3]))
         );
         assert_eq!(
-            map_sql_comparison("NOTIN", "a,b,c"),
+            map_sql_comparison("NOTIN", "a,b,c").unwrap(),
             MetadataComparison::Set(
                 SetOperator::NotIn,
                 MetadataSetValue::Str(vec!["a".to_string(), "b".to_string(), "c".to_string()])
             )
         );
         assert_eq!(
-            map_sql_comparison("CONTAINS", "value"),
+            map_sql_comparison("CONTAINS", "value").unwrap(),
             MetadataComparison::ArrayContains(
                 ContainsOperator::Contains,
                 MetadataValue::Str("value".to_string())
             )
         );
         assert_eq!(
-            map_sql_comparison("NOTCONTAINS", "value"),
+            map_sql_comparison("NOTCONTAINS", "value").unwrap(),
             MetadataComparison::ArrayContains(
                 ContainsOperator::NotContains,
                 MetadataValue::Str("value".to_string())
             )
         );
         assert_eq!(
-            map_sql_comparison(">", "5"),
+            map_sql_comparison(">", "5").unwrap(),
             MetadataComparison::Primitive(PrimitiveOperator::GreaterThan, MetadataValue::Int(5))
         );
         assert_eq!(
-            map_sql_comparison("<", "3.14"),
-            MetadataComparison::Primitive(PrimitiveOperator::LessThan, MetadataValue::Float(3.14))
+            map_sql_comparison("<", "2.5").unwrap(),
+            MetadataComparison::Primitive(PrimitiveOperator::LessThan, MetadataValue::Float(2.5))
         );
         assert_eq!(
-            map_sql_comparison(">=", "true"),
+            map_sql_comparison(">=", "true").unwrap(),
             MetadataComparison::Primitive(
                 PrimitiveOperator::GreaterThanOrEqual,
                 MetadataValue::Bool(true)
             )
         );
         assert_eq!(
-            map_sql_comparison("<=", "false"),
+            map_sql_comparison("<=", "false").unwrap(),
             MetadataComparison::Primitive(
                 PrimitiveOperator::LessThanOrEqual,
                 MetadataValue::Bool(false)
             )
         );
         assert_eq!(
-            map_sql_comparison("!=", "value"),
+            map_sql_comparison("!=", "value").unwrap(),
             MetadataComparison::Primitive(
                 PrimitiveOperator::NotEqual,
                 MetadataValue::Str("value".to_string())
@@ -654,23 +654,23 @@ mod tests {
     #[test]
     fn test_map_sql_to_document_op() {
         assert_eq!(
-            map_sql_to_document_op("CONTAINS"),
+            map_sql_to_document_op("CONTAINS").unwrap(),
             DocumentOperator::Contains
         );
-        assert_eq!(map_sql_to_document_op("LIKE"), DocumentOperator::Contains);
-        assert_eq!(map_sql_to_document_op("="), DocumentOperator::Contains);
+        assert_eq!(map_sql_to_document_op("LIKE").unwrap(), DocumentOperator::Contains);
+        assert_eq!(map_sql_to_document_op("=").unwrap(), DocumentOperator::Contains);
         assert_eq!(
-            map_sql_to_document_op("NOTCONTAINS"),
+            map_sql_to_document_op("NOTCONTAINS").unwrap(),
             DocumentOperator::NotContains
         );
         assert_eq!(
-            map_sql_to_document_op("NOTLIKE"),
+            map_sql_to_document_op("NOTLIKE").unwrap(),
             DocumentOperator::NotContains
         );
-        assert_eq!(map_sql_to_document_op("!="), DocumentOperator::NotContains);
-        assert_eq!(map_sql_to_document_op("REGEX"), DocumentOperator::Regex);
+        assert_eq!(map_sql_to_document_op("!=").unwrap(), DocumentOperator::NotContains);
+        assert_eq!(map_sql_to_document_op("REGEX").unwrap(), DocumentOperator::Regex);
         assert_eq!(
-            map_sql_to_document_op("NOTREGEX"),
+            map_sql_to_document_op("NOTREGEX").unwrap(),
             DocumentOperator::NotRegex
         );
     }

@@ -1,11 +1,9 @@
 use crate::agent::event::StreamItem;
 use crate::agent::llm_client::LlmClient;
-use crate::core::agent::Team;
 use crate::core::orchestrator::Orchestrator;
 use crate::Result;
 use crate::RuChatError;
 use ollama_rs::generation::chat::ChatMessage;
-use ollama_rs::Ollama;
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -15,21 +13,16 @@ use tokio_stream::StreamExt;
 
 pub(crate) type PipelineStream = Pin<Box<dyn Stream<Item = Result<StreamItem>> + Send>>;
 
-/// Unifies the two ways this crate runs a multi-agent task — the Stage-
-/// machine `Orchestrator` (ask.rs's `pipe` command) and the sequential
-/// `Team` (Manager's saved-team runner) — behind one `run()` entry point so
-/// callers share one rendering loop instead of each hand-rolling their own
-/// (Manager previously used bare `println!`, orchestrator used the
-/// StreamItem/AgentEvent match in ask.rs).
+/// Unifies the ways this crate runs a task — the Stage-machine `Orchestrator`
+/// (used by both `ask` and `manager run`, the latter loading its config from
+/// a saved `Team` preset) and the non-agentic one-shot `pipe` — behind one
+/// `run()` entry point so callers share one rendering loop instead of each
+/// hand-rolling their own.
 pub(crate) enum AgentPipeline {
     Orchestrator {
         orchestrator: Orchestrator,
         goal: String,
         debug_sequence: Option<String>,
-    },
-    Team {
-        team: Team,
-        ollama: Ollama,
     },
     /// The non-agentic `pipe` path — no Architect/Worker config, just a bare
     /// prompt sent straight to the model. Kept as its own variant (rather
@@ -51,7 +44,6 @@ impl AgentPipeline {
                 goal,
                 debug_sequence,
             } => Box::pin(orchestrator.run_task_stream(goal, debug_sequence)),
-            AgentPipeline::Team { team, ollama } => team.run_streaming(ollama),
             AgentPipeline::OneShot {
                 ollama,
                 model,

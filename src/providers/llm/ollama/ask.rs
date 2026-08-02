@@ -4,12 +4,9 @@ use crate::ollama::OllamaArgs;
 use crate::orchestrator::Orchestrator;
 use crate::{Result, RuChatError};
 use clap::Parser;
-use ollama_rs::models::ModelOptions;
-use tokio_stream::StreamExt;
 use serde_json::Value;
 use crate::agent::pipeline::AgentPipeline;
 use std::sync::Arc;
-use ollama_rs::generation::chat::ChatMessage;
 
 const DEFAULT_MODEL: &str = "qwen2.5vl:latest";
 
@@ -72,35 +69,6 @@ pub(crate) struct AskArgs {
 
     #[command(flatten)]
     ollama: OllamaArgs,
-}
-
-// Reusable generation logic for Agents
-pub(crate) async fn generate_oneshot(
-    ollama: &dyn crate::agent::llm_client::LlmClient,
-    model: &str,
-    prompt: &str,
-    _options: Option<ModelOptions>, // NEEDS WIRING: ChatMessageRequest's options
-                                     // builder method name needs confirming
-                                     // against ollama-rs source (likely
-                                     // `.options(...)` mirroring GenerationRequest,
-                                     // unconfirmed here) before re-threading this.
-) -> Result<String> {
-    // Resolve model name if strictly needed, or trust the Agent's config
-    // For safety, we verify the model exists or use default if empty, similar to pipe
-    let model_name = if model.is_empty() {
-        DEFAULT_MODEL.to_string()
-    } else {
-        model.to_string()
-    };
-
-    let messages = vec![ChatMessage::user(prompt.to_string())];
-    let mut stream = ollama.chat_stream(&model_name, messages).await?;
-    let mut buffer = String::new();
-
-    while let Some(chunk) = stream.next().await.transpose()? {
-        buffer.push_str(&chunk.message.content);
-    }
-    Ok(buffer)
 }
 
 impl AskArgs {
@@ -274,6 +242,7 @@ mod tests {
         assert_eq!(config["Worker"]["model"], "codellama");
     }
     #[tokio::test]
+    #[ignore = "requires a live Ollama server on localhost:11434 — runs a full 3-round Orchestrator against real qwen2.5 models"]
     async fn test_agentic() {
         let agentic = Some(json!({
                 "iterations": 3,

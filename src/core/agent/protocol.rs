@@ -104,8 +104,24 @@ pub(crate) struct BuildReport {
     pub(crate) parsed_diagnostics: Vec<Diagnostic>,
 }
 
+/// Diff bodies beyond this size are refused before ever touching disk —
+/// large enough for a genuine focused change, small enough to catch a
+/// hallucinated patch that tries to rewrite most of a file (or paste
+/// unrelated content) in one autonomous, unreviewed step. Comparable in
+/// spirit to `orchestrator::fs::MAX_READ_BYTES`, just on the write side.
+const MAX_PATCH_DIFF_BYTES: usize = 8_000;
+
 impl Validation {
     pub(crate) async fn apply_patch(diff_text: &str, ctx: &mut Context) -> Result<Self> {
+        if diff_text.len() > MAX_PATCH_DIFF_BYTES {
+            let content = format!(
+                "Patch refused: diff is {} bytes, exceeds the {MAX_PATCH_DIFF_BYTES}-byte limit \
+                for a single apply_patch call — split this into smaller, more focused patches.",
+                diff_text.len()
+            );
+            ctx.push_turn(TurnKind::Rejection, "Validator", content.clone());
+            return Ok(Validation::Failure(content));
+        }
         let patch = match diffy::Patch::from_str(diff_text) {
             Ok(p) => p,
             Err(e) => {
@@ -130,6 +146,10 @@ impl Validation {
         match diffy::apply(&original, &patch) {
             Ok(patched) => {
                 tokio::fs::write(target, patched).await?;
+                // Recorded so a later Test/Validate/Critique rejection this round can
+                // restore the pre-patch content instead of leaving it applied — see
+                // `Context::revert_pending_patch`.
+                ctx.record_patch(target.to_string(), original);
                 Ok(Validation::Success)
             }
             Err(e) => {

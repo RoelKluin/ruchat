@@ -1,15 +1,15 @@
 use crate::agent::pipeline::AgentPipeline;
-use crate::agent::worker::Agent;
 use crate::agent::Team;
 use crate::io::Io;
 use crate::ollama::ServerArgs;
-use crate::serde::{load_manager, save_manager}; // We will add these
+use crate::orchestrator::Orchestrator;
+use crate::serde::{load_manager, save_manager};
 use crate::tui::render::render_pipeline_stream;
 use crate::{Result, RuChatError};
 use clap::{Parser, Subcommand};
-use ollama_rs::Ollama;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::sync::Arc;
 
 #[derive(Parser, Debug, Clone, PartialEq)]
 pub(crate) struct ManagerArgs {
@@ -28,7 +28,7 @@ pub(crate) struct ManagerArgs {
 pub(crate) enum ManagerCommands {
     /// Initialize a new manager config
     Init,
-    /// Run the active team
+    /// Run the active team through the Orchestrator stage machine
     Run,
     /// List teams
     List,
@@ -54,14 +54,7 @@ impl Manager {
             .ok_or(RuChatError::ActiveTeamIndexOutOfBounds)
     }
 
-    pub fn current_team_mut(&mut self) -> Result<&mut Team> {
-        self.teams
-            .get_mut(self.active_team)
-            .ok_or(RuChatError::ActiveTeamIndexOutOfBounds)
-    }
-
-    pub async fn execute_command(args: ManagerArgs, _cfg: &Value) -> Result<()> {
-        let ollama = args.server_args.init()?;
+    pub async fn execute_command(args: ManagerArgs, cfg: &Value) -> Result<()> {
         let config_path = args
             .path
             .clone()
@@ -69,25 +62,29 @@ impl Manager {
 
         match args.command {
             ManagerCommands::Init => {
-                let mut manager = Manager::new();
                 let name = "Default Team".to_string();
                 let goal = "Achieve the default goal.".to_string();
-                let agents = vec![Agent::new(
-                    "qwen2.5-coder:7b".to_string(),
-                    "You are an agent that performs tasks.".to_string(),
-                )];
-                manager.teams.push(Team::new(name, goal, agents));
+                // A minimal Architect+Worker preset — same shape as `ask --team-model`.
+                let config = serde_json::json!({
+                    "Architect": { "model": "qwen2.5-coder:7b" },
+                    "Worker": { "model": "qwen2.5-coder:7b" },
+                });
+                let mut manager = Manager::new();
+                manager.teams.push(Team::new(name, goal, config));
                 save_manager(config_path.as_str(), &manager).await?;
                 println!("Initialized empty manager at {}", config_path);
             }
             ManagerCommands::Run => {
-                let mut manager = load_manager(config_path.as_str()).await?;
-                let idx = manager.active_team;
-                if idx >= manager.teams.len() {
-                    return Err(RuChatError::ActiveTeamIndexOutOfBounds);
-                }
-                let team = manager.teams.remove(idx);
-                let pipeline = AgentPipeline::Team { team, ollama };
+                let manager = load_manager(config_path.as_str()).await?;
+                let team = manager.current_team()?;
+                let ollama = args.server_args.init()?;
+                let orchestrator =
+                    Orchestrator::new(team.config.clone(), Arc::new(ollama), cfg).await?;
+                let pipeline = AgentPipeline::Orchestrator {
+                    orchestrator,
+                    goal: team.goal.clone(),
+                    debug_sequence: None,
+                };
                 let mut cio = Io::new();
                 render_pipeline_stream(pipeline.run(), &mut cio).await?;
             }
@@ -100,10 +97,5 @@ impl Manager {
             }
         }
         Ok(())
-    }
-
-    pub async fn run_active(&mut self, ollama: &Ollama) -> Result<()> {
-        let team = self.current_team_mut()?;
-        team.execute(ollama).await
     }
 }

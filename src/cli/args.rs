@@ -159,12 +159,21 @@ mod tests {
     }
     #[tokio::test]
     async fn test_handle_request_default() {
-        let args = Args::parse_from(["test", "-h"]);
-        let result = args.handle_request().await;
-        assert!(result.is_ok());
+        // `-h` makes clap short-circuit with a `DisplayHelp` error rather than
+        // producing an `Args` — the eager `parse_from` used here previously
+        // calls `std::process::exit(0)` on that path, which silently kills
+        // the whole test binary process mid-run (every #[test] in this crate
+        // shares one process) instead of just this test. `try_parse_from`
+        // surfaces the same outcome without exiting.
+        let result = Args::try_parse_from(["test", "-h"]);
+        assert!(matches!(
+            result.unwrap_err().kind(),
+            clap::error::ErrorKind::DisplayHelp
+        ));
     }
 
     #[tokio::test]
+    #[ignore = "requires a live Ollama server on localhost:11434 (ollama-ls calls list_local_models)"]
     async fn test_handle_request_ask() {
         let args = Args::parse_from(["test", "ollama-ls"]);
         let result = args.handle_request().await;

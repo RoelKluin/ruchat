@@ -9,7 +9,6 @@ pub(crate) mod team;
 pub(crate) mod tokens;
 pub(crate) mod tools;
 pub(crate) mod types;
-pub(crate) mod worker;
 
 use crate::core::embed::{EmbedArgs, UpsertMode};
 use crate::core::orchestrator::TaskType;

@@ -119,16 +119,18 @@ impl Orchestrator {
             .and_then(|v| v.as_array())
         {
             for (i, c_val) in critic_list.iter().enumerate() {
-                // We pass a copy of the specific critic's config
-                let mut c_config = c_val.clone();
-                if let Ok(agent) = Agent::new(
-                    &mut c_config,
-                    &format!("Critic_{}", i),
-                    true,
-                    task_type,
-                    cfg.clone(),
-                )
-                .await
+                // `Agent::new` looks up `config.get(role)` — it expects the role's
+                // config nested under its own key (as every other role's config is
+                // in `orchestrator_config`), not the flat per-critic object itself.
+                // Passing `c_val.clone()` directly here used to mean `config.get(role)`
+                // could never find anything, so `Agent::new` always returned
+                // `Err(MissingAgent)`, silently swallowed below — Critics were never
+                // actually constructed via `--agentic`/`--critic`, regardless of how
+                // many were configured.
+                let role = format!("Critic_{i}");
+                let mut c_config = serde_json::json!({ role.clone(): c_val.clone() });
+                if let Ok(agent) =
+                    Agent::new(&mut c_config, &role, true, task_type, cfg.clone()).await
                 {
                     critics.push(agent);
                 }
@@ -510,6 +512,11 @@ impl Orchestrator {
                             Stage::Escalate("repeated rejections, iteration budget exhausted, no implementation produced".into())
                         }
                     } else {
+                        // Looping back for another attempt — a patch this round already
+                        // applied (Test/Validate/Critique rejected it after the fact) must
+                        // not be left in place, or the next Worker round starts editing an
+                        // unreviewed mutation instead of the last known-good state.
+                        ctx.revert_pending_patch(&tx).await;
                         if let Some(summarizer) = self.summarizer.as_mut() {
                             let approx_tokens: u64 = ctx
                                 .turns
@@ -874,5 +881,259 @@ pub(crate) struct OrchestratorRun {
 impl OrchestratorRun {
     pub(crate) fn new(orchestrator: Orchestrator, goal: String, debug_sequence: Option<String>) -> Self {
         Self { orchestrator, goal, debug_sequence }
+    }
+}
+
+/// Runs each `agent_debug/*.json` fixture through the real stage machine
+/// (`debug_stage_machine`, via `run_task_stream`) against a scripted
+/// `FakeLlmClient`/`FakeVectorStore` instead of a live Ollama/Chroma server.
+/// These were sitting unused as fixtures on disk before this — nothing
+/// exercised them, which is exactly how `multiple_critics.json`/`critic.json`
+/// carried a naming bug (`"Critic0"` instead of `"Critic_0"`, silently
+/// falling back to critic index 0 every time) for who knows how long.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent::llm_client::fake_vector_store::FakeVectorStore;
+    use crate::agent::llm_client::FakeLlmClient;
+    use chroma::types::QueryResponse;
+    use serde_json::json;
+
+    /// Builds an `Orchestrator` by hand (not `Orchestrator::new`, which always
+    /// constructs a real `ChromaHttpClient` for the Librarian) so Librarian
+    /// fixtures can run against a `FakeVectorStore` instead of a live Chroma
+    /// server. Each role's `Agent` is still built through the real
+    /// `Agent::new`, so config parsing/merging is exercised exactly as in
+    /// production — only the network-facing clients are swapped.
+    async fn build_test_orchestrator(
+        mut config: Value,
+        responses: Vec<&str>,
+        query_response: Option<QueryResponse>,
+    ) -> Orchestrator {
+        let architect = Agent::new(&mut config, "Architect", true, None, json!({}))
+            .await
+            .unwrap();
+        let worker = Agent::new(&mut config, "Worker", true, None, json!({}))
+            .await
+            .unwrap();
+        let validator = Agent::new(&mut config, "Validator", false, None, json!({}))
+            .await
+            .ok();
+        let summarizer = Agent::new(&mut config, "Summarizer", false, None, json!({}))
+            .await
+            .ok();
+        let scoper = Agent::new(&mut config, "Scoper", false, None, json!({}))
+            .await
+            .ok();
+        let librarian = Agent::new(&mut config, "Librarian", false, None, json!({}))
+            .await
+            .ok();
+
+        let mut critics = Vec::new();
+        if let Some(critic_list) = config.get("Critics").and_then(|v| v.as_array()) {
+            for (i, c_val) in critic_list.iter().enumerate() {
+                let role = format!("Critic_{i}");
+                let mut c_config = json!({ role.clone(): c_val.clone() });
+                if let Ok(agent) = Agent::new(&mut c_config, &role, true, None, json!({})).await {
+                    critics.push(agent);
+                }
+            }
+        }
+
+        let client: Option<Arc<dyn VectorStore>> = query_response
+            .map(|response| Arc::new(FakeVectorStore { response }) as Arc<dyn VectorStore>);
+
+        Orchestrator {
+            scoper,
+            architect,
+            worker,
+            librarian,
+            critics,
+            summarizer,
+            validator,
+            orchestrator_config: config,
+            ollama: Arc::new(FakeLlmClient::new(responses)),
+            client,
+        }
+    }
+
+    fn fake_query_response() -> QueryResponse {
+        QueryResponse {
+            ids: vec![vec!["doc1".to_string()]],
+            embeddings: None,
+            documents: Some(vec![vec![Some("fake retrieved document".to_string())]]),
+            uris: None,
+            metadatas: None,
+            distances: None,
+            include: vec![],
+        }
+    }
+
+    /// Runs a fixture to completion and returns every streamed item —
+    /// panics (failing the test) if the stage machine ever surfaces an
+    /// `Err`, which is the thing debug-mode is meant to make crisp to catch.
+    async fn run_fixture(
+        fixture: &str,
+        config: Value,
+        responses: Vec<&str>,
+        query_response: Option<QueryResponse>,
+    ) -> Vec<StreamItem> {
+        let orchestrator = build_test_orchestrator(config, responses, query_response).await;
+        let path = format!("agent_debug/{fixture}");
+        let stream = orchestrator.run_task_stream("test goal".to_string(), Some(path));
+        tokio_stream::StreamExt::collect::<Vec<Result<StreamItem>>>(stream)
+            .await
+            .into_iter()
+            .map(|r| r.expect("debug sequence produced an error"))
+            .collect()
+    }
+
+    fn base_config() -> Value {
+        json!({
+            "Architect": { "model": "fake" },
+            "Worker": { "model": "fake" },
+        })
+    }
+
+    #[tokio::test]
+    async fn architect_only_completes() {
+        let items = run_fixture(
+            "architect_only.json",
+            base_config(),
+            vec!["Plan: refactor error handling to use `?`."],
+            None,
+        )
+        .await;
+        assert!(!items.is_empty());
+    }
+
+    #[tokio::test]
+    async fn librarian_only_completes() {
+        let mut config = base_config();
+        config["Librarian"] = json!({ "model": "fake", "embed_model": "fake-embed" });
+        let items = run_fixture(
+            "librarian_only.json",
+            config,
+            vec!["{\"query\": \"error handling\", \"n_results\": 5, \"collection\": \"repo\"}"],
+            Some(fake_query_response()),
+        )
+        .await;
+        assert!(!items.is_empty());
+    }
+
+    #[tokio::test]
+    async fn librarian_and_worker_completes() {
+        let mut config = base_config();
+        config["Librarian"] = json!({ "model": "fake", "embed_model": "fake-embed" });
+        let items = run_fixture(
+            "librarian_and_worker.json",
+            config,
+            vec![
+                "{\"query\": \"error handling\", \"n_results\": 5, \"collection\": \"repo\"}",
+                "Replaced unwrap() with `?` and anyhow::Context.",
+            ],
+            Some(fake_query_response()),
+        )
+        .await;
+        assert!(!items.is_empty());
+    }
+
+    #[tokio::test]
+    async fn worker_and_validator_completes() {
+        let mut config = base_config();
+        config["Validator"] = json!({ "model": "fake" });
+        let items = run_fixture(
+            "worker_and_validator.json",
+            config,
+            vec![
+                "fn foo() -> Result<()> { do_thing()?; Ok(()) }",
+                "{\"verdict\": \"VALIDATED\", \"reason\": \"\"}",
+            ],
+            None,
+        )
+        .await;
+        assert!(!items.is_empty());
+    }
+
+    #[tokio::test]
+    async fn worker_and_validator_rejection_completes() {
+        let mut config = base_config();
+        config["Validator"] = json!({ "model": "fake" });
+        let items = run_fixture(
+            "worker_and_validator_rejection.json",
+            config,
+            vec![
+                "fn foo() { do_thing().unwrap(); }",
+                "{\"verdict\": \"REJECTED\", \"reason\": \"still uses unwrap()\"}",
+            ],
+            None,
+        )
+        .await;
+        assert!(!items.is_empty());
+    }
+
+    #[tokio::test]
+    async fn summarizer_completes() {
+        let mut config = base_config();
+        config["Summarizer"] = json!({ "model": "fake" });
+        let items = run_fixture(
+            "summarizer.json",
+            config,
+            vec!["Summary: several rejections over unwrap() usage; not yet resolved."],
+            None,
+        )
+        .await;
+        assert!(!items.is_empty());
+    }
+
+    #[tokio::test]
+    async fn validator_only_completes() {
+        let mut config = base_config();
+        config["Validator"] = json!({ "model": "fake" });
+        let items = run_fixture(
+            "validator_only.json",
+            config,
+            vec!["{\"verdict\": \"REJECTED\", \"reason\": \"unwrap() on line 42\"}"],
+            None,
+        )
+        .await;
+        assert!(!items.is_empty());
+    }
+
+    /// Regression test for the `"Critic0"` vs `"Critic_0"` naming bug this
+    /// fixture originally carried (see the module doc comment) — with two
+    /// distinct scripted responses queued, if the sequence's second step
+    /// silently dispatched to critic index 0 again instead of index 1, the
+    /// `FakeLlmClient` queue would desync and either this call would consume
+    /// the wrong response or the queue would run dry, panicking.
+    #[tokio::test]
+    async fn multiple_critics_dispatches_each_critic_once() {
+        let mut config = base_config();
+        config["Critics"] = json!([
+            { "model": "fake", "task": "security review" },
+            { "model": "fake", "task": "performance review" },
+        ]);
+        let items = run_fixture(
+            "multiple_critics.json",
+            config,
+            vec!["No issues found.\nAPPROVED", "Looks efficient.\nAPPROVED"],
+            None,
+        )
+        .await;
+        assert!(!items.is_empty());
+    }
+
+    #[tokio::test]
+    async fn critic_only_completes() {
+        let mut config = base_config();
+        config["Critics"] = json!([{ "model": "fake", "task": "security review" }]);
+        let items = run_fixture(
+            "critic.json",
+            config,
+            vec!["No issues found.\nAPPROVED"],
+            None,
+        )
+        .await;
+        assert!(!items.is_empty());
     }
 }

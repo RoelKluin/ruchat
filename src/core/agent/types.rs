@@ -27,12 +27,23 @@ pub(crate) struct Turn {
     pub(crate) content: String,
 }
 
+/// Pre-image of a file `apply_patch` just wrote to disk, kept so a rejected
+/// round can be rolled back to a clean baseline before the next Worker
+/// attempt instead of compounding an unreviewed mutation. Cleared once the
+/// round is either reverted (`Stage::Retry` looping back to `Plan`) or the
+/// patch survives to `Stage::Accept`/`Stage::Done`.
+pub(crate) struct PendingPatch {
+    pub(crate) path: String,
+    pub(crate) original: String,
+}
+
 pub(crate) struct Context {
     pub(crate) goal: String,
     pub(crate) turns: Vec<Turn>,
     pub(crate) output: String, // last agent's raw output — transient scratch, unchanged
     pub(crate) context_config: Value,
     pub(crate) round: u64, // current round number, incremented after each agent's turn
+    pub(crate) pending_patch: Option<PendingPatch>,
 }
 
 impl Context {
@@ -43,6 +54,7 @@ impl Context {
             output: String::new(),
             context_config: Value::Null,
             round: 0,
+            pending_patch: None,
         }
     }
 
@@ -53,6 +65,51 @@ impl Context {
             source: source.to_string(),
             content,
         });
+    }
+
+    /// Records the pre-patch content of a file `apply_patch` is about to
+    /// overwrite. Only one round's worth of pending patch is ever tracked —
+    /// a new record replaces any prior one, since a round only ever applies
+    /// one patch (see `Stage::Implement`).
+    pub(crate) fn record_patch(&mut self, path: String, original: String) {
+        self.pending_patch = Some(PendingPatch { path, original });
+    }
+
+    /// Writes the tracked file back to its pre-patch content and clears the
+    /// pending record. Called when a round's patch is rejected and the
+    /// orchestrator is about to loop back to `Stage::Plan` — restores a
+    /// clean baseline for the next attempt instead of stacking an unreviewed
+    /// mutation. No-ops if no patch is pending (e.g. `apply_patch` was never
+    /// reached, or failed before writing).
+    pub(crate) async fn revert_pending_patch(
+        &mut self,
+        tx: &mpsc::Sender<Result<StreamItem>>,
+    ) {
+        if let Some(pending) = self.pending_patch.take() {
+            match tokio::fs::write(&pending.path, &pending.original).await {
+                Ok(()) => {
+                    self.trace(
+                        tx,
+                        format!(
+                            "Rejected patch to '{}' rolled back to its pre-patch content.",
+                            pending.path
+                        ),
+                    )
+                    .await;
+                }
+                Err(e) => {
+                    self.trace(
+                        tx,
+                        format!(
+                            "WARNING: failed to roll back rejected patch to '{}': {e} — \
+                            file may be left in a mutated, unreviewed state",
+                            pending.path
+                        ),
+                    )
+                    .await;
+                }
+            }
+        }
     }
     pub(crate) fn read_config_file(&mut self, path: &str) -> Result<()> {
         let config_str = std::fs::read_to_string(path)?;

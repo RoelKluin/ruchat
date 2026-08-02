@@ -17,10 +17,10 @@ use tokio_stream::StreamExt;
 /// error representation.
 pub(crate) type ChatStream = Pin<Box<dyn Stream<Item = Result<ChatMessageResponse>> + Send>>;
 
-/// Everything `Agent::query_stream` / `generate_oneshot` need from an Ollama
-/// client. Exists so both can take `Arc<dyn LlmClient>` (or be generic over
-/// it) instead of a concrete `ollama_rs::Ollama`, enabling an in-memory fake
-/// for stage-machine tests that currently require a live server.
+/// Everything `Agent::query_stream` needs from an Ollama client. Exists so
+/// callers can take `Arc<dyn LlmClient>` instead of a concrete
+/// `ollama_rs::Ollama`, enabling an in-memory fake for stage-machine tests
+/// that currently require a live server.
 #[async_trait]
 pub(crate) trait LlmClient: Send + Sync {
     async fn chat_stream(&self, model: &str, messages: Vec<ChatMessage>) -> Result<ChatStream>;
@@ -172,6 +172,62 @@ impl EmbeddingsClient for FakeEmbeddingsClient {
         _req: GenerateEmbeddingsRequest,
     ) -> Result<GenerateEmbeddingsResponse> {
         Ok(self.response.clone())
+    }
+}
+
+/// Scripted `LlmClient` for stage-machine tests: each `chat_stream` call pops
+/// the next canned response off a queue (in call order), so a test can drive
+/// a whole debug-sequence run without a live Ollama server. Panics with a
+/// clear message if a test's response list runs short — that means the test
+/// didn't account for every role in the sequence, not a runtime bug.
+#[cfg(test)]
+pub(crate) struct FakeLlmClient {
+    responses: std::sync::Mutex<std::collections::VecDeque<String>>,
+}
+
+#[cfg(test)]
+impl FakeLlmClient {
+    pub(crate) fn new(responses: Vec<&str>) -> Self {
+        Self {
+            responses: std::sync::Mutex::new(responses.into_iter().map(String::from).collect()),
+        }
+    }
+}
+
+#[cfg(test)]
+#[async_trait]
+impl LlmClient for FakeLlmClient {
+    async fn chat_stream(&self, _model: &str, _messages: Vec<ChatMessage>) -> Result<ChatStream> {
+        let content = self
+            .responses
+            .lock()
+            .expect("FakeLlmClient mutex poisoned")
+            .pop_front()
+            .unwrap_or_else(|| {
+                panic!("FakeLlmClient ran out of scripted responses — the test's response list is shorter than the number of chat_stream calls the fixture actually makes")
+            });
+        let response = ChatMessageResponse {
+            model: "fake".to_string(),
+            created_at: String::new(),
+            message: ChatMessage::assistant(content),
+            logprobs: None,
+            done: true,
+            final_data: None,
+        };
+        Ok(Box::pin(tokio_stream::once(Ok(response))))
+    }
+
+    async fn generate_embeddings(
+        &self,
+        req: GenerateEmbeddingsRequest,
+    ) -> Result<GenerateEmbeddingsResponse> {
+        let count = match req.input {
+            ollama_rs::generation::embeddings::request::EmbeddingsInput::Single(_) => 1,
+            ollama_rs::generation::embeddings::request::EmbeddingsInput::Multiple(v) => v.len(),
+        };
+        Ok(GenerateEmbeddingsResponse {
+            embeddings: (0..count).map(|_| vec![0.0_f32; 4]).collect(),
+        })
     }
 }
 

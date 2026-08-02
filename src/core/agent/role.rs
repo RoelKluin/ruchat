@@ -271,10 +271,15 @@ impl FromStr for Role {
             "worker" => Ok(Role::Worker),
             "validator" => Ok(Role::Validator),
             "librarian" => Ok(Role::Librarian),
-            "critic" => Ok(Role::Critic),
             "performancecritic" => Ok(Role::PerformanceCritic),
             "scoper" => Ok(Role::Scoper),
             "summarizer" => Ok(Role::Summarizer),
+            // Multiple critics are named "Critic_0", "Critic_1", ... (see
+            // Orchestrator::new / debug_stage_machine) so each Agent's `role`
+            // config value is that indexed name, not the bare "critic" this
+            // match used to require exclusively — every multi-critic agent
+            // failed `query_stream` with InvalidRole until this was added.
+            s if s == "critic" || s.starts_with("critic_") => Ok(Role::Critic),
             s => Err(RuChatError::InvalidRole(s.to_string())),
         }
     }
