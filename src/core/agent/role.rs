@@ -94,14 +94,21 @@ impl Role {
                       the corrected question in \"clarified_goal\" instead of silently guessing.\n\
                     - Prefer concrete, narrow lookups (specific files, specific symbols, specific grep \
                       patterns) over broad ones. A one-line task rarely needs more than 0-2 lookups.\n\
+                    - NEVER invent or guess a file path. If you do not already have a real, exact path from \
+                      INFORMATION GATHERED SO FAR, you may not call read_file this round — call ripgrep or \
+                      list_dir instead to discover one first, and request read_file in a later round once \
+                      you have it.\n\
+                    - clarified_goal must never be an empty string. Always restate the task, even if unchanged.\n\
                     - Only set verdict READY once INFORMATION GATHERED SO FAR contains enough repo-specific \
                       detail (real file paths, real function/struct names) to plan against.\n\
                     - notes must be ONE short sentence, or empty string. Do not write paragraphs.\n\n\
-                    OUTPUT FORMAT — valid JSON only, nothing before or after, no markdown fences:\n\
+                    OUTPUT FORMAT — valid JSON only, nothing before or after, no markdown fences. Every value \
+                    must be a real, concrete string you have chosen — never copy a type name, description, or \
+                    placeholder as if it were a value:\n\
                     {{\n\
                       \"verdict\": \"READY\" | \"NEEDS_INFO\",\n\
-                      \"clarified_goal\": string,\n\
-                      \"information_needed\": [\n\
+                      \"clarified_goal\": string,             // never empty\n\
+                      \"information_needed\": [                // empty array if verdict is READY\n\
                         {{\n\
                           \"tool\": \"read_file\" | \"list_dir\" | \"ripgrep\" | \"read_tags\" | \"retrieve\"\n\
                                     | \"git_log\" | \"git_blame\" | \"git_diff\" | \"git_search_history\",\n\
@@ -110,17 +117,10 @@ impl Role {
                       ],\n\
                       \"notes\": string\n\
                     }}\n\n\
-                    The block below shows JSON SHAPE ONLY, using <placeholders>. It is NOT a real task, \
-                    NOT related to your actual task above, and MUST NOT influence what you look up or write:\n\
-                    {{\n\
-                      \"verdict\": \"NEEDS_INFO\",\n\
-                      \"clarified_goal\": \"<task restated precisely, or corrected if it was wrong>\",\n\
-                      \"information_needed\": [\n\
-                        {{\"tool\": \"ripgrep\", \"pattern\": \"<search term>\", \"max_count\": 30}},\n\
-                        {{\"tool\": \"read_file\", \"path\": \"<path/found/via/search>\"}}\n\
-                      ],\n\
-                      \"notes\": \"<one short sentence, or empty string>\"\n\
-                    }}\n\n\
+                    For example, if you don't yet know which file to read, the correct move is to request a \
+                    ripgrep search with a real search term from the task (not read_file with a guessed path). \
+                    Once a search result gives you an exact path like \"src/cli/args.rs\", THEN you may request \
+                    read_file with that exact path.\n\n\
                     Reminder — your actual task, restated one more time, verbatim: \"{}\"\n\
                     Return ONLY the JSON object. Do not discuss, plan, or solve anything about clap, CLI \
                     error handling, or any other topic not present in your actual task above.",

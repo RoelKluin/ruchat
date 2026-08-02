@@ -770,6 +770,17 @@ impl Orchestrator {
         }
 
         for item in verdict.information_needed {
+            if let Some(reason) = looks_like_placeholder(&item) {
+                ctx.push_turn(
+                    TurnKind::System,
+                    "Scoper",
+                    format!(
+                        "rejected lookup request: {reason}. You must use a real value — \
+                        run ripgrep or list_dir first to discover it if you don't have one yet."
+                    ),
+                );
+                continue;
+            }
             match tools::structured_call_from_value(item) {
                 Ok(call) => {
                     if let Err(e) = self.handle_structured_tool(&call, ctx).await {
@@ -786,6 +797,29 @@ impl Orchestrator {
             }
         }
         Ok(Stage::Scope)
+    }
+}
+
+/// Catches values the model copied from prompt scaffolding instead of
+/// producing real ones — angle-bracket placeholders (`<path>`), the literal
+/// word `placeholder`, or template-looking segments like `path/to/`. Cheap
+/// heuristic, not exhaustive; it exists to turn a wasted I/O round-trip into
+/// an immediate, specific correction instead.
+fn looks_like_placeholder(value: &Value) -> Option<String> {
+    match value {
+        Value::String(s) => {
+            let lower = s.to_lowercase();
+            if s.contains('<') && s.contains('>') {
+                Some(format!("'{s}' looks like a placeholder, not a real value"))
+            } else if lower.contains("path/to") || lower.contains("<") {
+                Some(format!("'{s}' looks like a template, not a real value"))
+            } else {
+                None
+            }
+        }
+        Value::Object(map) => map.values().find_map(looks_like_placeholder),
+        Value::Array(arr) => arr.iter().find_map(looks_like_placeholder),
+        _ => None,
     }
 }
 
