@@ -75,6 +75,6 @@ repo_src-all-minilm_l6-v2
   }
 }' "Refactor the borrow-ordering conflict between self.client and self.librarian in Orchestrator::new"
 
- ./ruchat pipe   --team-model qwen2.5-coder:14b   --validator-model qwen2.5-coder:14b   --critic Security --critic Performance   --collection repo_src-all-minilm_l6-v2   --iterations 5  "Refactor the clap options to be more user friendly, hide existing advanced options by default. Require a flag to show advanced options.
+./ruchat pipe   --team-model qwen2.5-coder:14b   --validator-model qwen2.5-coder:14b   --critic Security --critic Performance   --collection repo_src-all-minilm_l6-v2   --iterations 5  "Refactor the clap options to be more user friendly, hide existing advanced options by default. Require a flag to show advanced options."
 
 ./ruchat pipe   --team-model qwen2.5-coder:14b   --validator-model qwen2.5-coder:14b --librarian-embed-model all-minilm:l6-v2  --critic Security --critic Performance   --collection repo_src-all-minilm_l6-v2   --iterations 5  "Check the last 5 commits touching src/core/orchestrator.rs with git_log, then apply a patch fixing the Critic_N index parsing bug in debug_stage_machine, then memorize a one-line summary of the fix."

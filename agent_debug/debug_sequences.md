@@ -3,7 +3,7 @@
 Place these JSON files in `examples/debug/` (or anywhere) and run with:
 
 ```bash
-./ruchat ask "Your goal here" \
+./ruchat pipe "Your goal here" \
   --agentic '{ "Architect": {"model":"qwen3-coder:latest"}, "Worker": {"model":"qwen3-coder:latest"}, ... }' \
   --debug-sequence examples/debug/NAME.json
 ```
