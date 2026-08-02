@@ -17,8 +17,11 @@ enum Token {
     Literal(String),
     And,
     Or,
+    Not,
     LParen,
     RParen,
+    LBracket,
+    RBracket,
 }
 
 impl Display for Token {
@@ -28,15 +31,21 @@ impl Display for Token {
             Token::Literal(s) => write!(f, "'{}'", s),
             Token::And => write!(f, "AND"),
             Token::Or => write!(f, "OR"),
+            Token::Not => write!(f, "NOT"),
             Token::LParen => write!(f, "("),
             Token::RParen => write!(f, ")"),
+            Token::LBracket => write!(f, "["),
+            Token::RBracket => write!(f, "]"),
         }
     }
 }
 
 #[derive(Parser, Debug, Clone, PartialEq, Deserialize, Default)]
 pub(crate) struct WhereArgs {
-    /// The metadata query string, e.g. "key1 = 'value' AND key2 > 5".
+    /// The metadata query string, e.g. "key1 = 'value' AND key2 > 5",
+    /// or "kind IN ['function', 'method']", or "tags NOT CONTAINS 'draft'".
+    /// Supported: = != > >= < <=, IN [...], NOT IN [...], CONTAINS, NOT CONTAINS,
+    /// AND, OR, parentheses. REGEX / NOT REGEX are 'document' field only.
     #[arg(short, long, help_heading = "Filtering")]
     r#where: Option<String>,
 }
@@ -96,6 +105,14 @@ fn tokenize(input: &str) -> Result<Vec<Token>> {
             }
             ')' => {
                 tokens.push(Token::RParen);
+                chars.next();
+            }
+            '[' => {
+                tokens.push(Token::LBracket);
+                chars.next();
+            }
+            ']' => {
+                tokens.push(Token::RBracket);
                 chars.next();
             }
             '\'' | '"' => {
@@ -162,6 +179,7 @@ fn tokenize(input: &str) -> Result<Vec<Token>> {
                 match s.to_uppercase().as_str() {
                     "AND" => tokens.push(Token::And),
                     "OR" => tokens.push(Token::Or),
+                    "NOT" => tokens.push(Token::Not),
                     "IN" | "CONTAINS" | "LIKE" | "REGEX" => {
                         tokens.push(Token::Operator(s.to_uppercase()))
                     }
@@ -231,18 +249,16 @@ fn parse_factor(tokens: &[Token], pos: &mut usize) -> Result<Where> {
             let op = extract_operator(tokens, pos, &key_name)?;
             let val_str = extract_value(tokens, pos)?;
 
-            // RESTORED: Special handling for 'document' keyword
             if key_name.to_lowercase() == "document" {
                 return Ok(Where::Document(DocumentExpression {
-                    operator: map_sql_to_document_op(&op),
+                    operator: map_sql_to_document_op(&op)?,
                     pattern: val_str,
                 }));
             }
 
-            // Metadata handling
             Ok(Where::Metadata(MetadataExpression {
                 key: key_name,
-                comparison: map_sql_comparison(&op, &val_str),
+                comparison: map_sql_comparison(&op, &val_str)?,
             }))
         }
         _ => Err(RuChatError::InternalError(format!(
@@ -252,33 +268,53 @@ fn parse_factor(tokens: &[Token], pos: &mut usize) -> Result<Where> {
     }
 }
 
-// New helper for Document operators
-fn map_sql_to_document_op(op: &str) -> DocumentOperator {
-    match op.to_uppercase().as_str() {
+fn map_sql_to_document_op(op: &str) -> Result<DocumentOperator> {
+    Ok(match op.to_uppercase().as_str() {
         "CONTAINS" | "LIKE" | "=" => DocumentOperator::Contains,
         "NOTCONTAINS" | "NOTLIKE" | "!=" => DocumentOperator::NotContains,
         "REGEX" => DocumentOperator::Regex,
         "NOTREGEX" => DocumentOperator::NotRegex,
-        _ => DocumentOperator::Contains,
-    }
+        other => {
+            return Err(RuChatError::InternalError(format!(
+                "Unsupported operator '{other}' on 'document' field — use =, !=, CONTAINS, NOT CONTAINS, REGEX, or NOT REGEX"
+            )));
+        }
+    })
 }
 
 // Extracted helpers to keep the parser logic clean
 fn extract_operator(tokens: &[Token], pos: &mut usize, key: &str) -> Result<String> {
-    let op_token = tokens
+    let first = tokens
         .get(*pos)
         .ok_or_else(|| RuChatError::InternalError(format!("Expected operator after '{}'", key)))?;
-    let op = match op_token {
-        Token::Operator(o) => o.clone(),
-        _ => {
-            return Err(RuChatError::InternalError(format!(
-                "Invalid operator '{}'",
-                op_token
-            )));
+
+    if *first == Token::Not {
+        *pos += 1;
+        let next = tokens.get(*pos).ok_or_else(|| {
+            RuChatError::InternalError(format!(
+                "Expected IN, CONTAINS, or REGEX after NOT (following '{key}')"
+            ))
+        })?;
+        return match next {
+            Token::Operator(o) if matches!(o.as_str(), "IN" | "CONTAINS" | "LIKE" | "REGEX") => {
+                let op = format!("NOT{o}");
+                *pos += 1;
+                Ok(op)
+            }
+            _ => Err(RuChatError::InternalError(format!(
+                "NOT must be followed by IN, CONTAINS, or REGEX — found {next}"
+            ))),
+        };
+    }
+
+    match first {
+        Token::Operator(o) => {
+            let op = o.clone();
+            *pos += 1;
+            Ok(op)
         }
-    };
-    *pos += 1;
-    Ok(op)
+        _ => Err(RuChatError::InternalError(format!("Invalid operator '{}'", first))),
+    }
 }
 
 fn extract_value(tokens: &[Token], pos: &mut usize) -> Result<String> {
@@ -292,12 +328,42 @@ fn extract_value(tokens: &[Token], pos: &mut usize) -> Result<String> {
             Ok(v.clone())
         }
         Token::LParen => {
-            *pos += 1; // Skip '('
-            let v = extract_value(tokens, pos)?; // Get the inner value
+            *pos += 1;
+            let v = extract_value(tokens, pos)?;
             if tokens.get(*pos) == Some(&Token::RParen) {
-                *pos += 1; // Skip ')'
+                *pos += 1;
             }
             Ok(v)
+        }
+        Token::LBracket => {
+            *pos += 1;
+            let mut items = Vec::new();
+            loop {
+                match tokens.get(*pos) {
+                    Some(Token::RBracket) => {
+                        *pos += 1;
+                        break;
+                    }
+                    Some(Token::Literal(v)) | Some(Token::Identifier(v)) => {
+                        let trimmed = v.trim_end_matches(',');
+                        if !trimmed.is_empty() {
+                            items.push(trimmed.to_string());
+                        }
+                        *pos += 1;
+                    }
+                    Some(other) => {
+                        return Err(RuChatError::InternalError(format!(
+                            "Unexpected token '{other}' inside array literal"
+                        )));
+                    }
+                    None => {
+                        return Err(RuChatError::InternalError(
+                            "Unterminated array literal — missing ']'".to_string(),
+                        ));
+                    }
+                }
+            }
+            Ok(items.join(","))
         }
         _ => Err(RuChatError::InternalError(format!(
             "Expected value, found {}",
@@ -306,14 +372,14 @@ fn extract_value(tokens: &[Token], pos: &mut usize) -> Result<String> {
     }
 }
 
-fn map_sql_comparison(op: &str, val: &str) -> MetadataComparison {
-    match op.to_uppercase().as_str() {
+fn map_sql_comparison(op: &str, val: &str) -> Result<MetadataComparison> {
+    Ok(match op.to_uppercase().as_str() {
         "IN" => MetadataComparison::Set(SetOperator::In, parse_metadata_set_value(val)),
         "NOTIN" => MetadataComparison::Set(SetOperator::NotIn, parse_metadata_set_value(val)),
-        "CONTAINS" => {
+        "CONTAINS" | "LIKE" => {
             MetadataComparison::ArrayContains(ContainsOperator::Contains, parse_metadata_value(val))
         }
-        "NOTCONTAINS" => MetadataComparison::ArrayContains(
+        "NOTCONTAINS" | "NOTLIKE" => MetadataComparison::ArrayContains(
             ContainsOperator::NotContains,
             parse_metadata_value(val),
         ),
@@ -334,8 +400,18 @@ fn map_sql_comparison(op: &str, val: &str) -> MetadataComparison {
         "!=" | "<>" => {
             MetadataComparison::Primitive(PrimitiveOperator::NotEqual, parse_metadata_value(val))
         }
-        _ => MetadataComparison::Primitive(PrimitiveOperator::Equal, parse_metadata_value(val)),
-    }
+        "=" => MetadataComparison::Primitive(PrimitiveOperator::Equal, parse_metadata_value(val)),
+        "REGEX" | "NOTREGEX" => {
+            return Err(RuChatError::InternalError(
+                "REGEX is only supported on the 'document' field, not metadata fields".to_string(),
+            ));
+        }
+        other => {
+            return Err(RuChatError::InternalError(format!(
+                "Unsupported operator '{other}' for metadata field"
+            )));
+        }
+    })
 }
 
 fn parse_metadata_value(value_str: &str) -> MetadataValue {

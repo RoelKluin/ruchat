@@ -5,7 +5,7 @@ pub(crate) mod scope;
 pub(crate) mod cargo;
 pub(super) mod task;
 
-use crate::agent::event::StreamItem;
+use crate::agent::event::{StreamItem, AgentEvent};
 use crate::agent::protocol::Validation;
 use crate::agent::tools::{self, ToolName};
 use crate::agent::types::{Context, TurnKind};
@@ -185,17 +185,26 @@ impl Orchestrator {
     ) -> impl Stream<Item = OrchestratorResult> {
         let (tx, rx) = mpsc::channel(100);
         let cancel = CancellationToken::new();
+        let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
 
-        // Dropping the returned `ReceiverStream` drops `rx`, which makes
-        // `tx.closed()` resolve — that's our cancellation trigger. A
-        // separate watcher task (rather than polling `tx.is_closed()` inline)
-        // means cancellation is detected even while the stage machine is
-        // blocked awaiting a long-running future (LLM call, cargo test).
+        // Watcher now races two exits: receiver dropped early (cancellation),
+        // or the task below finished normally (done_rx). Either way this task
+        // exits and drops `watcher_tx` — without that second branch, watcher_tx
+        // is held alive forever on a clean run, since closed() only fires on
+        // receiver drop, and the receiver only drops once the stream ends,
+        // which never happens while watcher_tx keeps the channel open. That
+        // was the deadlock.
         let watcher_tx = tx.clone();
         let watcher_cancel = cancel.clone();
         tokio::spawn(async move {
-            watcher_tx.closed().await;
-            watcher_cancel.cancel();
+            tokio::select! {
+                _ = watcher_tx.closed() => {
+                    watcher_cancel.cancel();
+                }
+                _ = done_rx => {
+                    // Normal completion — just exit and drop watcher_tx.
+                }
+            }
         });
 
         let task_cancel = cancel.clone();
@@ -205,13 +214,12 @@ impl Orchestrator {
             } else {
                 self.run_stage_machine(goal, tx.clone(), task_cancel).await
             };
-            // `Cancelled` is an expected early-exit, not worth surfacing as
-            // an error to a receiver that's already gone (or going).
             if let Err(e) = result
                 && !matches!(e, RuChatError::Cancelled)
             {
                 let _ = tx.send(Err(e)).await;
             }
+            let _ = done_tx.send(());
         });
 
         ReceiverStream::new(rx)
@@ -361,6 +369,7 @@ impl Orchestrator {
         let mut retrieve_budget: u32 = 2; // conservative cap on Worker-initiated retrievals per run
         let mut scope_round = 0;
         let mut stage = Stage::Scope;
+        let mut last_scope_output: Option<String> = None;
 
         loop {
             // Checked once per stage transition — this is the boundary the
@@ -372,7 +381,10 @@ impl Orchestrator {
                 return Err(RuChatError::Cancelled);
             }
             stage = match stage {
-                Stage::Done => break,
+                Stage::Done => {
+                    let _ = tx.send(Ok(StreamItem::Event(AgentEvent::Done))).await;
+                    break;
+                }
                 Stage::Escalate(reason) => {
                     ctx.trace(&tx, format!("ESCALATED: {reason}")).await;
                     break;
@@ -501,7 +513,14 @@ impl Orchestrator {
                         Stage::Plan
                     } else {
                         scope_round += 1;
-                        self.run_scope_stage(ctx, &tx).await?
+                        let stage = self.run_scope_stage(ctx, &tx).await?;
+                        if let Some(prev) = &last_scope_output && prev == &ctx.output {
+                            ctx.trace(&tx, "Scoper repeated identical output — forcing progression to Plan".into()).await;
+                            Stage::Plan
+                        } else {
+                            last_scope_output = Some(ctx.output.clone());
+                            stage
+                        }
                     }
                 }
             };

@@ -33,7 +33,8 @@ pub(crate) async fn render_pipeline_stream(mut stream: PipelineStream, cio: &mut
             }
             Ok(StreamItem::Event(AgentEvent::StatusUpdate(msg))) => {
                 cio.clear_status_line().await?;
-                cio.write_line(&format!("\x1b[2m   ... {msg} \x1b[0m\r")).await?;
+                cio.write_line(&format!("\x1b[2m   ... {msg} \x1b[0m\r\x1b[2K"))
+                    .await?;
                 status_line_active = !msg.is_empty();
             }
             Ok(StreamItem::Event(AgentEvent::Trace(msg))) => {
@@ -41,13 +42,16 @@ pub(crate) async fn render_pipeline_stream(mut stream: PipelineStream, cio: &mut
                     cio.clear_status_line().await?;
                     status_line_active = false;
                 }
-                cio.write_line(&format!("\n\x1b[90m[TRACE] {msg}\x1b[0m\n")).await?;
+                cio.write_line(&format!("\n\x1b[90m[TRACE] {msg}\x1b[0m\n"))
+                    .await?;
             }
             Ok(StreamItem::Event(AgentEvent::Progress(pct))) => {
                 cio.clear_status_line().await?;
-                cio.write_line(&format!("\x1b[2m   ... {pct:.0}% \x1b[0m\r")).await?;
+                cio.write_line(&format!("\x1b[2m   ... {pct:.0}% \x1b[0m\r\x1b[2K"))
+                    .await?;
                 status_line_active = true;
             }
+            Ok(StreamItem::Event(AgentEvent::Done)) => break,
             Err(e) => return Err(e),
         }
     }

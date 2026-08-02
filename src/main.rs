@@ -1,4 +1,3 @@
-
 /// main function for RuChat
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
@@ -7,7 +6,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .init();
 
     ruchat::run().await.map_err(|e| {
-        eprintln!("Application error: {}", e);
+        eprintln!("Application error:\n{e}");
         e
     })?;
     Ok(())

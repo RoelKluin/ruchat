@@ -18,6 +18,8 @@ pub enum AgentEvent {
     /// Coarse completion progress in percent, `[0.0, 100.0]`. Not yet emitted by
     /// any caller — reserved for future use (e.g. multi-stage progress bars).
     Progress(f32),
+    /// Signals that the agent has finished its turn and will not send more output.
+    Done,
 }
 
 /// A single item on the agent output stream: either generated content or an
