@@ -50,10 +50,7 @@ impl GetArgs {
             .map_err(RuChatError::AnyhowError)?;
         let collection = self.collection.get_collection(&client, "default").await?;
 
-        let ids: Option<Vec<String>> = self
-            .ids
-            .as_ref()
-            .map(|s| s.split(',').map(|id| id.trim().to_string()).collect());
+        let ids = super::parse_ids(&self.ids);
 
         let r#where = self.r#where.parse()?;
 

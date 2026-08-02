@@ -202,6 +202,13 @@ pub(super) fn resolve_read_level(read_level: Option<&str>) -> ReadLevel {
     }
 }
 
+/// Splits a `--ids` CLI value on commas into individual, trimmed IDs —
+/// shared by `get`, `delete`, and `query`'s identical `--ids` handling.
+pub(super) fn parse_ids(ids: &Option<String>) -> Option<Vec<String>> {
+    ids.as_ref()
+        .map(|s| s.split(',').map(|id| id.trim().to_string()).collect())
+}
+
 const ALL_FIELDS: &[&str] = &[
     "id", "doc", "embed", "score", "distance", "uri", "meta", "select", "include",
 ];

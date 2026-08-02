@@ -1,13 +1,14 @@
 use crate::{Result, RuChatError};
-use std::path::Path;
+use std::path::PathBuf;
 
 const MAX_READ_BYTES: usize = 32_000; // keep a single read from blowing the prompt budget
 
-/// Read-only file read, optionally sliced by 1-indexed inclusive line range.
-/// Rejects paths that escape the current working directory (repo root) —
-/// the Worker's tool_call arguments are model output, same untrusted-input
-/// posture as retrieved document content elsewhere in this crate.
-pub(crate) async fn read_file(path: &str, start: Option<u32>, end: Option<u32>) -> Result<String> {
+/// Resolves `path` against the repo root (current working directory) and
+/// rejects anything that canonicalizes outside it — the Worker's tool_call
+/// arguments are model output, same untrusted-input posture as retrieved
+/// document content elsewhere in this crate. Shared by every fs-reading tool
+/// so this invariant can't drift between them.
+fn canonicalize_within_repo(path: &str) -> Result<PathBuf> {
     let cwd = std::env::current_dir().map_err(|e| RuChatError::InternalError(e.to_string()))?;
     let target = cwd.join(path);
     let canonical = target
@@ -18,6 +19,15 @@ pub(crate) async fn read_file(path: &str, start: Option<u32>, end: Option<u32>) 
             "path {path} escapes the repository root — refused"
         )));
     }
+    Ok(canonical)
+}
+
+/// Read-only file read, optionally sliced by 1-indexed inclusive line range.
+/// Rejects paths that escape the current working directory (repo root) —
+/// the Worker's tool_call arguments are model output, same untrusted-input
+/// posture as retrieved document content elsewhere in this crate.
+pub(crate) async fn read_file(path: &str, start: Option<u32>, end: Option<u32>) -> Result<String> {
+    let canonical = canonicalize_within_repo(path)?;
     let content = tokio::fs::read_to_string(&canonical)
         .await
         .map_err(|e| RuChatError::InternalError(format!("read {path} failed: {e}")))?;
@@ -43,16 +53,7 @@ pub(crate) async fn read_file(path: &str, start: Option<u32>, end: Option<u32>) 
 
 /// Non-recursive directory listing (files and subdirs, one level).
 pub(crate) async fn list_dir(path: &str) -> Result<String> {
-    let cwd = std::env::current_dir().map_err(|e| RuChatError::InternalError(e.to_string()))?;
-    let target = cwd.join(path);
-    let canonical = target
-        .canonicalize()
-        .map_err(|e| RuChatError::InternalError(format!("cannot resolve {path}: {e}")))?;
-    if !canonical.starts_with(&cwd) {
-        return Err(RuChatError::InternalError(format!(
-            "path {path} escapes the repository root — refused"
-        )));
-    }
+    let canonical = canonicalize_within_repo(path)?;
     let mut entries = tokio::fs::read_dir(&canonical)
         .await
         .map_err(|e| RuChatError::InternalError(format!("list {path} failed: {e}")))?;

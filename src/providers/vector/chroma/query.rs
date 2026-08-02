@@ -62,10 +62,7 @@ impl Query {
         let query_embeddings = res.embeddings;
 
         let r#where = self.r#where.parse()?;
-        let ids = self
-            .ids
-            .as_ref()
-            .map(|s| s.split(',').map(|id| id.trim().to_string()).collect());
+        let ids = super::parse_ids(&self.ids);
         let include = self.include.parse()?;
 
         // Collection-name resolution moved here from

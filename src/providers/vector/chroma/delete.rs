@@ -38,10 +38,7 @@ impl ChromaDeleteArgs {
             .map_err(RuChatError::AnyhowError)?;
 
         // Parse optional target filters
-        let ids: Option<Vec<String>> = self
-            .ids
-            .as_ref()
-            .map(|s| s.split(',').map(|id| id.trim().to_string()).collect());
+        let ids = super::parse_ids(&self.ids);
 
         let where_clause = self.r#where.parse()?;
 
