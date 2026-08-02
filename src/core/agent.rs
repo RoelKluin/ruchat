@@ -4,7 +4,8 @@ pub(crate) mod json_extract;
 pub(crate) mod llm_client;
 pub(crate) mod pipeline;
 pub(crate) mod protocol;
-mod role;
+pub(crate) mod role;
+pub(crate) mod templates;
 pub(crate) mod team;
 pub(crate) mod tokens;
 pub(crate) mod tools;
@@ -157,15 +158,6 @@ impl Agent {
         let role = self.get_str("role")?.to_lowercase();
         let role = Role::from_str(role.as_str())?;
 
-        // System instructions and retrieved/untrusted content now ride as
-        // distinct chat messages instead of one concatenated string — see
-        // prior review note on prompt-injection surface via `documents_view`.
-        let (_system_text, _user_text) = role.build_chat_messages(
-            self.get_str("task").ok(),
-            ctx,
-            self.get_str("task_hint").ok(),
-            self.get_str("approval_signal").ok(),
-        );
         let model = self.get_str("model")?;
 
         // System instructions and retrieved/untrusted content now ride as
@@ -176,7 +168,7 @@ impl Agent {
             ctx,
             self.get_str("task_hint").ok(),
             self.get_str("approval_signal").ok(),
-        );
+        )?;
         ctx.trace(
             tx,
             format!("[{role}'s input] querying '{model}' — full prompt in .ruchat_trace.md"),
