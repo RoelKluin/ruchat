@@ -8,7 +8,6 @@ use crate::{retry_transient, Result, RuChatError};
 use chroma::types::SearchPayload;
 use chroma::types::{Key, QueryVector, RankExpr};
 use chroma::ChromaCollection;
-use chroma_types::plan::ReadLevel;
 use clap::{Parser, ValueEnum};
 use log::warn;
 use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
@@ -214,7 +213,7 @@ impl RetrieveArgs {
 
     async fn execute_search(&self, collection: &ChromaCollection) -> Result<()> {
         let search_payload = if let Some(ref p) = self.payload {
-            self.parse_payload(p)?
+            super::parse_search_payload_arg(p)?
         } else if let Some(ref v) = self.query_vector {
             SearchPayload::default()
                 .rank(RankExpr::Knn {
@@ -231,14 +230,7 @@ impl RetrieveArgs {
             ));
         };
 
-        let read_level = self
-            .read_level
-            .as_ref()
-            .map(|s| match s.to_lowercase().as_str() {
-                "index-only" | "indexonly" => ReadLevel::IndexOnly,
-                _ => ReadLevel::IndexAndWal,
-            })
-            .unwrap_or(ReadLevel::IndexAndWal);
+        let read_level = super::resolve_read_level(self.read_level.as_deref());
 
         let mut result = retry_transient!(async {
             collection
@@ -249,15 +241,5 @@ impl RetrieveArgs {
 
         let _ = ChromaResponse::Search(&mut result).render(&self.output);
         Ok(())
-    }
-
-    fn parse_payload(&self, input: &str) -> Result<SearchPayload> {
-        let json_str = if std::path::Path::new(input).exists() {
-            std::fs::read_to_string(input).map_err(|e| RuChatError::InternalError(e.to_string()))?
-        } else {
-            input.to_string()
-        };
-        serde_json::from_str(&json_str)
-            .map_err(|e| RuChatError::InternalError(format!("Payload error: {}", e)))
     }
 }

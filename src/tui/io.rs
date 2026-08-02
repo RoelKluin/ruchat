@@ -1,6 +1,6 @@
 use crate::RuChatError;
 use std::io::stdin;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncWrite, AsyncWriteExt};
 
 /// A struct for handling input and output operations in RuChat.
 ///
@@ -47,9 +47,7 @@ impl Io {
     ///
     /// A `Result` indicating success or failure.
     pub(crate) async fn write_line(&mut self, line: &str) -> Result<(), RuChatError> {
-        self.stdout.write_all(line.as_bytes()).await?;
-        self.stdout.flush().await?;
-        Ok(())
+        write_flushed(&mut self.stdout, line.as_bytes()).await
     }
 
     /// Writes a line to standard error.
@@ -62,9 +60,7 @@ impl Io {
     ///
     /// A `Result` indicating success or failure.
     pub(crate) async fn write_error_line(&mut self, line: &str) -> Result<(), RuChatError> {
-        self.stderr.write_all(line.as_bytes()).await?;
-        self.stderr.flush().await?;
-        Ok(())
+        write_flushed(&mut self.stderr, line.as_bytes()).await
     }
 
     /// Writes a string to standard output.
@@ -77,9 +73,7 @@ impl Io {
     ///
     /// A `Result` indicating success or failure.
     pub(crate) async fn write(&mut self, s: &str) -> Result<(), RuChatError> {
-        self.stdout.write_all(s.as_bytes()).await?;
-        self.stdout.flush().await?;
-        Ok(())
+        write_flushed(&mut self.stdout, s.as_bytes()).await
     }
 
     /// Returns the cursor to column 0 and clears to end of line — use before
@@ -89,16 +83,19 @@ impl Io {
     /// frame, which is what produces interleaved/corrupted output when a
     /// status line and streamed content share the same line.
     pub(crate) async fn clear_status_line(&mut self) -> Result<(), RuChatError> {
-        self.stdout.write_all(b"\r\x1b[2K").await?;
-        self.stdout.flush().await?;
-        Ok(())
+        write_flushed(&mut self.stdout, b"\r\x1b[2K").await
     }
+}
+
+async fn write_flushed<W: AsyncWrite + Unpin>(w: &mut W, bytes: &[u8]) -> Result<(), RuChatError> {
+    w.write_all(bytes).await?;
+    w.flush().await?;
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::io::AsyncWriteExt;
 
     #[tokio::test]
     async fn test_write_line() {

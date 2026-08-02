@@ -60,17 +60,7 @@ pub(crate) async fn commit_feature_branch(ctx: &Context) -> Result<()> {
 }
 
 async fn run_git_command(args: Vec<&str>) -> Result<()> {
-    let output = tokio::process::Command::new("git")
-        .args(&args)
-        .output()
-        .await
-        .map_err(|e| RuChatError::InternalError(format!("Git exec failed: {e}")))?;
-
-    if !output.status.success() {
-        let err = String::from_utf8_lossy(&output.stderr);
-        return Err(RuChatError::InternalError(format!("Git error: {err}")));
-    }
-    Ok(())
+    run_git_command_capture(args).await.map(|_| ())
 }
 
 /// Read-only `git log`, capped at `max_count` (default 20), optionally scoped

@@ -4,7 +4,6 @@ use crate::chroma::{
 use crate::{retry_transient, Result, RuChatError};
 use chroma::types::SearchPayload;
 use chroma::types::{Key, QueryVector, RankExpr};
-use chroma_types::plan::ReadLevel;
 use clap::Parser;
 use serde_json::Value;
 
@@ -49,7 +48,7 @@ impl SearchArgs {
 
         // 1. Resolve the SearchPayload (Basic KNN or JSON-based)
         let search_payload = if let Some(ref p) = self.payload {
-            self.parse_payload(p)?
+            super::parse_search_payload_arg(p)?
         } else if let Some(ref q) = self.query {
             SearchPayload::default()
                 .rank(RankExpr::Knn {
@@ -67,11 +66,8 @@ impl SearchArgs {
         };
 
         // 2. Map the CLI string to the ReadLevel enum
-        let mut search_result = if let Some(read_level) = self.read_level.as_ref() {
-            let read_level = match read_level.to_lowercase().as_str() {
-                "index-only" | "indexonly" => ReadLevel::IndexOnly,
-                _ => ReadLevel::IndexAndWal, // Default to full consistency
-            };
+        let mut search_result = if let Some(read_level) = self.read_level.as_deref() {
+            let read_level = super::resolve_read_level(Some(read_level));
 
             // 3. Execute with options
             retry_transient!(async {
@@ -89,15 +85,5 @@ impl SearchArgs {
             })?
         };
         ChromaResponse::Search(&mut search_result).render(&self.output)
-    }
-
-    fn parse_payload(&self, input: &str) -> Result<SearchPayload> {
-        let json_str = if std::path::Path::new(input).exists() {
-            std::fs::read_to_string(input).map_err(|e| RuChatError::InternalError(e.to_string()))?
-        } else {
-            input.to_string()
-        };
-        serde_json::from_str(&json_str)
-            .map_err(|e| RuChatError::InternalError(format!("Payload error: {}", e)))
     }
 }

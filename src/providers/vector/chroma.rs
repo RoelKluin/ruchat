@@ -16,6 +16,7 @@ pub(crate) mod r#where;
 
 use crate::{Result, RuChatError};
 use chroma::types;
+use chroma_types::plan::ReadLevel;
 pub(crate) use client::ChromaClientConfigArgs;
 pub(crate) use collection::ChromaCollectionConfigArgs;
 pub(crate) use include::IncludeArgs;
@@ -175,6 +176,29 @@ impl ChromaResponse<'_> {
                 Ok(out)
             }
         }
+    }
+}
+
+/// Parses a `SearchPayload` from either a literal JSON string or the path to
+/// a JSON file containing one — shared by `retrieve`'s and `search`'s
+/// `--payload` handling.
+pub(super) fn parse_search_payload_arg(input: &str) -> Result<types::SearchPayload> {
+    let json_str = if std::path::Path::new(input).exists() {
+        std::fs::read_to_string(input).map_err(|e| RuChatError::InternalError(e.to_string()))?
+    } else {
+        input.to_string()
+    };
+    serde_json::from_str(&json_str)
+        .map_err(|e| RuChatError::InternalError(format!("Payload error: {}", e)))
+}
+
+/// Maps the `--read-level` CLI string to `ReadLevel`, defaulting to full
+/// consistency for anything but `"index-only"`/`"indexonly"` — shared by
+/// `retrieve` and `search`.
+pub(super) fn resolve_read_level(read_level: Option<&str>) -> ReadLevel {
+    match read_level.map(str::to_lowercase).as_deref() {
+        Some("index-only") | Some("indexonly") => ReadLevel::IndexOnly,
+        _ => ReadLevel::IndexAndWal,
     }
 }
 
