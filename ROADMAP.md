@@ -19,13 +19,15 @@ We prioritize **predictability**, **performance**, **token efficiency**, and **t
 **Goal**: Production-ready foundation
 
 - [ ] Consolidate configuration system (`config.toml` + environment variables + CLI overrides)
-- [ ] Full structured logging (`tracing`) with configurable levels and JSON output
+- [~] Structured logging (`tracing`) — `main.rs` already wires `tracing_subscriber` with `EnvFilter` for configurable levels; JSON output isn't implemented yet, and 25 `eprintln!`/`println!` call sites (vs. 11 `tracing::` ones) still need migrating — see `TODO.md`
 - [ ] Comprehensive error handling with actionable messages
-- [ ] Unit + integration test coverage for all parsers (`where.rs`, `prompt.rs`, `include.rs`) and core orchestration
+- [ ] Unit tests for all parsers (`where.rs`, `prompt.rs`, `include.rs`) — still open, see `TODO.md`
+- [~] Core orchestration test coverage — 9/10 `agent_debug/*.json` fixtures are wired into `cargo test --lib` via `FakeLlmClient`/`FakeVectorStore` (this is how the multi-critic dispatch bug below was caught); the last fixture combination and true integration tests against a live Ollama/Chroma are still open
 - [ ] Fix TUI redraw artifacts, improve selection/copy/paste, and add help screen
 - [ ] Optimize model option merging (remove double JSON round-trip)
 - [ ] Add connection pooling for Ollama and Chroma clients
-- [ ] Release v0.2.0 with clean `TODO.md` → `DONE` migration
+- [x] CI workflow (`.github/workflows/ci.yml`): build + `cargo clippy --lib --tests` + `cargo test --lib` on push/PR — deliberately no `-D warnings` or `fmt --check` gate yet (pre-existing dead-code warnings and repo-wide fmt drift need cleanup first, see `TODO.md`)
+- [ ] Release v0.2.0 with clean `TODO.md` → `DONE` migration — still on `0.1.2`, no tags cut yet
 
 **Milestone**: Reliable daily driver for local coding agents.
 
@@ -44,6 +46,7 @@ We prioritize **predictability**, **performance**, **token efficiency**, and **t
 - [ ] Resource-limited sandboxing for tool-invoked subprocesses (`cargo_check`/`cargo_test` currently have timeouts but no memory/CPU caps) — note: there is deliberately no generic `SHELL` tool anymore; the Worker/Scoper only get specific typed tools, which is a stronger safety posture than a sandboxed-shell approach
 - [ ] Debug mode improvements (step-by-step execution, breakpoint support) — the fixed-sequence debug mode itself exists (`--debug-sequence`, `agent_debug/*.json`), but isn't wired into `cargo test` yet and has no breakpoints
 - [x] Reconciled the legacy `Team`/`Manager` pipeline — `ruchat manager` now expands a saved `Team` preset into an `Orchestrator` config and runs the real stage machine
+- [x] Pre-planning repo-grounding stage (`Scoper` role) — gathers repo facts before the Architect plans; shipped but was never in the original Phase 2 list
 - [x] `apply_patch` hardening: diff-size cap, and automatic rollback of a rejected round's patch before looping back to `Plan`
 - [ ] `apply_patch` scope check against the Scoper/Architect plan (still open — no guard today against a patch touching a file the plan never mentioned)
 
@@ -105,7 +108,14 @@ By v0.4.0, Ruchat should feel like “LangGraph for people who want to stay full
 
 ---
 
-**Current Status (March 2026)**:  
-Phase 1 is ~60% complete. Focus is now on configuration system and testing before v0.2.0.
+**Current Status (August 2026)**:  
+Most of Phase 1's own checkboxes (config consolidation, TUI fixes, connection pooling,
+the v0.2.0 release itself) haven't started. What actually shipped this cycle landed
+mostly under Phase 2 instead: the structured tool-calling framework, parallel critic
+execution (plus finding and fixing the bug that made it a silent no-op), `apply_patch`
+hardening, the Team/Manager reconciliation, and the new Scoper role — alongside a
+round of test-infrastructure work (repairing an uncompilable suite, wiring 9/10
+`agent_debug` fixtures into `cargo test`, adding CI). Focus is now on configuration
+system and testing before v0.2.0. See `TODO.md` for the live, priority-ranked task list.
 
 Contributions welcome — especially on testing, configuration, and tool framework.
