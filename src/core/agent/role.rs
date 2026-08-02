@@ -184,12 +184,19 @@ impl Role {
             Self::Architect => format!(
                 "GOAL: {}.\n\
                 PLAN: {}\n\
+                RETRIEVED INFORMATION (from prior lookups — use this, do not ask for information already \
+                present here):\n{}\n\
                 HISTORY: {}\n\n\
+                You are operating autonomously with no human available to answer questions. If the goal \
+                requires picking a specific file, line, or symbol and the RETRIEVED INFORMATION above \
+                doesn't already narrow it down, make the most reasonable concrete choice yourself and state \
+                it in your plan — never write a plan that asks a question or waits for input.\n\n\
                 Reminder — your actual goal, verbatim: \"{}\"",
                 ctx.goal,
                 ctx.context_view(),
+                ctx.documents_view(ctx.round),
                 ctx.history_view(ctx.round.saturating_sub(1)),
-                ctx.goal
+                ctx.goal,
             ),
         };
         (system, user)

@@ -370,6 +370,8 @@ impl Orchestrator {
         let mut scope_round = 0;
         let mut stage = Stage::Scope;
         let mut last_scope_output: Option<String> = None;
+        let mut last_architect_output: Option<String> = None;
+        let mut last_worker_output: Option<String> = None;
 
         loop {
             // Checked once per stage transition — this is the boundary the
@@ -395,8 +397,17 @@ impl Orchestrator {
                         Stage::Escalate("max iterations reached without acceptance".into())
                     } else {
                         retry_transient!(self.architect.query_stream(&self.ollama, ctx, &tx))?;
-                        ctx.push_turn(TurnKind::Plan, "Architect", ctx.output.clone());
-                        Stage::Retrieve
+                        if let Some(prev) = &last_architect_output && prev == &ctx.output {
+                            ctx.push_turn(
+                                TurnKind::Rejection,
+                                "Orchestrator",
+                                "Architect repeated identical plan with no new information — likely stalled, escalating".into(),
+                            );
+                            stage = Stage::Escalate("Architect stalled: repeated identical output across rounds".into());
+                        } else {
+                            last_architect_output = Some(ctx.output.clone());
+                            Stage::Retrieve
+                        }
                     }
                 }
                 Stage::Retrieve => {
@@ -421,6 +432,16 @@ impl Orchestrator {
                         retrieve_budget -= 1;
                         self.handle_structured_tool(&call, ctx).await?;
                         retry_transient!(self.worker.query_stream(&self.ollama, ctx, &tx))?;
+                        if let Some(prev) = &last_worker_output && prev == &ctx.output {
+                            ctx.push_turn(
+                                TurnKind::Rejection,
+                                "Orchestrator",
+                                "Worker repeated identical plan with no new information — likely stalled, escalating".into(),
+                            );
+                            stage = Stage::Escalate("Worker stalled: repeated identical output across rounds".into());
+                            continue;
+                        }
+                        last_architect_output = Some(ctx.output.clone());
                     }
                     ctx.push_turn(TurnKind::Implementation, "Worker", ctx.output.clone());
 
@@ -510,6 +531,17 @@ impl Orchestrator {
                 }
                 Stage::Scope => {
                     if self.scoper.is_none() || scope_round >= max_scope_iterations {
+                        if !ctx.turns.iter().any(|t| t.kind == TurnKind::Retrieval) {
+                            // Scope gave up with zero successful lookups — don't send Architect
+                            // into a vacuum. Force one deterministic, tool-free grounding step.
+                            ctx.push_turn(
+                                TurnKind::System,
+                                "Orchestrator",
+                                "Scope stage produced no retrieved information — forcing a repo listing before planning".into(),
+                            );
+                            let listing = crate::orchestrator::fs::list_dir(".").await.unwrap_or_default();
+                            ctx.push_turn(TurnKind::Retrieval, "Orchestrator", listing);
+                        }
                         Stage::Plan
                     } else {
                         scope_round += 1;
