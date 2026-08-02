@@ -1,4 +1,4 @@
-./ruchat ask "Refactor error handling in src/core/orchestrator.rs" \
+./ruchat pipe "Refactor error handling in src/core/orchestrator.rs" \
   --agentic '{
     "iterations": 2,
     "Architect": { "model": "qwen3-coder:latest" },
@@ -22,7 +22,7 @@
   --debug-sequence agent_debug/architect_only.json
 
 
-./ruchat ask "Refactor error handling in src/core/orchestrator.rs" \
+./ruchat pipe "Refactor error handling in src/core/orchestrator.rs" \
   --agentic '{
     "iterations": 2,
     "Architect": { "model": "qwen3-coder:latest" },
@@ -45,7 +45,7 @@
   }' \
   --debug-sequence agent_debug/librarian_and_worker.json
 
-./ruchat ask "Refactor error handling in src/core/orchestrator.rs" \
+./ruchat pipe "Refactor error handling in src/core/orchestrator.rs" \
   --agentic '{
     "iterations": 2,
     "Architect": { "model": "qwen3-coder:latest" },
@@ -68,7 +68,7 @@
   }' \
   --debug-sequence agent_debug/multiple_critics.json
 
-./ruchat ask "Refactor error handling in src/core/orchestrator.rs" \
+./ruchat pipe "Refactor error handling in src/core/orchestrator.rs" \
   --agentic '{
     "iterations": 2,
     "Architect": { "model": "qwen3-coder:latest" },
@@ -91,7 +91,7 @@
   }' \
   --debug-sequence agent_debug/librarian_only.json
 
-./ruchat ask "Refactor error handling in src/core/orchestrator.rs" \
+./ruchat pipe "Refactor error handling in src/core/orchestrator.rs" \
   --agentic '{
     "iterations": 2,
     "Architect": { "model": "qwen3-coder:latest" },
@@ -114,7 +114,7 @@
   }' \
   --debug-sequence agent_debug/summarizer.json
 
-./ruchat ask "Refactor error handling in src/core/orchestrator.rs" \
+./ruchat pipe "Refactor error handling in src/core/orchestrator.rs" \
   --agentic '{
     "iterations": 2,
     "Architect": { "model": "qwen3-coder:latest" },
@@ -137,7 +137,7 @@
   }' \
   --debug-sequence agent_debug/critic.json
 
-./ruchat ask "Refactor error handling in src/core/orchestrator.rs" \
+./ruchat pipe "Refactor error handling in src/core/orchestrator.rs" \
   --agentic '{
     "iterations": 2,
     "Architect": { "model": "qwen3-coder:latest" },
@@ -160,7 +160,7 @@
   }' \
   --debug-sequence agent_debug/architect_librarian_and_worker.json
 
-./ruchat ask "Refactor error handling in src/core/orchestrator.rs" \
+./ruchat pipe "Refactor error handling in src/core/orchestrator.rs" \
   --agentic '{
     "iterations": 2,
     "Architect": { "model": "qwen3-coder:latest" },
@@ -183,7 +183,7 @@
   }' \
   --debug-sequence agent_debug/debug_sequences.md
 
-./ruchat ask "Refactor error handling in src/core/orchestrator.rs" \
+./ruchat pipe "Refactor error handling in src/core/orchestrator.rs" \
   --agentic '{
     "iterations": 2,
     "Architect": { "model": "qwen3-coder:latest" },
@@ -206,7 +206,7 @@
   }' \
   --debug-sequence agent_debug/worker_and_validator.json
 
-./ruchat ask "Refactor error handling in src/core/orchestrator.rs" \
+./ruchat pipe "Refactor error handling in src/core/orchestrator.rs" \
   --agentic '{
     "iterations": 2,
     "Architect": { "model": "qwen3-coder:latest" },
@@ -229,7 +229,7 @@
   }' \
   --debug-sequence agent_debug/validator_only.json
 
-./ruchat ask "Refactor error handling in src/core/orchestrator.rs" \
+./ruchat pipe "Refactor error handling in src/core/orchestrator.rs" \
   --agentic '{
     "iterations": 2,
     "Architect": { "model": "qwen3-coder:latest" },
@@ -252,7 +252,7 @@
   }' \
   --debug-sequence agent_debug/architect_librarian_worker_validator.json
 
-./ruchat ask "Refactor error handling in src/core/orchestrator.rs" \
+./ruchat pipe "Refactor error handling in src/core/orchestrator.rs" \
   --agentic '{
     "iterations": 2,
     "Architect": { "model": "qwen3-coder:latest" },
