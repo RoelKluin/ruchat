@@ -408,6 +408,13 @@ impl Orchestrator {
                             Stage::Escalate("Architect stalled: repeated identical output across rounds".into())
                         } else {
                             last_architect_output = Some(ctx.output.clone());
+                            // Without this, context_view() never finds a Plan
+                            // turn in a real run (only debug_stage_machine
+                            // pushed one) — the Worker, Critics, and the
+                            // Architect's own next round all read an empty
+                            // "PLAN:" section and effectively improvise from
+                            // scratch each round instead of building on it.
+                            ctx.push_turn(TurnKind::Plan, "Architect", ctx.output.clone());
                             Stage::Retrieve
                         }
                     }
