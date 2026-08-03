@@ -3,5 +3,6 @@ target
 responses
 Cargo.lock
 tags
+tags.*
 tarpaulin-report.html
 ruchat_traces/
