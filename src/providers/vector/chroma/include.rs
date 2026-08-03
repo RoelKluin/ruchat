@@ -24,8 +24,8 @@ impl IncludeArgs {
     }
     pub(crate) fn update_from_json(&mut self, json: &Value) -> Result<()> {
         if let Some(include) = json.get("include") {
-            if include.is_string() {
-                self.include = Some(include.as_str().unwrap().to_string());
+            if let Some(s) = include.as_str() {
+                self.include = Some(s.to_string());
                 Ok(())
             } else {
                 Err(RuChatError::Is(format!(

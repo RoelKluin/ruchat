@@ -60,8 +60,8 @@ impl WhereArgs {
     }
     pub(crate) fn update_from_json(&mut self, json: &serde_json::Value) -> Result<()> {
         if let Some(where_val) = json.get("where") {
-            if where_val.is_string() {
-                self.r#where = Some(where_val.as_str().unwrap().to_string());
+            if let Some(s) = where_val.as_str() {
+                self.r#where = Some(s.to_string());
                 Ok(())
             } else {
                 Err(RuChatError::Is(format!(

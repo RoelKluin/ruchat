@@ -38,6 +38,8 @@ impl LlmClient for Ollama {
             .send_chat_messages_stream(request)
             .await
             .map_err(RuChatError::OllamaError)?;
+        // ollama_rs's stream Item error is `()` — no upstream detail survives
+        // to this point, so there's nothing more specific to report than this.
         let mapped =
             stream.map(|item| item.map_err(|_| RuChatError::Is("ollama stream error".into())));
         Ok(Box::pin(mapped))

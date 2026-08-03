@@ -57,8 +57,8 @@ impl ChromaCollectionConfigArgs {
     }
     pub(crate) fn update_from_json(&mut self, json: &Value) -> Result<()> {
         if let Some(collection) = json.get("collection") {
-            if collection.is_string() {
-                self.collection = collection.as_str().unwrap().to_string();
+            if let Some(s) = collection.as_str() {
+                self.collection = s.to_string();
                 Ok(())
             } else {
                 Err(RuChatError::Is(format!(

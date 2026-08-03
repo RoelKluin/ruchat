@@ -47,10 +47,9 @@ impl Agent {
     ) -> Result<Self> {
         if let Some(agent_val) = config.get(role) {
             // Check if it's a raw JSON string (from CLI) or an Object (from json! macro)
-            let options_str = if agent_val.is_string() {
-                agent_val.as_str().unwrap().to_string()
-            } else {
-                agent_val.to_string()
+            let options_str = match agent_val.as_str() {
+                Some(s) => s.to_string(),
+                None => agent_val.to_string(),
             };
             let (options, mut agent_config) = get_options(&options_str).await?;
             agent_config.insert("role".to_string(), Value::String(role.to_string()));
@@ -81,8 +80,8 @@ impl Agent {
         let v = self.agent_config.remove(key).ok_or(RuChatError::Is(format!(
             "No {key} to remove in agent config"
         )))?;
-        if v.is_string() {
-            Ok(v.as_str().unwrap().to_string())
+        if let Some(s) = v.as_str() {
+            Ok(s.to_string())
         } else if v.is_object() {
             Ok(v.to_string())
         } else {

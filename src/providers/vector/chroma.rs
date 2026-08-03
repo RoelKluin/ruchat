@@ -84,18 +84,11 @@ impl OutputArgs {
         }
 
         if let Some(json_fields) = json.get("fields") {
-            if json_fields.is_string() {
-                self.fields = json_fields
-                    .as_str()
-                    .unwrap()
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .collect();
+            if let Some(s) = json_fields.as_str() {
+                self.fields = s.split(',').map(|s| s.trim().to_string()).collect();
                 Ok(())
-            } else if json_fields.is_array() {
-                self.fields = json_fields
-                    .as_array()
-                    .unwrap()
+            } else if let Some(arr) = json_fields.as_array() {
+                self.fields = arr
                     .iter()
                     .filter_map(|v| v.as_str().map(|s| s.trim().to_string()))
                     .collect();

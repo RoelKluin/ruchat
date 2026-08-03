@@ -86,8 +86,10 @@ pub(crate) enum ToolParseError {
     NotFound,
     #[error("invalid tool_call JSON: {0}")]
     InvalidJson(#[from] serde_json::Error),
-    #[error("unknown or missing 'tool' field")]
-    UnknownTool,
+    #[error("missing 'tool' field")]
+    MissingTool,
+    #[error("unknown tool '{0}'")]
+    UnknownTool(String),
     #[error("tool call missing required field '{0}'")]
     MissingField(&'static str),
 }
@@ -157,9 +159,9 @@ pub(crate) fn structured_call_from_value(
     let tool_str = value
         .get("tool")
         .and_then(|v| v.as_str())
-        .ok_or(ToolParseError::UnknownTool)?;
+        .ok_or(ToolParseError::MissingTool)?;
     let tool: ToolName = serde_json::from_value(Value::String(tool_str.to_string()))
-        .map_err(|_| ToolParseError::UnknownTool)?;
+        .map_err(|_| ToolParseError::UnknownTool(tool_str.to_string()))?;
 
     for field in tool.required_fields() {
         if value.get(*field).is_none() {
@@ -280,9 +282,17 @@ mod tests {
     #[test]
     fn rejects_unknown_tool() {
         let input = "```tool_call\n{\"tool\":\"nonexistent\"}\n```";
+        let err = parse_tool_call(input).unwrap_err();
+        assert!(matches!(err, ToolParseError::UnknownTool(ref t) if t == "nonexistent"));
+        assert_eq!(err.to_string(), "unknown tool 'nonexistent'");
+    }
+
+    #[test]
+    fn rejects_missing_tool_field() {
+        let input = "```tool_call\n{\"not_tool\":\"x\"}\n```";
         assert!(matches!(
             parse_tool_call(input),
-            Err(ToolParseError::UnknownTool)
+            Err(ToolParseError::MissingTool)
         ));
     }
 }

@@ -185,10 +185,11 @@ async fn get_model_name_inner(ollama: &Ollama, name: &str, pull_attempts: u8) ->
     {
         return Err(RuChatError::ModelError(format!("invalid name: {name}")));
     }
-    let model_list = ollama
-        .list_local_models()
-        .await
-        .map_err(|_| RuChatError::ModelError(format!("{name} not found")))?;
+    let model_list = ollama.list_local_models().await.map_err(|e| {
+        RuChatError::ModelError(format!(
+            "failed to list local models while looking for '{name}' (is Ollama running?): {e}"
+        ))
+    })?;
     let model = model_list.iter().find(|m| {
         if name.contains(":") {
             m.name == name

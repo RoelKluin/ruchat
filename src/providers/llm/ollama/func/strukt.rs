@@ -95,10 +95,7 @@ pub(crate) async fn func_struct(args: OllamaArgs, cfg: &Value) -> Result<()> {
             break;
         }
 
-        let response = coordinator
-            .chat(vec![ChatMessage::user(input)])
-            .await
-            .unwrap();
+        let response = coordinator.chat(vec![ChatMessage::user(input)]).await?;
         cio.write_line(&response.message.content).await?;
     }
     Ok(())
