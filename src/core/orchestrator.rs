@@ -152,7 +152,10 @@ impl Orchestrator {
             lib.remove_str("chroma_client").and_then(|s| {
                 let val = s.parse::<serde_json::Value>()?;
                 client_config.update_from_json(&val).map_err(|e| {
-                    tracing::error!(error = ?e, config = %s, "Failed to parse chroma_client config as JSON:");
+                    // Deliberately not logging `s` itself: `chroma_client` config legitimately
+                    // carries `chroma_token` (a secret), and the parse error already includes
+                    // enough position/context to debug without echoing the raw string.
+                    tracing::error!(error = ?e, "Failed to parse chroma_client config as JSON");
                     e
                 }).map_err(RuChatError::AnyhowError)
             })?;
@@ -340,6 +343,38 @@ impl Orchestrator {
         Ok(())
     }
 
+    /// Recalls prior memories relevant to this run's goal, if any, before the stage machine
+    /// begins. Unlike `run_librarian_retrieval` (the Librarian's on-demand, LLM-shaped query
+    /// during `Stage::Retrieve`), this is deterministic — the goal text itself is the query,
+    /// no LLM call needed to write a query spec, since there's no other context yet at session
+    /// start to reason about narrowing it further. Reuses the Librarian's Chroma client and
+    /// `embed_model`, so it's a no-op when no Librarian is configured for this run — see
+    /// `TODO.md` for why a memorize-only, Librarian-less run can't recall yet. Pushed as a
+    /// `TurnKind::Retrieval` turn tagged "Memory" (not "Librarian") so it's distinguishable in
+    /// `history_view`/traces from an on-demand retrieval, though both feed `documents_view`
+    /// identically. Never fails the run: an empty/missing collection (e.g. the very first run,
+    /// before anything has ever been memorized) is the normal case, not an error, so a query
+    /// failure is traced and swallowed rather than propagated.
+    async fn recall_prior_memories(&self, ctx: &mut Context, tx: &mpsc::Sender<OrchestratorResult>) {
+        let (Some(client), Some(librarian)) = (self.client.as_ref(), self.librarian.as_ref()) else {
+            return;
+        };
+        let mut q = Query::default();
+        let _ = q.update_from_json(serde_json::json!({
+            "query": [ctx.goal.clone()],
+            "n_results": 3,
+        }));
+        match librarian.retrieve_and_generate(client, &self.ollama, q).await {
+            Ok(docs) if !docs.trim().is_empty() => {
+                ctx.push_turn(TurnKind::Retrieval, "Memory", docs);
+            }
+            Ok(_) => {}
+            Err(e) => {
+                ctx.trace(tx, format!("Memory recall skipped: {e}")).await;
+            }
+        }
+    }
+
     async fn run_stage_machine(
         &mut self,
         goal: String,
@@ -366,6 +401,7 @@ impl Orchestrator {
                     .unwrap_or("db_config.json"),
             )?;
         }
+        self.recall_prior_memories(ctx, &tx).await;
 
         let mut retrieve_budget: u32 = 2; // conservative cap on Worker-initiated retrievals per run
         let mut scope_round = 0;
@@ -476,7 +512,7 @@ impl Orchestrator {
                 Stage::Test => {
                     let report = Validation::run_build_and_test(&cancel).await?;
                     if !report.compiled || !report.tests_passed {
-                        ctx.push_turn(TurnKind::Rejection, "Tester", report.diagnostics);
+                        ctx.push_turn(TurnKind::Rejection, "Tester", report.rejection_message());
                         Stage::Retry
                     } else {
                         Stage::Validate
@@ -970,6 +1006,70 @@ mod tests {
         }
     }
 
+    // Regression: `Orchestrator::new`'s Librarian setup used to log the raw `chroma_client`
+    // config string verbatim on parse failure (`config = %s`). That string legitimately carries
+    // `chroma_token` (a secret), so a malformed-but-token-bearing config leaked it to logs.
+    // Uses the real `Orchestrator::new` (not `build_test_orchestrator`) since the bug is in its
+    // Librarian-construction branch specifically.
+    #[test]
+    fn librarian_chroma_client_parse_failure_does_not_log_the_raw_config() {
+        use crate::agent::llm_client::FakeLlmClient;
+        use std::io::Write;
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Clone)]
+        struct BufWriter(Arc<Mutex<Vec<u8>>>);
+        impl Write for BufWriter {
+            fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(data);
+                Ok(data.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let buf = Arc::new(Mutex::new(Vec::<u8>::new()));
+        let writer = BufWriter(buf.clone());
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .finish();
+
+        let secret = "super-secret-chroma-token-xyz";
+        // Valid JSON syntax (so the outer `s.parse::<Value>()` succeeds) but neither a string
+        // nor an object, so `ChromaClientConfigArgs::update_from_json` — the call this test
+        // targets — rejects it via its `val.as_object().ok_or_else(...)` branch, with the
+        // secret embedded in the string that would have been logged pre-fix.
+        let malformed = format!(r#"["chroma_token", "{secret}"]"#);
+        let config = json!({
+            "Architect": { "model": "fake" },
+            "Worker": { "model": "fake" },
+            "Librarian": { "model": "fake", "embed_model": "fake-embed", "chroma_client": malformed },
+        });
+
+        // Current-thread runtime, deliberately: `with_default` sets a thread-local subscriber,
+        // so `Orchestrator::new`'s `tracing::error!` call must run on this same thread to be
+        // captured — a multi-thread runtime would poll it on a worker thread instead, silently
+        // making this assertion vacuous (nothing captured, so it trivially "contains no secret").
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let result = tracing::subscriber::with_default(subscriber, || {
+            rt.block_on(Orchestrator::new(
+                config,
+                Arc::new(FakeLlmClient::new(vec![])),
+                &json!({}),
+            ))
+        });
+
+        assert!(result.is_err(), "malformed chroma_client JSON should still be rejected");
+        let logged = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
+        assert!(
+            !logged.contains(secret),
+            "secret leaked into log output: {logged}"
+        );
+    }
+
     fn fake_query_response() -> QueryResponse {
         QueryResponse {
             ids: vec![vec!["doc1".to_string()]],
@@ -1049,6 +1149,41 @@ mod tests {
         )
         .await;
         assert!(!items.is_empty());
+    }
+
+    // `recall_prior_memories` is tested directly rather than through a fixture: it's not part
+    // of the fixed debug-sequence mechanism (`debug_stage_machine`), it runs unconditionally
+    // once per real `run_stage_machine` call before any sequence starts. Unlike the Librarian's
+    // own on-demand retrieval, it never calls `query_stream`, so no `responses` entries are
+    // needed — the query is built deterministically from `ctx.goal`, not an LLM-authored spec.
+    #[tokio::test]
+    async fn recall_prior_memories_pushes_a_retrieval_turn_when_librarian_configured() {
+        let mut config = base_config();
+        config["Librarian"] = json!({ "model": "fake", "embed_model": "fake-embed" });
+        let orchestrator =
+            build_test_orchestrator(config, vec![], Some(fake_query_response())).await;
+        let mut ctx = Context::new("fix the flaky test".to_string());
+        let (tx, _rx) = mpsc::channel(100);
+
+        orchestrator.recall_prior_memories(&mut ctx, &tx).await;
+
+        let recalled = ctx
+            .turns
+            .iter()
+            .find(|t| t.kind == TurnKind::Retrieval && t.source == "Memory")
+            .expect("recall_prior_memories should push a Memory retrieval turn");
+        assert!(recalled.content.contains("fake retrieved document"));
+    }
+
+    #[tokio::test]
+    async fn recall_prior_memories_is_a_noop_without_a_librarian() {
+        let orchestrator = build_test_orchestrator(base_config(), vec![], None).await;
+        let mut ctx = Context::new("fix the flaky test".to_string());
+        let (tx, _rx) = mpsc::channel(100);
+
+        orchestrator.recall_prior_memories(&mut ctx, &tx).await;
+
+        assert!(ctx.turns.is_empty());
     }
 
     #[tokio::test]

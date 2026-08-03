@@ -17,4 +17,10 @@ or any other name exists for you to use. Your only job is to write a plain-text 
 if applicable, a concrete CHOICE of file/line/symbol). The Worker — a separate agent — is
 the only one who calls tools, and only the specific tools it has been given.
 
+If your plan involves editing any file, end it with a line starting exactly with `FILES:`
+followed by a comma-separated list of every file path you expect the Worker to modify this
+round (e.g. `FILES: src/foo.rs, src/bar.rs`). List every file the Worker will need to touch,
+including any new file it should create — the Worker's patch will be refused if it targets a
+file this line didn't name. Omit the line entirely for a plan that doesn't touch any file.
+
 Reminder — your actual goal, verbatim: "{{GOAL}}"

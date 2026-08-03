@@ -97,11 +97,57 @@ fn parse_cargo_json_diagnostics(stdout: &str) -> Vec<Diagnostic> {
 pub(crate) struct BuildReport {
     pub(crate) compiled: bool,
     pub(crate) tests_passed: bool,
+    /// Text that isn't (or can't be) expressed as structured `Diagnostic`s: `cargo test`'s raw
+    /// stdout on a test failure, or a raw stderr/timeout/exec-failure fallback for a `cargo
+    /// check` run whose output couldn't be parsed as compiler-message JSON at all.
     pub(crate) diagnostics: String,
-    /// Structured form of the same diagnostics, reserved for callers that want
-    /// file/line/col programmatically rather than the rendered string above.
-    #[allow(dead_code)]
+    /// Compiler errors/warnings parsed from `cargo check --message-format=json`, each with its
+    /// file/line/col when known. See `rejection_message`, the formatter that combines this with
+    /// `diagnostics` for a Worker-facing rejection turn.
     pub(crate) parsed_diagnostics: Vec<Diagnostic>,
+}
+
+impl BuildReport {
+    /// Renders a Worker-facing rejection message: compile errors first (each citing an exact
+    /// file/line/col when the compiler gave one), then any non-blocking warnings so they aren't
+    /// silently lost even though they didn't cause the rejection, then whatever couldn't be
+    /// expressed structurally (`diagnostics` — raw test stdout, or a stderr/timeout fallback).
+    pub(crate) fn rejection_message(&self) -> String {
+        let errors: Vec<_> = self
+            .parsed_diagnostics
+            .iter()
+            .filter(|d| d.level == "error")
+            .collect();
+        let warnings: Vec<_> = self
+            .parsed_diagnostics
+            .iter()
+            .filter(|d| d.level == "warning")
+            .collect();
+        let mut sections = Vec::new();
+        if !errors.is_empty() {
+            sections.push(
+                errors
+                    .iter()
+                    .map(|d| d.to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            );
+        }
+        if !warnings.is_empty() {
+            sections.push(format!(
+                "Non-blocking warnings (compiled fine, didn't cause this rejection):\n{}",
+                warnings
+                    .iter()
+                    .map(|d| d.to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ));
+        }
+        if !self.diagnostics.is_empty() {
+            sections.push(self.diagnostics.clone());
+        }
+        sections.join("\n\n")
+    }
 }
 
 /// Diff bodies beyond this size are refused before ever touching disk —
@@ -143,6 +189,15 @@ fn normalize_diff_hunk_lines(diff: &str) -> String {
     out
 }
 
+/// True if `target` matches one of the plan's declared paths. Matches exactly or by suffix in
+/// either direction (`p.ends_with(target)`/`target.ends_with(p)`) so a plan that names just
+/// `foo.rs` still covers a target resolved as `src/foo.rs`, and vice versa.
+fn file_in_scope(target: &str, planned: &[String]) -> bool {
+    planned
+        .iter()
+        .any(|p| p == target || target.ends_with(p.as_str()) || p.ends_with(target))
+}
+
 impl Validation {
     pub(crate) async fn apply_patch(diff_text: &str, ctx: &mut Context) -> Result<Self> {
         if diff_text.len() > MAX_PATCH_DIFF_BYTES {
@@ -177,6 +232,20 @@ impl Validation {
             ctx.push_turn(TurnKind::Rejection, "Validator", content.clone());
             return Ok(Validation::Failure(content));
         }
+        // Enforced only when the Architect's plan actually declared a `FILES:` scope (see
+        // `Context::planned_files`) — a plan that omits the line doesn't retroactively block
+        // every patch, since local models don't reliably follow the convention yet.
+        let planned = ctx.planned_files();
+        if !planned.is_empty() && !file_in_scope(target, &planned) {
+            let content = format!(
+                "refused: '{target}' is not one of the files the plan named with its `FILES:` \
+                line ({}) — apply_patch may only touch files the Architect's plan declared \
+                in scope for this round",
+                planned.join(", ")
+            );
+            ctx.push_turn(TurnKind::Rejection, "Validator", content.clone());
+            return Ok(Validation::Failure(content));
+        }
         let original = tokio::fs::read_to_string(target).await.unwrap_or_default();
         match diffy::apply(&original, &patch) {
             Ok(patched) => {
@@ -195,11 +264,10 @@ impl Validation {
         }
     }
     pub(crate) async fn run_cargo_check() -> Result<Self> {
-        let output = tokio::time::timeout(
-            Duration::from_secs(30),
-            Command::new("cargo").args(["check"]).output(),
-        )
-        .await;
+        let mut cmd = Command::new("cargo");
+        cmd.args(["check"]);
+        crate::orchestrator::cargo::limit_resources(&mut cmd, 30);
+        let output = tokio::time::timeout(Duration::from_secs(30), cmd.output()).await;
         match output {
             Ok(Ok(output)) if output.status.success() => Ok(Validation::Success),
             Ok(Ok(output)) => {
@@ -216,11 +284,14 @@ impl Validation {
     }
 
     pub(crate) async fn run_build_and_test(cancel: &CancellationToken) -> Result<BuildReport> {
+        let mut check_cmd = Command::new("cargo");
+        check_cmd.args(["check", "--message-format=json"]);
+        crate::orchestrator::cargo::limit_resources(&mut check_cmd, 60);
         let check = tokio::time::timeout(
             Duration::from_secs(60),
             async {
                 tokio::select! {
-                    out = Command::new("cargo").args(["check", "--message-format=json"]).output() => Ok(out),
+                    out = check_cmd.output() => Ok(out),
                     _ = cancel.cancelled() => Err(()),
                 }
             },
@@ -228,23 +299,16 @@ impl Validation {
         .await;
         let (compiled, parsed_diagnostics, mut diagnostics) = match check {
             Ok(Ok(Ok(o))) => {
-                /* unchanged body from prior patch */
                 let stdout = String::from_utf8_lossy(&o.stdout);
                 let parsed = parse_cargo_json_diagnostics(&stdout);
-                let errors_only: Vec<_> = parsed.iter().filter(|d| d.level == "error").collect();
-                let rendered = if !errors_only.is_empty() {
-                    errors_only
-                        .iter()
-                        .map(|d| d.to_string())
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                } else if !parsed.is_empty() {
-                    // warnings only — compile succeeded, don't block on them, but keep informational
-                    String::new()
-                } else {
+                // Only a fallback for output `parse_cargo_json_diagnostics` found nothing
+                // structured in — `rejection_message` renders `parsed` itself when non-empty.
+                let fallback = if parsed.is_empty() {
                     String::from_utf8_lossy(&o.stderr).into_owned()
+                } else {
+                    String::new()
                 };
-                (o.status.success(), parsed, rendered)
+                (o.status.success(), parsed, fallback)
             }
             Ok(Ok(Err(e))) => (false, Vec::new(), format!("cargo check failed to run: {e}")),
             Ok(Err(())) => return Err(RuChatError::Cancelled),
@@ -256,11 +320,14 @@ impl Validation {
         };
         let mut tests_passed = false;
         if compiled {
+            let mut test_cmd = Command::new("cargo");
+            test_cmd.args(["test", "--", "--nocapture"]);
+            crate::orchestrator::cargo::limit_resources(&mut test_cmd, 120);
             let test = tokio::time::timeout(
                 Duration::from_secs(120),
                 async {
                     tokio::select! {
-                        out = Command::new("cargo").args(["test", "--", "--nocapture"]).output() => Ok(out),
+                        out = test_cmd.output() => Ok(out),
                         _ = cancel.cancelled() => Err(()),
                     }
                 },
@@ -288,6 +355,65 @@ impl Validation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn diag(level: &str, message: &str, file: Option<&str>, line: Option<usize>) -> Diagnostic {
+        Diagnostic {
+            level: level.to_string(),
+            message: message.to_string(),
+            file: file.map(str::to_string),
+            line,
+            column: line.map(|_| 1),
+        }
+    }
+
+    #[test]
+    fn rejection_message_cites_exact_file_and_line_for_errors() {
+        let report = BuildReport {
+            compiled: false,
+            tests_passed: false,
+            diagnostics: String::new(),
+            parsed_diagnostics: vec![diag(
+                "error",
+                "mismatched types",
+                Some("src/foo.rs"),
+                Some(42),
+            )],
+        };
+        let msg = report.rejection_message();
+        assert!(
+            msg.contains("src/foo.rs:42:1: error: mismatched types"),
+            "expected exact file/line in message, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn rejection_message_surfaces_warnings_even_when_they_did_not_cause_the_rejection() {
+        // Regression: a compile that produced only warnings used to render an empty diagnostics
+        // string ("keep informational" in the old comment, but the code discarded them), so if
+        // `cargo test` then failed for an unrelated reason, the warnings never reached the
+        // Worker at all. `rejection_message` must surface them from `parsed_diagnostics`
+        // directly, independent of whether `diagnostics` (here: raw test stdout) is also set.
+        let report = BuildReport {
+            compiled: true,
+            tests_passed: false,
+            diagnostics: "test assertion_failed panicked".to_string(),
+            parsed_diagnostics: vec![diag("warning", "unused variable: `x`", Some("src/bar.rs"), Some(7))],
+        };
+        let msg = report.rejection_message();
+        assert!(msg.contains("src/bar.rs:7:1: warning: unused variable"));
+        assert!(msg.contains("test assertion_failed panicked"));
+    }
+
+    #[test]
+    fn rejection_message_falls_back_to_raw_diagnostics_when_nothing_parsed() {
+        let report = BuildReport {
+            compiled: false,
+            tests_passed: false,
+            diagnostics: "cargo check timed out after 60s".to_string(),
+            parsed_diagnostics: Vec::new(),
+        };
+        assert_eq!(report.rejection_message(), "cargo check timed out after 60s");
+    }
 
     #[test]
     fn normalize_adds_missing_leading_space_on_context_lines() {
@@ -318,5 +444,43 @@ mod tests {
         // with one of the hunk-body prefixes either.
         let diff = "--- a/src/foo.rs\n+++ b/src/foo.rs\n@@ -1,1 +1,1 @@\n-old\n+new\n";
         assert_eq!(normalize_diff_hunk_lines(diff), diff);
+    }
+
+    #[test]
+    fn file_in_scope_matches_exact_and_suffix() {
+        let planned = vec!["src/foo.rs".to_string()];
+        assert!(file_in_scope("src/foo.rs", &planned));
+        // Plan named just the basename, target resolved with a directory prefix.
+        assert!(file_in_scope(
+            "src/foo.rs",
+            &["foo.rs".to_string()]
+        ));
+        // Plan named a longer path than the diff header's target.
+        assert!(file_in_scope("foo.rs", &["src/foo.rs".to_string()]));
+        assert!(!file_in_scope("src/bar.rs", &planned));
+    }
+
+    #[tokio::test]
+    async fn apply_patch_rejects_target_outside_declared_scope() {
+        // Cargo.toml is tracked by git in this repo, so it passes the tracked-file check and
+        // reaches the scope check — the diff content itself is never applied since the scope
+        // rejection happens first.
+        let mut ctx = Context::new("goal".to_string());
+        ctx.push_turn(
+            TurnKind::Plan,
+            "Architect",
+            "FILES: src/some_other_file.rs".to_string(),
+        );
+        let diff = "--- a/Cargo.toml\n+++ b/Cargo.toml\n@@ -1,1 +1,1 @@\n-old\n+new\n";
+        let result = Validation::apply_patch(diff, &mut ctx)
+            .await
+            .expect("apply_patch should not error, only reject");
+        match result {
+            Validation::Failure(msg) => assert!(
+                msg.contains("not one of the files"),
+                "expected scope rejection message, got: {msg}"
+            ),
+            _ => panic!("expected the patch to be rejected as out of declared scope"),
+        }
     }
 }

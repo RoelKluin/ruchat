@@ -51,6 +51,28 @@ pub(crate) async fn get_options(options: &str) -> Result<(ModelOptions, HashMap<
         .map(|opts| (opts, remain))
 }
 
+/// Every JSON field name `ollama_rs::models::ModelOptions` actually accepts, confirmed against
+/// the crate's builder methods (ollama-rs 0.3.6) rather than derived from
+/// `ModelOptions::default()`'s serialized shape: every field is `Option<_>` with
+/// `skip_serializing_if = "Option::is_none"`, so a default instance always serializes to `{}`
+/// and can't be used to discover the valid key set — see `merge_options_json` below, which used
+/// to gate on that empty shape and silently drop every config-supplied option as a result.
+const MODEL_OPTION_KEYS: &[&str] = &[
+    "num_ctx",
+    "temperature",
+    "top_k",
+    "top_p",
+    "repeat_penalty",
+    "stop",
+    "num_predict",
+    "seed",
+    "mirostat",
+    "mirostat_eta",
+    "mirostat_tau",
+    "tfs_z",
+    "repeat_last_n",
+];
+
 /// Merges `options` (a JSON file path or literal JSON string) onto
 /// `ModelOptions::default()`'s JSON shape, without deserializing back to
 /// `ModelOptions` yet. Shared by `get_options` above and
@@ -66,8 +88,8 @@ pub(crate) async fn merge_options_json(options: &str) -> Result<(Value, HashMap<
         let updates = read_options_file(options).await?;
         if let Value::Object(config_updates) = updates {
             for (k, v) in config_updates.into_iter() {
-                if defaults.contains_key(&k) && !v.is_null() {
-                    defaults[&k] = v.clone();
+                if MODEL_OPTION_KEYS.contains(&k.as_str()) && !v.is_null() {
+                    defaults.insert(k, v);
                 } else {
                     remain.insert(k, v);
                 }
@@ -98,6 +120,16 @@ mod tests {
         let path = dir.path().join("test_options.json");
         fs::write(&path, r#"{"option1": "value1"}"#).unwrap();
         assert!(get_options(path.to_str().unwrap()).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn merge_options_json_applies_known_keys_and_keeps_unknown_ones_in_remain() {
+        let (defaults, remain) = merge_options_json(r#"{"seed": 7, "role": "Worker"}"#)
+            .await
+            .unwrap();
+        assert_eq!(defaults["seed"], 7);
+        assert_eq!(remain.get("role"), Some(&Value::String("Worker".into())));
+        assert!(!remain.contains_key("seed"));
     }
 
     #[tokio::test]

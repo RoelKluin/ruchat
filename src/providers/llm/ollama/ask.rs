@@ -77,7 +77,11 @@ impl AskArgs {
         let mut config: serde_json::Value = if let Some(ref json_str) = self.agentic {
             serde_json::from_str(json_str)
                 .map_err(|e| {
-                    tracing::error!(error = ?e, config = %json_str, "Failed to parse agentic JSON config");
+                    // Deliberately not logging `json_str` itself: an `--agentic` config can
+                    // embed a Librarian's `chroma_client` (which carries `chroma_token`, a
+                    // secret) as a nested string, and the parse error already includes enough
+                    // position/context to debug without echoing the raw config.
+                    tracing::error!(error = ?e, "Failed to parse agentic JSON config");
                     e
                 })
                 .map_err(RuChatError::SerdeError)?
@@ -226,6 +230,56 @@ mod tests {
         let args = AskArgs::default();
         assert_eq!(args.agentic, None);
     }
+    // Regression: `into_config`'s parse-failure branch used to log the raw `--agentic` string
+    // verbatim (`config = %json_str`). That string can legitimately embed a Librarian's
+    // `chroma_client` config, which carries `chroma_token` (a secret) — so a malformed-but-
+    // token-bearing config leaked the token to logs. Verifies both that the error path still
+    // works and that the secret never reaches the tracing output.
+    #[test]
+    fn agentic_parse_failure_does_not_log_the_raw_config() {
+        use std::io::Write;
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Clone)]
+        struct BufWriter(Arc<Mutex<Vec<u8>>>);
+        impl Write for BufWriter {
+            fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(data);
+                Ok(data.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let buf = Arc::new(Mutex::new(Vec::<u8>::new()));
+        let writer = BufWriter(buf.clone());
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .finish();
+
+        let secret = "super-secret-chroma-token-xyz";
+        // Deliberately malformed (unterminated object) so parsing fails, with the secret
+        // embedded in the string that would have been logged pre-fix.
+        let malformed = format!(
+            r#"{{"Librarian":{{"chroma_client":"{{\"chroma_token\":\"{secret}\"}}"}}"#
+        );
+        let args = AskArgs {
+            agentic: Some(malformed),
+            ..Default::default()
+        };
+
+        let result =
+            tracing::subscriber::with_default(subscriber, || args.into_config("default-model"));
+
+        assert!(result.is_err(), "malformed JSON should still be rejected");
+        let logged = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
+        assert!(
+            !logged.contains(secret),
+            "secret leaked into log output: {logged}"
+        );
+    }
+
     #[tokio::test]
     async fn test_agentic_config_merging() {
         let args = AskArgs {

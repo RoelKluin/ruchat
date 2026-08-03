@@ -273,6 +273,35 @@ impl Context {
             .join("\n---\n")
     }
 
+    /// Parses the file paths the latest Architect plan declared with a `FILES:` line (see
+    /// `agent_role/architect.md`). Returns an empty vec if no such line is present — that means
+    /// "the plan didn't declare scope," not "the plan declared zero files": `apply_patch`
+    /// (`agent/protocol.rs`) only enforces the scope check when this is non-empty, so a plan
+    /// that forgets the line doesn't retroactively block every patch.
+    pub(crate) fn planned_files(&self) -> Vec<String> {
+        let Some(plan) = self.turns.iter().rev().find(|t| t.kind == TurnKind::Plan) else {
+            return Vec::new();
+        };
+        plan.content
+            .lines()
+            .find_map(|line| {
+                let trimmed = line.trim();
+                if trimmed.len() >= 6 && trimmed[..6].eq_ignore_ascii_case("files:") {
+                    Some(trimmed[6..].to_string())
+                } else {
+                    None
+                }
+            })
+            .map(|rest| {
+                rest.split(',')
+                    .map(|s| s.trim().trim_start_matches("a/").trim_start_matches("./"))
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// Dedup rejection turns for the current round in place; returns true if any remain.
     pub(crate) fn reconcile_rejections(&mut self) -> bool {
         let mut seen = std::collections::HashSet::new();
@@ -301,5 +330,46 @@ impl Context {
                 content: summary_text,
             },
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn planned_files_empty_when_no_plan_turn() {
+        let ctx = Context::new("goal".to_string());
+        assert!(ctx.planned_files().is_empty());
+    }
+
+    #[test]
+    fn planned_files_empty_when_plan_has_no_files_line() {
+        let mut ctx = Context::new("goal".to_string());
+        ctx.push_turn(TurnKind::Plan, "Architect", "just think about it".to_string());
+        assert!(ctx.planned_files().is_empty());
+    }
+
+    #[test]
+    fn planned_files_parses_comma_separated_list() {
+        let mut ctx = Context::new("goal".to_string());
+        ctx.push_turn(
+            TurnKind::Plan,
+            "Architect",
+            "Do the thing.\nFILES: src/foo.rs, a/src/bar.rs , ./src/baz.rs\n".to_string(),
+        );
+        assert_eq!(
+            ctx.planned_files(),
+            vec!["src/foo.rs", "src/bar.rs", "src/baz.rs"]
+        );
+    }
+
+    #[test]
+    fn planned_files_uses_latest_plan_turn_only() {
+        let mut ctx = Context::new("goal".to_string());
+        ctx.push_turn(TurnKind::Plan, "Architect", "FILES: old.rs".to_string());
+        ctx.round += 1;
+        ctx.push_turn(TurnKind::Plan, "Architect", "FILES: new.rs".to_string());
+        assert_eq!(ctx.planned_files(), vec!["new.rs"]);
     }
 }

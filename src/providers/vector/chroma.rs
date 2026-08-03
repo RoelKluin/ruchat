@@ -36,7 +36,7 @@ pub(super) enum OutputFormat {
     Oneliner,
 }
 
-#[derive(clap::Args, Debug, Clone, PartialEq, Deserialize, Default)]
+#[derive(clap::Args, Debug, Clone, PartialEq, Deserialize)]
 pub(super) struct OutputArgs {
     /// Output format: markdown (default, full content), json, or oneliner (tab-separated, one row/line).
     #[arg(short = 'F', long, value_enum, default_value_t = OutputFormat::Markdown, help_heading = "Output Control")]
@@ -53,6 +53,23 @@ pub(super) struct OutputArgs {
         help_heading = "Output Control"
     )]
     fields: Vec<String>,
+}
+
+/// clap's `default_value`/`default_value_t` attributes above only take effect through
+/// `Parser::parse_from`/`Args::parse_from` — they're invisible to `#[derive(Default)]`, which
+/// would otherwise give `fields: vec![]` (nothing selected — `render_markdown`/`render_oneliner`
+/// silently return an empty string, see `columns`) and `sort: false`, silently diverging from
+/// the documented CLI defaults. Every non-CLI construction path (`Query::default()` in
+/// `orchestrator.rs`'s `run_librarian_retrieval`/`recall_prior_memories`, chiefly) needs the
+/// real defaults, so this is a manual impl instead of a derive.
+impl Default for OutputArgs {
+    fn default() -> Self {
+        Self {
+            format: OutputFormat::Markdown,
+            sort: true,
+            fields: vec!["id".to_string(), "doc".to_string(), "meta".to_string()],
+        }
+    }
 }
 
 impl OutputArgs {
@@ -420,6 +437,44 @@ mod tests {
         assert!(options.should_show("doc"));
         assert!(!options.should_show("meta"));
         assert!(!options.should_show("embed"));
+    }
+
+    // Regression: `OutputArgs` used to derive `Default`, which gives `fields: vec![]` (clap's
+    // `default_value = "id,doc,meta"` only applies through `Parser::parse_from`, invisible to
+    // `#[derive(Default)]`) — so `Query::default()` (the construction path every non-CLI caller
+    // uses, notably `orchestrator.rs`'s `run_librarian_retrieval`) rendered every query result as
+    // an empty string via `render_markdown`'s `if cols.is_empty() { return String::new() }`. The
+    // Librarian's retrieved documents were silently never reaching the Worker/Architect prompt
+    // in real runs, despite `query_collection` succeeding and tests passing (they only asserted
+    // the stream was non-empty, not that retrieved content appeared in it).
+    #[test]
+    fn output_args_default_matches_documented_cli_defaults() {
+        let options = OutputArgs::default();
+        assert!(options.should_show("id"));
+        assert!(options.should_show("doc"));
+        assert!(options.should_show("meta"));
+        assert!(!options.should_show("embed"));
+        assert!(options.sort);
+    }
+
+    #[test]
+    fn query_default_output_args_renders_document_content() {
+        let row = OutputRow {
+            id: "doc1".to_string(),
+            document: Some("fake retrieved document".to_string()),
+            metadata: None,
+            embedding: None,
+            score: None,
+            distance: None,
+            uri: None,
+            select: None,
+            include: None,
+        };
+        let rendered = render_rows(vec![row], &OutputArgs::default());
+        assert!(
+            rendered.contains("fake retrieved document"),
+            "expected the default OutputArgs to render document content, got: {rendered:?}"
+        );
     }
     #[test]
     #[ignore = "pre-existing failure: asserts the markdown header is \"DOCUMENT\" but \

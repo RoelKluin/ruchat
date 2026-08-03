@@ -248,16 +248,15 @@ mod build_generation_request_tests {
         assert_eq!(v["options"]["temperature"], 0.25);
     }
 
-    // Pins a pre-existing (not introduced by the round-trip removal above) bug:
-    // `ModelOptions::default()` serializes to `{}` (every field is `None` and
-    // `skip_serializing_if`-omitted), so `merge_options_json`'s
-    // `defaults.contains_key(&k)` gate is never true for ANY key coming from a
-    // `model_options` file/string — config-supplied values silently land in the
-    // discarded `remain` map instead of `defaults`, so they never reach the
-    // final `ModelOptions`. Only CLI-flag values (set unconditionally, no gate)
-    // actually take effect. See TODO.md.
+    // Regression test for a fixed bug: `ModelOptions::default()` serializes to `{}` (every
+    // field is `None` and `skip_serializing_if`-omitted), so gating the merge on
+    // `defaults.contains_key(&k)` was never true for ANY key coming from a `model_options`
+    // file/string — config-supplied values silently landed in the discarded `remain` map
+    // instead of `defaults` and never reached the final `ModelOptions`. Fixed by gating on
+    // `options::MODEL_OPTION_KEYS`, the real (confirmed against the crate's builder methods)
+    // field allowlist, instead of the always-empty default shape. See TODO.md Done section.
     #[tokio::test]
-    async fn config_only_model_options_are_currently_silently_dropped() {
+    async fn config_only_model_options_are_applied() {
         let args = ModelArgs::default();
         let cfg = serde_json::json!({ "model_options": { "seed": 7 } });
         let req = args
@@ -265,7 +264,38 @@ mod build_generation_request_tests {
             .await
             .unwrap();
         let v = serde_json::to_value(&req).unwrap();
-        assert_eq!(v["options"]["seed"], serde_json::Value::Null);
+        assert_eq!(v["options"]["seed"], 7);
+    }
+
+    #[tokio::test]
+    async fn config_model_options_and_cli_flags_both_apply() {
+        let args = ModelArgs {
+            temperature: Some(0.25),
+            ..Default::default()
+        };
+        let cfg = serde_json::json!({ "model_options": { "seed": 7, "top_k": 40 } });
+        let req = args
+            .build_generation_request("m".into(), "p".into(), &cfg)
+            .await
+            .unwrap();
+        let v = serde_json::to_value(&req).unwrap();
+        assert_eq!(v["options"]["seed"], 7);
+        assert_eq!(v["options"]["top_k"], 40);
+        assert_eq!(v["options"]["temperature"], 0.25);
+    }
+
+    #[tokio::test]
+    async fn non_model_option_keys_in_model_options_are_ignored_not_applied() {
+        // A key that isn't a real ModelOptions field (e.g. a typo, or a stray agent-config key
+        // nested under model_options by mistake) must not silently end up in the request either.
+        let args = ModelArgs::default();
+        let cfg = serde_json::json!({ "model_options": { "not_a_real_field": 123 } });
+        let req = args
+            .build_generation_request("m".into(), "p".into(), &cfg)
+            .await
+            .unwrap();
+        let v = serde_json::to_value(&req).unwrap();
+        assert!(v["options"].get("not_a_real_field").is_none());
     }
 }
 

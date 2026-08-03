@@ -50,6 +50,14 @@ not an implicit `for round in 1..=iterations` loop. Every transition is a match
 arm that computes the *next* `Stage`:
 
 ```text
+Recall    → Before Scope begins: if a Librarian (and its Chroma client) is
+            configured, `Orchestrator::recall_prior_memories` runs a
+            deterministic query (goal text, `n_results: 3` — no LLM call,
+            unlike the Librarian's own on-demand query below) against
+            whatever the `memorize` tool has written in past runs, pushed as
+            a `TurnKind::Retrieval` turn tagged `"Memory"`. Failure (e.g. no
+            memories exist yet) is traced and swallowed, never fails the run.
+  ↓
 Scope     → Scoper requests lookups (read_file/ripgrep/list_dir/git_*/read_tags/retrieve)
             via a JSON verdict; loops on itself until READY, scope_iterations
             exhausted, or output repeats (stall → forced progression to Plan).
@@ -112,6 +120,12 @@ so it can't drift from what the model is actually told:
 Notes:
 - `apply_patch` is gated: the target file must already be tracked by git
   (`git ls-files`), checked in `Validation::apply_patch` before the diff is applied.
+- `apply_patch` also checks scope: if the Architect's plan ended with a
+  `FILES: path1, path2` line (`agent_role/architect.md`), the diff's target
+  must match one of those paths (`Context::planned_files`, `file_in_scope` in
+  `agent/protocol.rs`) or the patch is refused. A plan without a `FILES:` line
+  isn't restricted — this fails open by design since local models don't
+  reliably emit new prompt conventions.
 - `apply_patch` refuses diffs over `MAX_PATCH_DIFF_BYTES` (8,000 bytes) before
   ever touching disk, and records the pre-patch file content
   (`Context::record_patch`) so a rejection later in the same round (Test,
@@ -185,7 +199,6 @@ one. Both are fixed now — multi-critic consensus review actually runs.
 
 ### Current Limitations
 
-- `apply_patch` has no scope check against the Scoper/Architect plan — a patch can touch any tracked file within the size cap, not just the one the plan called out.
 - No configurable agent graph yet — the `Stage` sequence above is fixed in code, not data (this is `ROADMAP.md` Phase 3).
 - Token counting is an approximation (`cl100k_base` BPE) since Ollama doesn't expose per-model tokenizers.
 - Test coverage is `#[cfg(test)]` unit tests inside the crate (`core::orchestrator::tests`), not black-box `tests/` integration tests — the orchestrator's types are `pub(crate)`, so external tests can't reach them without a much bigger visibility change than this covers. Only 9 of the 10 `agent_debug/*.json` fixtures are wired up (the two `architect_librarian_worker[_validator]` combinations are covered indirectly by the simpler fixtures that exercise the same roles).

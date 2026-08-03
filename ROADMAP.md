@@ -40,15 +40,15 @@ We prioritize **predictability**, **performance**, **token efficiency**, and **t
 - [x] Structured tool calling framework (`agent/tools.rs::ToolName` — schema-validated, 13 typed tools, no more regex-only parsing)
 - [x] Parallel critic execution (`Orchestrator::run_critics_parallel`) — note: the execution mechanism itself was correct, but a separate construction bug meant `critics` was always empty in practice until fixed (see TODO.md's Done section)
 - [x] Token-aware history management + automatic summarization triggers (`Stage::Retry` → Summarizer when the token estimate exceeds the model's history limit)
-- [~] Persistent memory layer — the `memorize` tool writes to Chroma today (`Agent::embed`), but there's no automatic recall of prior-run memories at session start; that part is still open
+- [~] Persistent memory layer — the `memorize` tool writes to Chroma (`Agent::embed`), and `Orchestrator::recall_prior_memories` now auto-recalls at session start using the goal text as a deterministic query, but only when a Librarian is configured (reuses its Chroma client) — a memorize-only, Librarian-less run still can't recall; see `TODO.md` Done section
 - [~] Improved RAG — relevance scoring/reranking is done (`providers/vector/chroma/rerank.rs`); document summarization before the Worker and multi-collection queries are still open
 - [ ] Automatic collection management (`ruchat chroma-init` from `db_config.json`)
-- [ ] Resource-limited sandboxing for tool-invoked subprocesses (`cargo_check`/`cargo_test` currently have timeouts but no memory/CPU caps) — note: there is deliberately no generic `SHELL` tool anymore; the Worker/Scoper only get specific typed tools, which is a stronger safety posture than a sandboxed-shell approach
+- [x] Resource-limited sandboxing for tool-invoked subprocesses — every cargo subprocess (`cargo_check`/`cargo_dupes`/the Tester's check+test) now gets `RLIMIT_AS`/`RLIMIT_CPU` via `orchestrator::cargo::limit_resources`, alongside the pre-existing wall-clock timeouts; see `TODO.md` Done section
 - [ ] Debug mode improvements (step-by-step execution, breakpoint support) — the fixed-sequence debug mode itself exists (`--debug-sequence`, `agent_debug/*.json`), but isn't wired into `cargo test` yet and has no breakpoints
 - [x] Reconciled the legacy `Team`/`Manager` pipeline — `ruchat manager` now expands a saved `Team` preset into an `Orchestrator` config and runs the real stage machine
 - [x] Pre-planning repo-grounding stage (`Scoper` role) — gathers repo facts before the Architect plans; shipped but was never in the original Phase 2 list
 - [x] `apply_patch` hardening: diff-size cap, and automatic rollback of a rejected round's patch before looping back to `Plan`
-- [ ] `apply_patch` scope check against the Scoper/Architect plan (still open — no guard today against a patch touching a file the plan never mentioned)
+- [x] `apply_patch` scope check against the Architect's plan — Architect prompt now declares a `FILES:` line, enforced (fail-open only when the line is absent) in `Validation::apply_patch`; see `TODO.md` Done section for detail
 
 **Milestone**: Best-in-class local coding agent (plan → code → review → commit) that beats Python frameworks in speed and reliability.
 
@@ -58,6 +58,8 @@ We prioritize **predictability**, **performance**, **token efficiency**, and **t
 
 **Goal**: Add flexibility without sacrificing predictability or local purity
 
+- [ ] **Resumable/crash-resilient runs** (checkpointed `Context`) — identified via `comparisons/*.md`: every framework compared against (LangGraph explicitly, AutoGen/CrewAI more loosely) offers some form of durable/checkpointed execution, while a killed or crashed ruchat process currently loses all progress and restarts from `Stage::Scope`. Scope this as a lightweight, local-first mechanism true to ruchat's philosophy — not a distributed system: persist `Context` (turns, round, pending patch) to a local file after each stage transition, and add a `--resume` flag that reloads it and continues from the last completed stage instead of a Temporal/LangGraph-style durable-execution engine.
+- [ ] **Interactive human-in-the-loop approval gate** — identified via `comparisons/*.md`: AutoGen's UserProxy agents and LangGraph's interrupts both give a human an explicit mid-run pause/approve point; ruchat's only approval mechanism today is automated Critics (an LLM-driven gate) plus post-hoc review of the committed branch. Add an optional pause (e.g. before `Stage::Commit`) that prints the pending plan/diff and waits for an explicit terminal y/n before proceeding — keeps ruchat's "predictable, auditable" ethos while closing a real, comparison-driven gap rather than adding open-ended interactivity.
 - [ ] Configurable agent graph (simple DAG definition in JSON/TOML — limited cycles)
 - [ ] Subgraph / reusable agent modules (e.g., "CodeReviewTeam", "ResearchTeam")
 - [ ] Dynamic conditional edges based on approval signals or output patterns
@@ -77,7 +79,7 @@ We prioritize **predictability**, **performance**, **token efficiency**, and **t
 - [ ] Model context window auto-management and smart chunking
 - [ ] Built-in benchmarking suite vs LangGraph/CrewAI on local hardware
 - [ ] Optional distributed mode (multiple local machines via simple message bus — still offline-first)
-- [ ] Advanced observability (local trace viewer)
+- [ ] Advanced observability (local trace viewer) — `comparisons/*.md` repeatedly call out LangSmith/AutoGen Studio-style inspection as a strength ruchat lacks; today's `.ruchat_trace.md` + colored terminal events are a snapshot/stream, not a navigable history. Scope as a local, offline viewer over the existing `Context.turns` log (e.g. a `ruchat trace` subcommand rendering round-by-round turns/rejections), not a hosted service — stays consistent with the "no cloud dependency" constraint above.
 
 ---
 
@@ -109,30 +111,25 @@ By v0.4.0, Ruchat should feel like “LangGraph for people who want to stay full
 ---
 
 **Current Status (August 2026)**:  
-Phase 1 is complete — v0.2.0 shipped. Every item is now done or
-verified-as-already-satisfied: structured logging (levels + JSON output), the
-eprintln!/println! migration, parser unit tests, the model-option
-double-round-trip removal, error-handling improvements at the sites that discarded
-real causes, connection pooling (turned out to already be handled by the existing
-shared-client architecture), config system consolidation (config file + profiles
-existed and worked, just needed a couple of missing env vars), the TUI item
-(turned out to be moot — the interactive chat TUI it described was deleted
-2026-07-31; only a non-interactive streaming-output renderer remains, see
-`TODO.md`), and now the release itself, including a repo-wide `TODO.md` cleanup
-(all completed items moved into its `Done` list) and one flaky test fixed along
-the way (`cli::options::tests::test_read_options_file`, a shared-filename race
-with another test). Phase 2 also picked up real work this cycle: the structured
-tool-calling framework, parallel critic execution (plus finding and fixing the bug
-that made it a silent no-op), `apply_patch` hardening, the Team/Manager
-reconciliation, and the new Scoper role — alongside a round of test-infrastructure
-work (repairing an uncompilable suite, wiring 9/10 `agent_debug` fixtures into
-`cargo test`, adding CI). See `TODO.md` for the live, priority-ranked task list —
-next up is Phase 2 (persistent memory auto-recall, further RAG improvements,
-automatic Chroma collection management, `apply_patch` scope-check, resource-limited
-cargo subprocess sandboxing) — plus three things found along the way and
-deliberately left open: the config-file `model_options` merge being a silent
-no-op, the `InternalError`/`Is` catch-all error variants used at ~85 call sites,
-and whether to rebuild an interactive TUI (and what to do with the now-unused
-`crossterm` dependency) or stay streaming-output-only.
+Phase 1 (v0.2.0) is complete. Phase 2 (v0.3.0) is well underway: structured
+tool calling, parallel critics, `apply_patch` hardening (diff-size cap,
+rollback, and now a scope check against the Architect's declared `FILES:`
+plan), the Team/Manager reconciliation, the Scoper role, resource-limited
+(`RLIMIT_AS`/`RLIMIT_CPU`) cargo subprocess sandboxing, and automatic
+cross-run memory recall at session start (`Orchestrator::recall_prior_memories`,
+gated on a configured Librarian) are all done. Two real, previously-unknown
+bugs were also found and fixed along the way: the config-file `model_options`
+merge was a silent no-op (`cli/options.rs`'s field-allowlist gate was checking
+against an always-empty default shape), and — found via `comparisons/*.md`
+being brought back in sync with the codebase — the Librarian's RAG retrieval
+was silently rendering every result as an empty string in real runs
+(`OutputArgs` derived `Default` instead of matching its own documented clap
+CLI defaults). Still open in Phase 2: further RAG improvements (per-document
+summarization, multi-collection queries), automatic Chroma collection
+management, and extending memory recall to work without a Librarian
+configured. See `TODO.md` for the live, priority-ranked task list, and
+`comparisons/*.md` for the framework-by-framework detail behind the Phase 3
+items above (resumable runs, interactive HITL) — both were identified from
+gaps those comparisons made concrete, not from a generic feature wishlist.
 
 Contributions welcome — especially on testing, configuration, and tool framework.
