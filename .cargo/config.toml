@@ -1,0 +1,9 @@
+# lld links noticeably faster than the default GNU ld/bfd, and this crate's dependency graph
+# (tokio, reqwest, chroma/chroma-types, ollama-rs, ...) is large enough that link time is a
+# real chunk of every `cargo build`/`cargo check` cycle, especially incremental ones. Scoped to
+# this one target rather than globally, since that's the only platform confirmed to have lld
+# installed (`/usr/bin/lld`) — if you build on a different target/machine without it, either
+# install lld (or mold) for it, or delete this file; cargo will fall back to the system default
+# linker either way, this is a speed optimization, not a build requirement.
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]

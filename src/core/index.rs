@@ -2,10 +2,23 @@ use crate::core::embed::{EmbedArgs, UpsertMode};
 use crate::{Result, RuChatError};
 use chroma::types::UpdateMetadataValue;
 use clap::Parser;
+use futures_util::stream::{self, StreamExt, TryStreamExt};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
+
+/// Bound on concurrent `ctags` subprocess spawns and file reads during indexing — cheap,
+/// independent, CPU-bound work per file, safe to parallelize aggressively; bounded rather than
+/// unbounded purely to avoid exhausting file descriptors/process slots on a very large repo.
+const CTAGS_CONCURRENCY: usize = 8;
+
+/// Bound on concurrent per-file embed+upsert round trips. Deliberately lower than
+/// `CTAGS_CONCURRENCY`: Ollama typically serializes inference per loaded model, so this mostly
+/// overlaps HTTP/network round-trip latency across files rather than multiplying raw embedding
+/// throughput — a large number here would just queue up requests Ollama processes one at a
+/// time anyway, with no benefit and more memory held per in-flight file.
+const EMBED_CONCURRENCY: usize = 4;
 
 /// Recursively walks `root`, collecting files whose extension is in `exts`.
 /// Skips common non-source noise directories outright. Not async — directory
@@ -300,59 +313,88 @@ impl IndexArgs {
             )));
         }
 
+        // Reading + ctags-tagging each file is independent, CPU-bound work — run up to
+        // `CTAGS_CONCURRENCY` at once instead of one file at a time. `buffer_unordered` doesn't
+        // preserve file order, which is fine here: `all_texts` is a map and the embed phase
+        // below doesn't care what order files were tagged in.
+        let root = &self.path;
+        let tagged: Vec<(String, String, Vec<HashMap<String, UpdateMetadataValue>>)> =
+            stream::iter(files.iter())
+                .map(|path| async move {
+                    let rel = path
+                        .strip_prefix(root)
+                        .unwrap_or(path)
+                        .to_string_lossy()
+                        .into_owned();
+
+                    let text = match tokio::fs::read_to_string(path).await {
+                        Ok(t) => t,
+                        Err(e) => {
+                            tracing::warn!(
+                                ?path,
+                                error = %e,
+                                "skipping unreadable file (likely binary)"
+                            );
+                            return None;
+                        }
+                    };
+
+                    let language = language_for_ext(
+                        path.extension().and_then(|e| e.to_str()).unwrap_or(""),
+                    );
+                    let total_lines = text.lines().count();
+
+                    let tags = match run_ctags_json(path).await {
+                        Ok(t) => t,
+                        Err(e) => {
+                            tracing::warn!(
+                                ?path,
+                                error = %e,
+                                "ctags failed, embedding whole-file only"
+                            );
+                            Vec::new()
+                        }
+                    };
+
+                    // Empty metadata_items falls back to whole-file embedding —
+                    // `EmbedArgs::embed`'s existing `metadata_items.len() < 2` branch
+                    // already handles this without any special-casing here.
+                    let items = if tags.is_empty() {
+                        Vec::new()
+                    } else {
+                        build_symbol_metadata(tags, &rel, language, total_lines)
+                    };
+
+                    Some((rel, text, items))
+                })
+                .buffer_unordered(CTAGS_CONCURRENCY)
+                .filter_map(|x| async move { x })
+                .collect()
+                .await;
+
         let mut all_texts = HashMap::new();
-        let mut per_file: Vec<(String, String, Vec<HashMap<String, UpdateMetadataValue>>)> =
-            Vec::new();
-
-        for path in &files {
-            let rel = path
-                .strip_prefix(&self.path)
-                .unwrap_or(path)
-                .to_string_lossy()
-                .into_owned();
-
-            let text = match tokio::fs::read_to_string(path).await {
-                Ok(t) => t,
-                Err(e) => {
-                    tracing::warn!(?path, error = %e, "skipping unreadable file (likely binary)");
-                    continue;
-                }
-            };
-
-            let language =
-                language_for_ext(path.extension().and_then(|e| e.to_str()).unwrap_or(""));
-            let total_lines = text.lines().count();
-
-            let tags = match run_ctags_json(path).await {
-                Ok(t) => t,
-                Err(e) => {
-                    tracing::warn!(?path, error = %e, "ctags failed, embedding whole-file only");
-                    Vec::new()
-                }
-            };
-
-            // Empty metadata_items falls back to whole-file embedding —
-            // `EmbedArgs::embed`'s existing `metadata_items.len() < 2` branch
-            // already handles this without any special-casing here.
-            let items = if tags.is_empty() {
-                Vec::new()
-            } else {
-                build_symbol_metadata(tags, &rel, language, total_lines)
-            };
-
+        for (rel, text, _) in &tagged {
             all_texts.insert(rel.clone(), text.clone());
-            per_file.push((rel, text, items));
         }
 
-        for (rel, text, mut items) in per_file {
-            if self.with_references {
-                attach_reference_counts(&mut items, &all_texts);
-            }
-            let mut args = self.embed_args.clone();
-            args.set_id_prefix(rel);
-            args.embed_with_metadata_items(&text, self.mode, cfg, items)
-                .await?;
-        }
+        // Embedding is the network/Ollama-bound half — bounded lower than the ctags phase (see
+        // `EMBED_CONCURRENCY`'s doc comment). `try_for_each_concurrent` keeps the existing
+        // stop-on-first-error behavior (a single failed file still aborts the whole index run)
+        // instead of silently continuing past a failure just because it's now concurrent.
+        stream::iter(tagged.into_iter().map(Ok::<_, RuChatError>))
+            .try_for_each_concurrent(EMBED_CONCURRENCY, |(rel, text, mut items)| {
+                let all_texts = &all_texts;
+                async move {
+                    if self.with_references {
+                        attach_reference_counts(&mut items, all_texts);
+                    }
+                    let mut args = self.embed_args.clone();
+                    args.set_id_prefix(rel);
+                    args.embed_with_metadata_items(&text, self.mode, cfg, items)
+                        .await
+                }
+            })
+            .await?;
 
         Ok(())
     }
