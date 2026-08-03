@@ -83,15 +83,14 @@ pub(crate) async fn commit_feature_branch(
 }
 
 /// Which paths get staged for the auto-commit: `featured_changes.md` (the changelog entry just
-/// written) plus the single file `apply_patch` touched this run, if any (`Context` currently
-/// tracks at most one accepted patch per run — see `PendingPatch`'s doc comment). Deliberately
-/// NOT `git add .`/`-A`: this must never stage anything ruchat itself didn't produce, whether
-/// that's the user's own unrelated in-progress work or stray files already sitting in the tree.
+/// written) plus every file `apply_patch` touched this run (`Stage::Implement` allows a bounded
+/// number of sequential `apply_patch` calls per round, each to a different file — see its
+/// per-round patch budget). Deliberately NOT `git add .`/`-A`: this must never stage anything
+/// ruchat itself didn't produce, whether that's the user's own unrelated in-progress work or
+/// stray files already sitting in the tree.
 fn commit_add_targets(ctx: &Context) -> Vec<String> {
     let mut targets = vec!["featured_changes.md".to_string()];
-    if let Some(pending) = ctx.pending_patch.as_ref() {
-        targets.push(pending.path.clone());
-    }
+    targets.extend(ctx.pending_patches.iter().map(|p| p.path.clone()));
     targets
 }
 
@@ -99,9 +98,16 @@ fn commit_add_targets(ctx: &Context) -> Vec<String> {
 /// unreachable, timeout, empty response) — a validated, accepted change must never fail to
 /// commit just because this nicety failed.
 fn fallback_commit_message(ctx: &Context) -> String {
-    let message = match ctx.pending_patch.as_ref() {
-        Some(pending) => format!("AI: {}\n\nFile changed: {}", ctx.goal, pending.path),
-        None => format!("AI: {}", ctx.goal),
+    let message = if ctx.pending_patches.is_empty() {
+        format!("AI: {}", ctx.goal)
+    } else {
+        let files = ctx
+            .pending_patches
+            .iter()
+            .map(|p| p.path.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("AI: {}\n\nFiles changed: {files}", ctx.goal)
     };
     wrap_commit_message_body(&message)
 }
@@ -293,12 +299,23 @@ mod tests {
     }
 
     #[test]
-    fn commit_add_targets_includes_only_the_one_patched_file() {
+    fn commit_add_targets_includes_the_one_patched_file() {
         let mut ctx = Context::new("goal".to_string());
         ctx.record_patch("src/foo.rs".to_string(), "original content".to_string());
         assert_eq!(
             commit_add_targets(&ctx),
             vec!["featured_changes.md", "src/foo.rs"]
+        );
+    }
+
+    #[test]
+    fn commit_add_targets_includes_every_file_patched_this_round() {
+        let mut ctx = Context::new("goal".to_string());
+        ctx.record_patch("src/foo.rs".to_string(), "original content".to_string());
+        ctx.record_patch("src/bar.rs".to_string(), "other original".to_string());
+        assert_eq!(
+            commit_add_targets(&ctx),
+            vec!["featured_changes.md", "src/foo.rs", "src/bar.rs"]
         );
     }
 
@@ -309,6 +326,16 @@ mod tests {
         let msg = fallback_commit_message(&ctx);
         assert!(msg.contains("fix the bug"));
         assert!(msg.contains("src/foo.rs"));
+    }
+
+    #[test]
+    fn fallback_commit_message_lists_every_changed_file() {
+        let mut ctx = Context::new("fix the bug".to_string());
+        ctx.record_patch("src/foo.rs".to_string(), "original".to_string());
+        ctx.record_patch("src/bar.rs".to_string(), "other original".to_string());
+        let msg = fallback_commit_message(&ctx);
+        assert!(msg.contains("src/foo.rs"));
+        assert!(msg.contains("src/bar.rs"));
     }
 
     #[test]

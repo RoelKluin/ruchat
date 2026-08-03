@@ -24,6 +24,7 @@ pub(crate) enum ToolName {
     Ripgrep,
     ReadTags,
     CargoCheck,
+    CargoClippy,
     CargoDupes,
 }
 
@@ -52,6 +53,7 @@ impl ToolName {
             }
             ToolName::ReadTags => r#"{"tool":"read_tags","symbol":"<string|omit>"}"#,
             ToolName::CargoCheck => r#"{"tool":"cargo_check"}"#,
+            ToolName::CargoClippy => r#"{"tool":"cargo_clippy"}"#,
             ToolName::CargoDupes => r#"{"tool":"cargo_dupes"}"#,
         }
     }
@@ -69,6 +71,7 @@ impl ToolName {
             ToolName::Ripgrep => &["pattern"],
             ToolName::ReadTags => &[],
             ToolName::CargoCheck => &[],
+            ToolName::CargoClippy => &[],
             ToolName::CargoDupes => &[],
         }
     }
@@ -121,6 +124,7 @@ pub(crate) fn prompt_tool_catalog(prepend: &str) -> String {
             ToolName::Ripgrep,
             ToolName::ReadTags,
             ToolName::CargoCheck,
+            ToolName::CargoClippy,
             ToolName::CargoDupes,
         ],
     )
@@ -129,8 +133,8 @@ pub(crate) fn prompt_tool_catalog(prepend: &str) -> String {
 /// Same as `prompt_tool_catalog` but restricted to the read-only lookup
 /// tools the Scoper's own JSON schema actually declares as valid `"tool"`
 /// values (see `agent_role/scoper.md`) — it must never be offered
-/// `memorize`/`apply_patch`/`cargo_check`/`cargo_dupes`, which aren't in
-/// that enum and aren't lookups.
+/// `memorize`/`apply_patch`/`cargo_check`/`cargo_clippy`/`cargo_dupes`, which
+/// aren't in that enum and aren't lookups.
 pub(crate) fn prompt_scoper_tool_catalog(prepend: &str) -> String {
     render_catalog(
         prepend,
@@ -233,6 +237,21 @@ mod tests {
         let call = parse_tool_call(input).unwrap();
         assert_eq!(call.tool, ToolName::Retrieve);
         assert_eq!(call.args["query"], "foo");
+    }
+
+    #[test]
+    fn parses_cargo_clippy_call() {
+        let input = "```tool_call\n{\"tool\":\"cargo_clippy\"}\n```";
+        let call = parse_tool_call(input).unwrap();
+        assert_eq!(call.tool, ToolName::CargoClippy);
+    }
+
+    #[test]
+    fn cargo_clippy_is_worker_only_not_offered_to_scoper() {
+        // Same posture as cargo_check/cargo_dupes: a diagnostic tool for the Worker mid-
+        // Implement, not a repo-fact lookup the Scoper's own JSON schema declares.
+        assert!(prompt_tool_catalog(">").contains(r#""tool":"cargo_clippy""#));
+        assert!(!prompt_scoper_tool_catalog(">").contains(r#""tool":"cargo_clippy""#));
     }
 
     #[test]

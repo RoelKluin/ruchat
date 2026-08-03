@@ -43,7 +43,11 @@ pub(crate) struct Context {
     pub(crate) output: String, // last agent's raw output — transient scratch, unchanged
     pub(crate) context_config: Value,
     pub(crate) round: u64, // current round number, incremented after each agent's turn
-    pub(crate) pending_patch: Option<PendingPatch>,
+    /// One entry per distinct file `apply_patch` has touched so far *this round* — a round can
+    /// now apply up to `Stage::Implement`'s per-round patch budget of sequential `apply_patch`
+    /// calls (see the multi-file loop there), each to a different file. Order doesn't matter;
+    /// membership does (`record_patch`/`revert_pending_patches`).
+    pub(crate) pending_patches: Vec<PendingPatch>,
 }
 
 impl Context {
@@ -54,7 +58,7 @@ impl Context {
             output: String::new(),
             context_config: Value::Null,
             round: 0,
-            pending_patch: None,
+            pending_patches: Vec::new(),
         }
     }
 
@@ -67,25 +71,28 @@ impl Context {
         });
     }
 
-    /// Records the pre-patch content of a file `apply_patch` is about to
-    /// overwrite. Only one round's worth of pending patch is ever tracked —
-    /// a new record replaces any prior one, since a round only ever applies
-    /// one patch (see `Stage::Implement`).
+    /// Records the pre-patch content of a file `apply_patch` is about to overwrite, unless this
+    /// path was already recorded earlier in the same round — the *first* patch to touch a given
+    /// file this round is the one whose original content matters for revert; a second
+    /// `apply_patch` call to the same file (allowed within one round's patch budget, see
+    /// `Stage::Implement`) reads its "original" fresh off disk, which by then is the
+    /// already-patched content, not the true pre-round baseline.
     pub(crate) fn record_patch(&mut self, path: String, original: String) {
-        self.pending_patch = Some(PendingPatch { path, original });
+        if !self.pending_patches.iter().any(|p| p.path == path) {
+            self.pending_patches.push(PendingPatch { path, original });
+        }
     }
 
-    /// Writes the tracked file back to its pre-patch content and clears the
-    /// pending record. Called when a round's patch is rejected and the
-    /// orchestrator is about to loop back to `Stage::Plan` — restores a
-    /// clean baseline for the next attempt instead of stacking an unreviewed
-    /// mutation. No-ops if no patch is pending (e.g. `apply_patch` was never
-    /// reached, or failed before writing).
-    pub(crate) async fn revert_pending_patch(
-        &mut self,
-        tx: &mpsc::Sender<Result<StreamItem>>,
-    ) {
-        if let Some(pending) = self.pending_patch.take() {
+    /// Writes every tracked file in this round back to its pre-patch content and clears the
+    /// pending list. Called when a round's patch(es) are rejected and the orchestrator is about
+    /// to loop back to `Stage::Plan` — restores a clean baseline for the next attempt instead of
+    /// stacking an unreviewed mutation. No-ops if nothing is pending (e.g. `apply_patch` was
+    /// never reached, or failed before writing).
+    pub(crate) async fn revert_pending_patches(&mut self, tx: &mpsc::Sender<Result<StreamItem>>) {
+        // Collected into an owned Vec first: `self.trace` below needs `&mut self`, which would
+        // conflict with an in-progress `drain` iterator still borrowing `self.pending_patches`.
+        let patches: Vec<PendingPatch> = self.pending_patches.drain(..).collect();
+        for pending in patches {
             match tokio::fs::write(&pending.path, &pending.original).await {
                 Ok(()) => {
                     self.trace(
@@ -336,6 +343,41 @@ impl Context {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn record_patch_keeps_the_first_original_for_a_repeated_path() {
+        // A round can now apply_patch the same file twice (within its patch budget — see
+        // Stage::Implement). The second call's "original" (read fresh off disk by
+        // `Validation::apply_patch`) would be the already-patched content, not the true
+        // pre-round baseline — `record_patch` must ignore that second, wrong "original".
+        let mut ctx = Context::new("goal".to_string());
+        ctx.record_patch("src/foo.rs".to_string(), "true original".to_string());
+        ctx.record_patch("src/foo.rs".to_string(), "intermediate patched content".to_string());
+        assert_eq!(ctx.pending_patches.len(), 1);
+        assert_eq!(ctx.pending_patches[0].original, "true original");
+    }
+
+    #[tokio::test]
+    async fn revert_pending_patches_restores_every_recorded_file_and_clears_the_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_a = dir.path().join("a.txt");
+        let file_b = dir.path().join("b.txt");
+        std::fs::write(&file_a, "patched a").unwrap();
+        std::fs::write(&file_b, "patched b").unwrap();
+
+        let mut ctx = Context::new("goal".to_string());
+        ctx.record_patch(file_a.to_str().unwrap().to_string(), "original a".to_string());
+        ctx.record_patch(file_b.to_str().unwrap().to_string(), "original b".to_string());
+
+        let (tx, mut rx) = mpsc::channel(100);
+        ctx.revert_pending_patches(&tx).await;
+        drop(tx);
+        while rx.recv().await.is_some() {}
+
+        assert!(ctx.pending_patches.is_empty());
+        assert_eq!(std::fs::read_to_string(&file_a).unwrap(), "original a");
+        assert_eq!(std::fs::read_to_string(&file_b).unwrap(), "original b");
+    }
 
     #[test]
     fn planned_files_empty_when_no_plan_turn() {

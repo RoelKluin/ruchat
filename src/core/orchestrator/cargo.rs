@@ -82,6 +82,26 @@ pub(crate) async fn cargo_check() -> Result<String> {
     ))
 }
 
+/// Read-only lint check, mirroring `cargo_check` exactly (same timeout, same
+/// `--message-format=short` plain-text output rather than JSON — this is a Worker-facing tool
+/// meant to be read directly, not a source for programmatic `Diagnostic`s like
+/// `Validation::run_build_and_test`'s parsed compiler output). Lets the Worker see clippy's
+/// own lints directly instead of guessing which one a "fix a clippy warning" task means.
+pub(crate) async fn cargo_clippy() -> Result<String> {
+    let mut cmd = Command::new("cargo");
+    cmd.args(["clippy", "--message-format=short"]);
+    limit_resources(&mut cmd, 30);
+    let output = tokio::time::timeout(Duration::from_secs(30), cmd.output())
+        .await
+        .map_err(|_| RuChatError::InternalError("cargo clippy timed out after 30s".into()))?
+        .map_err(|e| RuChatError::InternalError(format!("cargo clippy failed to run: {e}")))?;
+    Ok(format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    ))
+}
+
 /// `cargo tree --duplicates` — lists dependency versions duplicated in the
 /// resolved graph. Fast, read-only, no timeout needed beyond a generous cap.
 pub(crate) async fn cargo_dupes() -> Result<String> {

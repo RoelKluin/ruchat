@@ -68,11 +68,18 @@ Plan      → Architect writes a plan. Round counter increments here. Identical
 Retrieve  → Librarian runs (round 1 only, if configured).
   ↓
 Implement → Worker responds. If it emitted a *read-only* tool call
-            (Retrieve/Git*/ReadFile/ListDir/Ripgrep/ReadTags/CargoCheck/CargoDupes)
-            and the per-run retrieve budget (default 2) allows it, the
-            orchestrator executes it, appends the result, and re-asks the
-            Worker once more in the same stage. `apply_patch`/`memorize` calls
-            are executed afterward by `execute_and_verify`.
+            (Retrieve/Git*/ReadFile/ListDir/Ripgrep/ReadTags/CargoCheck/
+            CargoClippy/CargoDupes) and the per-run retrieve budget (default
+            2) allows it, the orchestrator executes it, appends the result,
+            and re-asks the Worker once more in the same stage.
+            `apply_patch`/`memorize` calls are executed afterward by
+            `execute_and_verify`. A successful `apply_patch` doesn't
+            necessarily end the round: if the plan's `FILES:` line named more
+            files than have been patched so far, and a per-round patch budget
+            (default 3, reset every round) isn't exhausted, the orchestrator
+            re-asks the Worker for the next file instead of moving on — see
+            `should_continue_patch_loop`. A plan naming zero or one file
+            behaves exactly like a single-patch round always did.
   ↓
 Test      → cargo check + cargo test (60s / 120s timeouts) against the applied patch.
             Failure → Stage::Retry.
@@ -94,10 +101,10 @@ Retry     → If the iteration budget is exhausted: surface the best-known
             none does). Otherwise, maybe run the Summarizer, then back to Plan.
   ↓
 Accept → Commit → `git checkout -b ai/feature-<timestamp>`, stage only
-            `featured_changes.md` and the one file `apply_patch` touched this
-            run (not `git add .`), generate a commit message via a direct LLM
-            call over the staged diff (falls back to a deterministic message
-            on failure), commit, return to the original branch → Done
+            `featured_changes.md` and every file `apply_patch` touched this
+            round (not `git add .`), generate a commit message via a direct
+            LLM call over the staged diff (falls back to a deterministic
+            message on failure), commit, return to the original branch → Done
 ```
 
 `Escalate(reason)` and `Done` are terminal — the loop breaks and the reason (if
@@ -123,6 +130,7 @@ so it can't drift from what the model is actually told:
 | `ripgrep` | `{"tool":"ripgrep","pattern":"<string>","path":"<string\|omit>","glob":"<string\|omit>","max_count":<int\|omit>}` | `pattern` |
 | `read_tags` | `{"tool":"read_tags","symbol":"<string\|omit>"}` | — |
 | `cargo_check` | `{"tool":"cargo_check"}` | — |
+| `cargo_clippy` | `{"tool":"cargo_clippy"}` | — |
 | `cargo_dupes` | `{"tool":"cargo_dupes"}` | — |
 
 Notes:
@@ -134,13 +142,20 @@ Notes:
   `agent/protocol.rs`) or the patch is refused. A plan without a `FILES:` line
   isn't restricted — this fails open by design since local models don't
   reliably emit new prompt conventions.
-- `apply_patch` refuses diffs over `MAX_PATCH_DIFF_BYTES` (8,000 bytes) before
-  ever touching disk, and records the pre-patch file content
-  (`Context::record_patch`) so a rejection later in the same round (Test,
-  Validate, or Critique) rolls the file back to its pre-patch state
-  (`Context::revert_pending_patch`, called from `Stage::Retry` right before
-  looping back to `Plan`) instead of leaving an unreviewed mutation in place
-  for the next round to build on top of.
+- `apply_patch` refuses diffs over `MAX_PATCH_DIFF_BYTES` (8,000 bytes, per
+  call — not per round) before ever touching disk, and records each touched
+  file's pre-patch content (`Context::record_patch`, keeping the *first*
+  original if the same file is patched twice in one round) so a rejection
+  later in the same round (Test, Validate, or Critique) rolls every file this
+  round touched back to its pre-patch state (`Context::revert_pending_patches`,
+  called from `Stage::Retry` right before looping back to `Plan`) instead of
+  leaving an unreviewed mutation in place for the next round to build on top
+  of.
+- A round can apply up to 3 sequential `apply_patch` calls (`Stage::Implement`'s
+  per-round patch budget), one per distinct file, when the plan's `FILES:`
+  line named more than one — see the stage-machine diagram above. Each call
+  is independently subject to the same tracked-file, scope, and diff-size
+  checks.
 - `read_file`/`list_dir` refuse any path that canonicalizes outside the repo root.
 - `read_file` truncates output past 32,000 bytes with a note to request a
   narrower range instead.

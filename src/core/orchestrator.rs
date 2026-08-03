@@ -523,10 +523,10 @@ impl Orchestrator {
                     if let Ok(call) = tools::parse_tool_call(&ctx.output)
                         && matches!(
                             call.tool,
-                            ToolName::Retrieve | ToolName::GitLog | ToolName::GitBlame 
+                            ToolName::Retrieve | ToolName::GitLog | ToolName::GitBlame
                             | ToolName::GitDiff | ToolName::GitSearchHistory | ToolName::ReadFile
                             | ToolName::ListDir | ToolName::Ripgrep | ToolName::ReadTags
-                            | ToolName::CargoCheck | ToolName::CargoDupes
+                            | ToolName::CargoCheck | ToolName::CargoClippy | ToolName::CargoDupes
                         )
                         && retrieve_budget > 0
                     {
@@ -558,12 +558,45 @@ impl Orchestrator {
                     }
                     ctx.push_turn(TurnKind::Implementation, "Worker", ctx.output.clone());
 
-                    match self.worker.execute_and_verify(ctx).await? {
-                        Validation::Failure(err) => {
-                            ctx.push_turn(TurnKind::Rejection, "ApplyPatch", err);
-                            Stage::Retry
+                    // Allows up to `patch_budget` sequential `apply_patch` calls in THIS round
+                    // (reset fresh every time this stage is entered, i.e. every new round —
+                    // unlike `retrieve_budget` above, which is a conservative cap for the whole
+                    // run) so a plan naming multiple files in its `FILES:` line can land as one
+                    // commit instead of only ever touching the first of them. Only continues
+                    // looping when the plan actually named more files than have been patched so
+                    // far (`ctx.planned_files().len() > ctx.pending_patches.len()`) — a plan
+                    // with no `FILES:` line at all (or exactly one) behaves identically to the
+                    // single-patch-per-round flow this replaces. Ends the same way a
+                    // single-patch round always did: on `Failure` (reject/retry), or anything
+                    // that isn't a successful `ApplyPatch` (`memorize`, unparseable output).
+                    let mut patch_budget: u32 = 3;
+                    loop {
+                        let is_apply_patch = matches!(
+                            tools::parse_tool_call(&ctx.output),
+                            Ok(tools::StructuredToolCall { tool: ToolName::ApplyPatch, .. })
+                        );
+                        match self.worker.execute_and_verify(ctx).await? {
+                            Validation::Failure(err) => {
+                                ctx.push_turn(TurnKind::Rejection, "ApplyPatch", err);
+                                break Stage::Retry;
+                            }
+                            Validation::Success if is_apply_patch => {
+                                patch_budget = patch_budget.saturating_sub(1);
+                                if !should_continue_patch_loop(ctx, patch_budget) {
+                                    break Stage::Test;
+                                }
+                                ctx.push_turn(
+                                    TurnKind::System,
+                                    "Orchestrator",
+                                    "Patch applied. The plan's FILES: line names more files \
+                                    than you've changed so far — call apply_patch for the next \
+                                    one now, or emit no tool call if you're done.".into(),
+                                );
+                                retry_transient!(self.worker.query_stream(&self.ollama, ctx, &tx))?;
+                                ctx.push_turn(TurnKind::Implementation, "Worker", ctx.output.clone());
+                            }
+                            _ => break Stage::Test,
                         }
-                        _ => Stage::Test,
                     }
                 }
                 Stage::Test => {
@@ -627,7 +660,7 @@ impl Orchestrator {
                         // applied (Test/Validate/Critique rejected it after the fact) must
                         // not be left in place, or the next Worker round starts editing an
                         // unreviewed mutation instead of the last known-good state.
-                        ctx.revert_pending_patch(&tx).await;
+                        ctx.revert_pending_patches(&tx).await;
                         if let Some(summarizer) = self.summarizer.as_mut() {
                             let approx_tokens: u64 = ctx
                                 .turns
@@ -897,6 +930,11 @@ impl Orchestrator {
                 ctx.push_turn(TurnKind::Retrieval, "CargoCheck", out);
                 Ok(())
             }
+            ToolName::CargoClippy => {
+                let out = crate::orchestrator::cargo::cargo_clippy().await?;
+                ctx.push_turn(TurnKind::Retrieval, "CargoClippy", out);
+                Ok(())
+            }
             ToolName::CargoDupes => {
                 let out = crate::orchestrator::cargo::cargo_dupes().await?;
                 ctx.push_turn(TurnKind::Retrieval, "CargoDupes", out);
@@ -968,6 +1006,16 @@ impl Orchestrator {
         }
         Ok(Stage::Scope)
     }
+}
+
+/// Whether `Stage::Implement`'s multi-file patch loop should re-ask the Worker for another
+/// `apply_patch` call after a successful one, instead of finalizing the round. Deliberately
+/// count-based rather than matching planned paths against patched ones exactly (that would
+/// duplicate `protocol.rs::file_in_scope`'s suffix-matching for little practical benefit here):
+/// a plan with no `FILES:` line (or exactly one file) always returns `false` once one patch has
+/// landed, so a single-file round behaves identically to before this loop existed.
+fn should_continue_patch_loop(ctx: &Context, remaining_patch_budget: u32) -> bool {
+    remaining_patch_budget > 0 && ctx.planned_files().len() > ctx.pending_patches.len()
 }
 
 /// Treats an explicit empty string the same as an omitted optional field.
@@ -1175,6 +1223,61 @@ mod tests {
             "Architect": { "model": "fake" },
             "Worker": { "model": "fake" },
         })
+    }
+
+    #[test]
+    fn patch_loop_does_not_continue_when_the_plan_named_no_files() {
+        // No FILES: line at all (or a plan the parser found none in) — the common/legacy case.
+        // Must behave exactly like the single-patch-per-round flow this loop replaced.
+        let mut ctx = Context::new("goal".to_string());
+        ctx.push_turn(TurnKind::Plan, "Architect", "just do it, no files line".to_string());
+        ctx.record_patch("src/foo.rs".to_string(), "original".to_string());
+        assert!(!should_continue_patch_loop(&ctx, 2));
+    }
+
+    #[test]
+    fn patch_loop_does_not_continue_when_the_plan_named_exactly_one_file() {
+        let mut ctx = Context::new("goal".to_string());
+        ctx.push_turn(TurnKind::Plan, "Architect", "FILES: src/foo.rs".to_string());
+        ctx.record_patch("src/foo.rs".to_string(), "original".to_string());
+        assert!(!should_continue_patch_loop(&ctx, 2));
+    }
+
+    #[test]
+    fn patch_loop_continues_when_the_plan_named_more_files_than_patched_so_far() {
+        let mut ctx = Context::new("goal".to_string());
+        ctx.push_turn(
+            TurnKind::Plan,
+            "Architect",
+            "FILES: src/foo.rs, src/bar.rs".to_string(),
+        );
+        ctx.record_patch("src/foo.rs".to_string(), "original".to_string());
+        assert!(should_continue_patch_loop(&ctx, 2));
+    }
+
+    #[test]
+    fn patch_loop_stops_once_every_planned_file_is_patched_even_with_budget_left() {
+        let mut ctx = Context::new("goal".to_string());
+        ctx.push_turn(
+            TurnKind::Plan,
+            "Architect",
+            "FILES: src/foo.rs, src/bar.rs".to_string(),
+        );
+        ctx.record_patch("src/foo.rs".to_string(), "original".to_string());
+        ctx.record_patch("src/bar.rs".to_string(), "original".to_string());
+        assert!(!should_continue_patch_loop(&ctx, 5));
+    }
+
+    #[test]
+    fn patch_loop_stops_when_budget_is_exhausted_even_with_files_still_unplanned() {
+        let mut ctx = Context::new("goal".to_string());
+        ctx.push_turn(
+            TurnKind::Plan,
+            "Architect",
+            "FILES: src/foo.rs, src/bar.rs, src/baz.rs".to_string(),
+        );
+        ctx.record_patch("src/foo.rs".to_string(), "original".to_string());
+        assert!(!should_continue_patch_loop(&ctx, 0));
     }
 
     #[tokio::test]

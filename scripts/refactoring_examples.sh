@@ -121,6 +121,17 @@ simplify it to the idiomatic form. Only touch that one expression. If \
 none exist anywhere in src/, say so instead of inventing a change."
 }
 
+fix_one_clippy_lint() {
+  # Needs the `cargo_clippy` typed tool (agent/tools.rs::ToolName::CargoClippy,
+  # orchestrator::cargo::cargo_clippy) — added 2026-08-03, previously listed in
+  # refactoring_examples_todo.sh as blocked.
+  run_ruchat "--critic Idiomatic-Rust" \
+    "You are a rust specialist. You work on the ruchat git repository. Task: \
+use the cargo_clippy tool to see the crate's current clippy warnings, pick \
+the first one reported in src/, and fix just that one lint. If clippy \
+reports nothing, say so instead of inventing a change."
+}
+
 remove_redundant_clone() {
   run_ruchat "--critic Performance" \
     "You are a rust specialist. You work on the ruchat git repository. Task: \
@@ -173,6 +184,27 @@ const explaining what the number means. Only touch that one literal and \
 its new const."
 }
 
+rename_helper_and_call_sites() {
+  # Needs multi-file patches per round (Stage::Implement's per-round patch
+  # budget, up to 3 apply_patch calls) — added 2026-08-03, previously listed
+  # in refactoring_examples_todo.sh as blocked. Stays within budget: one file
+  # for the definition, up to two more for call sites.
+  run_ruchat "--critic Correctness" \
+    "You are a rust specialist. You work on the ruchat git repository. Task: \
+find one pub(crate) function whose name doesn't clearly describe what it \
+does, used from no more than two other files. Rename it and update every \
+call site (its definition plus each of those files, at most 3 files \
+total)."
+}
+
+format_a_few_drifted_files() {
+  # Same capability this needs as rename_helper_and_call_sites above.
+  run_ruchat "--critic Style" \
+    "You are a rust specialist. You work on the ruchat git repository. Task: \
+pick 3 files under src/ with cargo fmt formatting drift and reformat just \
+those 3 to match cargo fmt's default style, with no behavior change."
+}
+
 # --- Dispatch ----------------------------------------------------------------
 
 list() {
@@ -184,11 +216,14 @@ Available examples (each is one small, single-file, low-compile-risk task):
   clarify_doc_comment           - rewrite one unclear /// doc comment
   add_missing_doc_comment       - add a /// summary to one undocumented item
   simplify_boolean_expression   - simplify one redundant boolean comparison
+  fix_one_clippy_lint           - fix the first clippy warning cargo_clippy reports
   remove_redundant_clone        - remove one provably-unnecessary .clone()
   convert_loop_to_iterator      - rewrite one push-only for loop as .collect()
   add_unit_test_for_pure_function - add one #[test] for an untested pure fn
   replace_unwrap_with_question_mark - replace one risky .unwrap() with ?
   extract_magic_number          - name one magic number as a const
+  rename_helper_and_call_sites  - rename a function and its call sites (up to 3 files)
+  format_a_few_drifted_files    - cargo-fmt 3 files with formatting drift
 
 Run one with:
   bash scripts/refactoring_examples.sh run <name>

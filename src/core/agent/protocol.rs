@@ -252,7 +252,7 @@ impl Validation {
                 tokio::fs::write(target, patched).await?;
                 // Recorded so a later Test/Validate/Critique rejection this round can
                 // restore the pre-patch content instead of leaving it applied — see
-                // `Context::revert_pending_patch`.
+                // `Context::revert_pending_patches`.
                 ctx.record_patch(target.to_string(), original);
                 Ok(Validation::Success)
             }
