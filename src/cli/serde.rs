@@ -16,12 +16,6 @@ pub(crate) async fn load_merged_config(config_args: &ConfigArgs) -> Result<Value
     config_args.load().await
 }
 
-pub(crate) async fn read_config_file(config_path: &str) -> Result<Value> {
-    let content = fs::read_to_string(config_path).await?;
-    let content = serde_json::from_str(&content)?;
-    Ok(content)
-}
-
 // New
 pub(crate) async fn load_manager(path: &str) -> Result<Manager> {
     if !Path::new(path).exists() {

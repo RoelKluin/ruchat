@@ -10,6 +10,7 @@ pub(crate) struct ServerArgs {
     #[arg(
         short = 's',
         long,
+        env = "OLLAMA_SERVER",
         default_value = "http://localhost:11434",
         help_heading = "Ollama Server",
         hide_short_help = true,

@@ -18,7 +18,7 @@ We prioritize **predictability**, **performance**, **token efficiency**, and **t
 
 **Goal**: Production-ready foundation
 
-- [ ] Consolidate configuration system (`config.toml` + environment variables + CLI overrides)
+- [~] Consolidate configuration system — the config-file + profile piece already existed and works (`cli/config.rs::ConfigArgs`, JSON not TOML but that was always an allowed format); added `OLLAMA_SERVER`/`CHROMA_TENANT`/`CHROMA_DATABASE` env vars for parity with the existing `CHROMA_SERVER`/`CHROMA_TOKEN`. What's still open is the generic per-flag CLI/file merge — deliberately deferred already (see `cli/serde.rs::load_merged_config`'s comment, and `TODO.md`), not attempted here
 - [x] Structured logging (`tracing`) — `main.rs` wires `tracing_subscriber` with `EnvFilter` for configurable levels (`RUST_LOG`) and now also supports `RUCHAT_LOG_FORMAT=json` for newline-delimited JSON output; genuine diagnostic `eprintln!`/`println!` call sites in library code migrated to `tracing`, remaining ones are each command's actual stdout output (see `TODO.md`)
 - [~] Comprehensive error handling with actionable messages — fixed the concrete cases found where an error handler discarded the real cause (model-not-found vs. unreachable-Ollama-server, unknown tool names, a crash-on-transient-failure `.unwrap()`) and removed ~8 provably-safe-but-panic-shaped unwraps; the much larger job — auditing ~85 call sites using the generic `InternalError`/`Is` catch-all variants — is still open, see `TODO.md`
 - [ ] Unit tests for all parsers (`where.rs`, `prompt.rs`, `include.rs`) — still open, see `TODO.md`
@@ -109,13 +109,14 @@ By v0.4.0, Ruchat should feel like “LangGraph for people who want to stay full
 ---
 
 **Current Status (August 2026)**:  
-Config system consolidation and TUI fixes haven't started; the v0.2.0 release itself
-hasn't happened either. Everything else in Phase 1 is now done or verified-as-already-
-satisfied: structured logging (levels + JSON output), the eprintln!/println! migration,
-parser unit tests, the model-option double-round-trip removal, error-handling
-improvements at the sites that discarded real causes, and connection pooling (turned
-out to already be handled by the existing shared-client architecture). Phase 2 also
-picked up real work this cycle: the structured tool-calling framework, parallel critic
+TUI fixes haven't started; the v0.2.0 release itself hasn't happened either. Config
+system consolidation turned out to be mostly already done (config file + profiles
+existed and worked, just needed a couple of missing env vars). Everything else in
+Phase 1 is now done or verified-as-already-satisfied: structured logging (levels +
+JSON output), the eprintln!/println! migration, parser unit tests, the model-option
+double-round-trip removal, error-handling improvements at the sites that discarded
+real causes, and connection pooling (turned out to already be handled by the existing
+shared-client architecture). Phase 2 also picked up real work this cycle: the structured tool-calling framework, parallel critic
 execution (plus finding and fixing the bug that made it a silent no-op), `apply_patch`
 hardening, the Team/Manager reconciliation, and the new Scoper role — alongside a
 round of test-infrastructure work (repairing an uncompilable suite, wiring 9/10

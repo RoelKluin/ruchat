@@ -68,6 +68,7 @@ pub(crate) struct ChromaClientConfigArgs {
     /// The tenant identifier used for multi-tenancy environments.
     #[arg(
         long,
+        env = "CHROMA_TENANT",
         default_value = "default_tenant",
         help_heading = "Chroma Connection"
     )]
@@ -77,6 +78,7 @@ pub(crate) struct ChromaClientConfigArgs {
     #[arg(
         short = 'd',
         long,
+        env = "CHROMA_DATABASE",
         default_value = "default",
         help_heading = "Chroma Connection"
     )]
