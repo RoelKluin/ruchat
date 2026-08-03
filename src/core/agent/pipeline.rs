@@ -1,6 +1,6 @@
 use crate::agent::event::StreamItem;
 use crate::agent::llm_client::LlmClient;
-use crate::core::orchestrator::Orchestrator;
+use crate::core::orchestrator::{DebugBreakpoints, Orchestrator};
 use crate::Result;
 use crate::RuChatError;
 use ollama_rs::generation::chat::ChatMessage;
@@ -23,6 +23,7 @@ pub(crate) enum AgentPipeline {
         orchestrator: Orchestrator,
         goal: String,
         debug_sequence: Option<String>,
+        breakpoints: DebugBreakpoints,
     },
     /// The non-agentic `pipe` path — no Architect/Worker config, just a bare
     /// prompt sent straight to the model. Kept as its own variant (rather
@@ -43,7 +44,8 @@ impl AgentPipeline {
                 orchestrator,
                 goal,
                 debug_sequence,
-            } => Box::pin(orchestrator.run_task_stream(goal, debug_sequence)),
+                breakpoints,
+            } => Box::pin(orchestrator.run_task_stream(goal, debug_sequence, breakpoints)),
             AgentPipeline::OneShot {
                 ollama,
                 model,

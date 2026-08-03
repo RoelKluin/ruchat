@@ -4,7 +4,7 @@ use crate::anthropic::AnthropicArgs;
 use crate::cli::prompt::PromptArgs;
 use crate::io::Io;
 use crate::ollama::OllamaArgs;
-use crate::orchestrator::Orchestrator;
+use crate::orchestrator::{DebugBreakpoints, Orchestrator};
 use crate::{Result, RuChatError};
 use clap::{Parser, ValueEnum};
 use serde_json::Value;
@@ -76,6 +76,29 @@ pub(crate) struct AskArgs {
     /// Path to a single JSON file defining debug sequence + context imputations.
     #[arg(long, hide_short_help = true, hide_long_help = false, help_heading = "Debugging")]
     debug_sequence: Option<String>,
+
+    /// With --debug-sequence: pause for interactive inspection after every role in the
+    /// sequence, waiting on stdin (Enter to continue, 'c' to stop pausing, 'q' to abort).
+    #[arg(
+        long,
+        requires = "debug_sequence",
+        hide_short_help = true,
+        hide_long_help = false,
+        help_heading = "Debugging"
+    )]
+    step: bool,
+
+    /// With --debug-sequence: pause for interactive inspection after this specific role (e.g.
+    /// --breakpoint Worker). Repeatable.
+    #[arg(
+        long,
+        requires = "debug_sequence",
+        action = clap::ArgAction::Append,
+        hide_short_help = true,
+        hide_long_help = false,
+        help_heading = "Debugging"
+    )]
+    breakpoint: Vec<String>,
 
     #[command(flatten)]
     prompt: PromptArgs,
@@ -254,6 +277,7 @@ impl AskArgs {
                 orchestrator,
                 goal: prompt,
                 debug_sequence: self.debug_sequence.clone(),
+                breakpoints: DebugBreakpoints::new(self.step, self.breakpoint.clone()),
             }
         } else {
             AgentPipeline::OneShot {

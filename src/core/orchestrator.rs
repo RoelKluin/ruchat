@@ -54,6 +54,30 @@ struct ValidatorVerdict {
     reason: String,
 }
 
+/// Where a `--debug-sequence` run should pause for interactive step-by-step inspection —
+/// `debug_stage_machine` only, never the real `run_stage_machine`, since this is specifically a
+/// developer diagnostic tool for reproducing/inspecting a fixed role sequence, not something a
+/// real (potentially unattended) run should ever block on. `Default` (both fields empty/false)
+/// means no pausing at all — the original, fully unattended behavior, still the default when
+/// neither `--step` nor `--breakpoint` is given.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct DebugBreakpoints {
+    /// Pause after every role in the sequence.
+    step: bool,
+    /// Pause only after these specific role names (e.g. `["Worker", "Validator"]`).
+    roles: Vec<String>,
+}
+
+impl DebugBreakpoints {
+    pub(crate) fn new(step: bool, roles: Vec<String>) -> Self {
+        Self { step, roles }
+    }
+
+    fn should_pause_after(&self, role: &str) -> bool {
+        self.step || self.roles.iter().any(|r| r == role)
+    }
+}
+
 pub(crate) struct Orchestrator {
     // Core pipeline
     scoper: Option<Agent>,
@@ -219,6 +243,7 @@ impl Orchestrator {
         mut self,
         goal: String,
         debug_sequence: Option<String>,
+        breakpoints: DebugBreakpoints,
     ) -> impl Stream<Item = OrchestratorResult> {
         let (tx, rx) = mpsc::channel(100);
         let cancel = CancellationToken::new();
@@ -247,7 +272,7 @@ impl Orchestrator {
         let task_cancel = cancel.clone();
         tokio::spawn(async move {
             let result = if let Some(path) = debug_sequence {
-                self.debug_stage_machine(goal, path, tx.clone(), task_cancel).await
+                self.debug_stage_machine(goal, path, tx.clone(), task_cancel, breakpoints).await
             } else {
                 self.run_stage_machine(goal, tx.clone(), task_cancel).await
             };
@@ -936,6 +961,7 @@ impl Orchestrator {
         path: String,
         tx: mpsc::Sender<OrchestratorResult>,
         cancel: CancellationToken,
+        mut breakpoints: DebugBreakpoints,
     ) -> Result<()> {
         let debug_json: Value = serde_json::from_str(&tokio::fs::read_to_string(path).await?)?;
         let sequence: Vec<String> = debug_json["sequence"]
@@ -1027,6 +1053,29 @@ impl Orchestrator {
             }
 
             ctx.print_debug_info(&tx, &role).await;
+
+            // Sent via `ctx.trace` (the same channel `print_debug_info`'s state dump just went
+            // through), not a direct stdout write, so the two can't race — the renderer sees
+            // this prompt strictly after the state it's a prompt *about*. Only the actual
+            // blocking read needs real stdin, via the same `Io` type used elsewhere in this
+            // codebase for interactive prompts (`func`'s REPL, `AskArgs::ask`'s stdin fallback).
+            if breakpoints.should_pause_after(&role) {
+                ctx.trace(
+                    &tx,
+                    format!(
+                        "[BREAKPOINT] Paused after round {} ({role}). Press Enter to \
+                         continue, 'c' to continue without further pauses, 'q' to abort.",
+                        ctx.round,
+                    ),
+                )
+                .await;
+                let mut io = crate::io::Io::new();
+                match io.read_line().await.unwrap_or_default().trim() {
+                    "q" | "Q" => return Err(RuChatError::Cancelled),
+                    "c" | "C" => breakpoints = DebugBreakpoints::default(),
+                    _ => {}
+                }
+            }
         }
 
         ctx.trace(
@@ -1520,7 +1569,11 @@ mod tests {
     ) -> Vec<StreamItem> {
         let orchestrator = build_test_orchestrator(config, responses, query_response).await;
         let path = format!("agent_debug/{fixture}");
-        let stream = orchestrator.run_task_stream("test goal".to_string(), Some(path));
+        let stream = orchestrator.run_task_stream(
+            "test goal".to_string(),
+            Some(path),
+            DebugBreakpoints::default(),
+        );
         tokio_stream::StreamExt::collect::<Vec<Result<StreamItem>>>(stream)
             .await
             .into_iter()
@@ -1751,6 +1804,37 @@ mod tests {
             .expect("a repeated read-only tool call should be rejected");
         assert!(rejection.content.contains("already used this round's one information-lookup"));
         assert!(rejection.content.contains("apply_patch"));
+    }
+
+    // Regression canary for debug-mode breakpoint support (maintainer: "keep on working on
+    // roadmap entries, overnight"). `should_pause_after` is the one piece of this feature with
+    // real branching logic that doesn't need a live terminal to exercise — the actual pause
+    // (blocking stdin read via `Io`) was instead verified live: `--debug-sequence
+    // agent_debug/architect_only.json --step` against a real Ollama server, confirming the
+    // breakpoint trace message appears correctly ordered after `print_debug_info`'s state dump
+    // (both go through the same `ctx.trace` channel, avoiding a race with a direct stdout
+    // write), that a piped Enter resumes to completion, and that 'q' aborts cleanly.
+    #[test]
+    fn debug_breakpoints_default_never_pauses() {
+        let bp = DebugBreakpoints::default();
+        assert!(!bp.should_pause_after("Architect"));
+        assert!(!bp.should_pause_after("Worker"));
+    }
+
+    #[test]
+    fn debug_breakpoints_step_pauses_after_every_role() {
+        let bp = DebugBreakpoints::new(true, vec![]);
+        assert!(bp.should_pause_after("Architect"));
+        assert!(bp.should_pause_after("AnyRoleAtAll"));
+    }
+
+    #[test]
+    fn debug_breakpoints_named_pauses_only_after_listed_roles() {
+        let bp = DebugBreakpoints::new(false, vec!["Worker".to_string(), "Validator".to_string()]);
+        assert!(bp.should_pause_after("Worker"));
+        assert!(bp.should_pause_after("Validator"));
+        assert!(!bp.should_pause_after("Architect"));
+        assert!(!bp.should_pause_after("Librarian"));
     }
 
     #[tokio::test]
