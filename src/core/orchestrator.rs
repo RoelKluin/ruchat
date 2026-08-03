@@ -283,8 +283,17 @@ impl Orchestrator {
             match res {
                 Ok((label, text, approval_signal)) => {
                     ctx.trace(tx, format!("[Critic '{label}']:\n{text}")).await;
+                    let source = format!("Critic '{label}'");
                     if !text.contains(&approval_signal) {
-                        ctx.push_turn(TurnKind::Rejection, "Critic", text);
+                        ctx.push_turn(TurnKind::Rejection, &source, text);
+                    } else {
+                        // Unlike the rejection arm above, an approving critic's review used to
+                        // push no turn at all — only the ephemeral `ctx.trace(...)` call above
+                        // saw it, which shows up live on the console/event stream but is never
+                        // added to `ctx.turns`, so it's gone from the persisted trace file the
+                        // next time it's rewritten. An approving review is still an action this
+                        // critic took and should be just as visible as a rejecting one.
+                        ctx.push_turn(TurnKind::System, &source, text);
                     }
                 }
                 Err(e) => {
@@ -643,7 +652,16 @@ impl Orchestrator {
                                 ctx.push_turn(TurnKind::Rejection, "Validator", v.reason);
                                 Stage::Retry
                             }
-                            Some(_) => Stage::Critique,
+                            Some(_) => {
+                                // Unlike the REJECTED/unparseable arms below, a VALIDATED
+                                // verdict used to push no turn at all — the Validator's action
+                                // was streamed live to the console but never recorded, so it
+                                // was invisible in the trace file afterward even though nothing
+                                // went wrong. Every agent's actual output should be visible in
+                                // the trace, not just the ones that trigger a rejection.
+                                ctx.push_turn(TurnKind::System, "Validator", ctx.output.clone());
+                                Stage::Critique
+                            }
                             None => {
                                 // Conservative: unparseable verdict is treated
                                 // as a rejection rather than silently passing.
@@ -1089,6 +1107,12 @@ impl Orchestrator {
             .ok_or_else(|| RuChatError::Is("Scoper not enabled".into()))?;
 
         retry_transient!(scoper.query_stream(&self.ollama, ctx, tx))?;
+        // The Scoper's own raw output used to only ever reach `ctx.turns` in fragments — the
+        // `notes` field below if non-empty, a rejected-lookup reason, a failed-lookup message —
+        // never the actual action it took this round. A round where the Scoper found nothing
+        // notable to say (empty notes, goal already READY) left no trace of it having run at
+        // all, even though its output was streamed live to the console. Record it unconditionally.
+        ctx.push_turn(TurnKind::System, "Scoper", ctx.output.clone());
 
         let Some(verdict) = scope::parse_scope_verdict(&ctx.output) else {
             ctx.trace(
@@ -1902,6 +1926,70 @@ mod tests {
 
         // Both approved, so no rejection turns.
         assert!(!ctx.turns.iter().any(|t| t.kind == TurnKind::Rejection));
+    }
+
+    // Regression: maintainer feedback that the trace "only contains the agent output, not the
+    // agent actions" — an approving critic's review used to push no turn at all, only the
+    // ephemeral `ctx.trace(...)` call visible live on the event stream at the time, which is
+    // never added to `ctx.turns` and so vanishes from the persisted trace file afterward. An
+    // approving review is still an action the critic took and must be just as visible as a
+    // rejecting one.
+    #[tokio::test]
+    async fn run_critics_parallel_records_an_approving_review_as_a_system_turn() {
+        let mut config = base_config();
+        config["Critics"] = json!([{ "model": "fake", "name": "Security", "task": "security review" }]);
+        let mut orchestrator =
+            build_test_orchestrator(config, vec!["No issues found.\nAPPROVED"], None).await;
+        let mut ctx = Context::new("goal".to_string());
+        ctx.output = "some implementation".to_string();
+        let (tx, _rx) = mpsc::channel(100);
+
+        orchestrator
+            .run_critics_parallel(&mut ctx, &tx)
+            .await
+            .unwrap();
+
+        let recorded = ctx.turns.iter().find(|t| {
+            t.kind == TurnKind::System
+                && t.source == "Critic 'Security'"
+                && t.content.contains("No issues found.")
+        });
+        assert!(
+            recorded.is_some(),
+            "expected the approving critic's review recorded as a System turn, got: {:?}",
+            ctx.turns
+        );
+    }
+
+    // Regression: same class of bug as the critic-approval fix above — a Scoper round that
+    // found nothing notable to say (goal already READY, empty notes) used to leave `ctx.turns`
+    // completely untouched, even though the Scoper's own output was streamed live to the
+    // console. `run_scope_stage` now records the raw output unconditionally, before any of the
+    // selective notes/lookup-rejection turns that only fire in specific cases.
+    #[tokio::test]
+    async fn run_scope_stage_records_its_raw_output_even_with_empty_notes() {
+        let mut config = base_config();
+        config["Scoper"] = json!({ "model": "fake" });
+        let mut orchestrator = build_test_orchestrator(
+            config,
+            vec![r#"{"verdict": "READY", "notes": ""}"#],
+            None,
+        )
+        .await;
+        let mut ctx = Context::new("goal".to_string());
+        let (tx, _rx) = mpsc::channel(100);
+
+        let stage = orchestrator.run_scope_stage(&mut ctx, &tx).await.unwrap();
+
+        assert_eq!(stage, Stage::Plan);
+        let recorded = ctx.turns.iter().find(|t| {
+            t.kind == TurnKind::System && t.source == "Scoper" && t.content.contains("READY")
+        });
+        assert!(
+            recorded.is_some(),
+            "expected the Scoper's raw output recorded even with empty notes, got: {:?}",
+            ctx.turns
+        );
     }
 
     #[tokio::test]
