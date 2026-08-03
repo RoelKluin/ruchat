@@ -3,7 +3,7 @@ pub(crate) mod fs;
 pub(crate) mod search;
 pub(crate) mod scope;
 pub(crate) mod cargo;
-pub(crate) mod postmortem;
+pub(crate) mod run_summary;
 pub(super) mod task;
 
 use crate::agent::event::{StreamItem, AgentEvent};
@@ -427,7 +427,7 @@ impl Orchestrator {
             parts.push(format!("Summarizer={}", a.get_str("model").unwrap_or("?")));
         }
         format!(
-            "Models: {} — full prompts logged to .ruchat_trace.md as the run progresses.",
+            "Models: {} — full prompts logged to ruchat_traces/ as the run progresses.",
             parts.join(", ")
         )
     }
@@ -450,6 +450,7 @@ impl Orchestrator {
             .unwrap_or(7);
         let mut ctx = Context::new(goal);
         let ctx = &mut ctx;
+        ctx.init_trace_index().await;
 
         if let Some(librarian) = self.librarian.as_ref() {
             ctx.read_config_file(
@@ -708,17 +709,18 @@ impl Orchestrator {
             };
         }
         ctx.trace(&tx, String::new()).await;
-        if !success {
-            self.record_failure_summary(ctx, &tx).await;
-        }
+        self.finalize_trace(ctx, &tx, success).await;
         Ok(())
     }
 
-    /// Analyzes the just-finished, unsuccessful run's trace with a single LLM call and
-    /// prepends the result to `.ruchat_trace.md` — best-effort: a failure here (Ollama
-    /// unreachable, timeout, empty response) only logs a warning, since this is a diagnostic
-    /// nicety, not something that should ever mask or replace the original failure.
-    async fn record_failure_summary(&self, ctx: &Context, tx: &mpsc::Sender<OrchestratorResult>) {
+    /// Analyzes the just-finished run's trace with a single LLM call and archives the result —
+    /// `ruchat_traces/successes/` (summary only) if `Stage::Commit` succeeded, otherwise
+    /// `ruchat_traces/failures/` (summary plus the full trace) — removing the live
+    /// in-progress file either way. If the LLM call itself fails (Ollama unreachable, timeout,
+    /// empty response), the run is still archived, just with a placeholder note instead of a
+    /// real summary — a diagnostic nicety failing must never mask or replace the original
+    /// outcome, nor leave the run's trace file orphaned outside both archive directories.
+    async fn finalize_trace(&self, ctx: &Context, tx: &mpsc::Sender<OrchestratorResult>, success: bool) {
         let model = self
             .orchestrator_config
             .get("failure_analysis_model")
@@ -726,26 +728,29 @@ impl Orchestrator {
             .or_else(|| self.worker.get_str("model").ok())
             .unwrap_or("qwen2.5-coder:14b")
             .to_string();
-        match postmortem::generate_failure_summary(
-            self.ollama.as_ref(),
-            &model,
-            &ctx.goal,
-            &ctx.trace_body(),
-        )
-        .await
-        {
-            Ok(summary) => {
-                ctx.prepend_failure_summary(&summary).await;
-                let _ = tx
-                    .send(Ok(StreamItem::Event(AgentEvent::Trace(format!(
-                        "Run did not succeed: {summary}"
-                    )))))
-                    .await;
-            }
-            Err(e) => {
-                tracing::warn!(error = ?e, "failure summary generation failed");
-            }
+        let body = ctx.trace_body();
+        let result = if success {
+            run_summary::generate_success_summary(self.ollama.as_ref(), &model, &ctx.goal, &body)
+                .await
+        } else {
+            run_summary::generate_failure_summary(self.ollama.as_ref(), &model, &ctx.goal, &body)
+                .await
+        };
+        let summary = result.unwrap_or_else(|e| {
+            tracing::warn!(error = ?e, success, "run summary generation failed");
+            format!("(automatic summary generation failed: {e})")
+        });
+        if success {
+            ctx.finalize_success_trace(&summary).await;
+        } else {
+            ctx.finalize_failure_trace(&summary).await;
         }
+        let prefix = if success { "Run succeeded" } else { "Run did not succeed" };
+        let _ = tx
+            .send(Ok(StreamItem::Event(AgentEvent::Trace(format!(
+                "{prefix}: {summary}"
+            )))))
+            .await;
     }
 
     async fn debug_stage_machine(
@@ -769,6 +774,7 @@ impl Orchestrator {
             .unwrap_or_default();
 
         let mut ctx = Context::new(goal);
+        ctx.init_trace_index().await;
         ctx.apply_debug_imputations(&imputations);
 
         // Debug sequences have no natural "round"; number each step so round-scoped
@@ -1389,18 +1395,20 @@ mod tests {
         assert!(summary.contains("Worker=fake"));
         assert!(summary.contains("Validator=validator-model"));
         assert!(summary.contains("Security=critic-model"));
-        assert!(summary.contains(".ruchat_trace.md"));
+        assert!(summary.contains("ruchat_traces/"));
     }
 
-    // Regression: `.ruchat_trace.md` gave no indication of *why* an unsuccessful run
+    // Regression: the old `.ruchat_trace.md` gave no indication of *why* an unsuccessful run
     // (escalated, or the iteration budget exhausted without ever reaching `Stage::Commit`)
     // failed — a maintainer had to read every round of a possibly long trace to reconstruct
-    // that themselves. `record_failure_summary` (called from `run_stage_machine` only when the
-    // `success` flag — set only by `Stage::Commit` — is still false) makes one direct LLM call
-    // over the trace and reports the result as a `Trace` event; `prepend_failure_summary`
-    // itself (real `.ruchat_trace.md` file I/O, exercised on every run) is covered separately.
+    // that themselves. `finalize_trace` (called from `run_stage_machine` at the very end, with
+    // the `success` flag — set only by `Stage::Commit` succeeding) makes one direct LLM call
+    // over the trace and reports the result as a `Trace` event; the actual archival (real file
+    // I/O under `ruchat_traces/failures/`, via `Context::finalize_failure_trace`) is covered
+    // separately by that method's own doc comment / by inspection, same as the old
+    // `prepend_failure_summary` was.
     #[tokio::test]
-    async fn record_failure_summary_sends_a_trace_event_with_the_analysis() {
+    async fn finalize_trace_sends_a_failure_trace_event_with_the_analysis() {
         let orchestrator = build_test_orchestrator(
             base_config(),
             vec!["Worker kept repeating itself and never produced a valid patch"],
@@ -1410,14 +1418,38 @@ mod tests {
         let ctx = Context::new("fix the bug".to_string());
         let (tx, mut rx) = mpsc::channel(100);
 
-        orchestrator.record_failure_summary(&ctx, &tx).await;
+        orchestrator.finalize_trace(&ctx, &tx, false).await;
 
         let event = rx.recv().await.expect("expected a trace event");
         match event.expect("expected Ok") {
             StreamItem::Event(AgentEvent::Trace(msg)) => {
+                assert!(msg.starts_with("Run did not succeed:"));
                 assert!(msg.contains(
                     "Worker kept repeating itself and never produced a valid patch"
                 ));
+            }
+            other => panic!("expected a Trace event, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn finalize_trace_sends_a_success_trace_event_with_the_analysis() {
+        let orchestrator = build_test_orchestrator(
+            base_config(),
+            vec!["Renamed the helper and updated every call site."],
+            None,
+        )
+        .await;
+        let ctx = Context::new("rename a function".to_string());
+        let (tx, mut rx) = mpsc::channel(100);
+
+        orchestrator.finalize_trace(&ctx, &tx, true).await;
+
+        let event = rx.recv().await.expect("expected a trace event");
+        match event.expect("expected Ok") {
+            StreamItem::Event(AgentEvent::Trace(msg)) => {
+                assert!(msg.starts_with("Run succeeded:"));
+                assert!(msg.contains("Renamed the helper and updated every call site."));
             }
             other => panic!("expected a Trace event, got {other:?}"),
         }

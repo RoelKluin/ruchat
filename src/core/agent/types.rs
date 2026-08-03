@@ -1,7 +1,24 @@
 use crate::agent::{AgentEvent, StreamItem};
 use crate::Result;
 use serde_json::Value;
+use std::path::{Path, PathBuf};
 use tokio::sync::mpsc;
+
+/// Root directory for every run's trace file — each run gets its own numbered file here
+/// while in progress, then it's moved into `TRACE_SUCCESS_DIR`/`TRACE_FAILURE_DIR` once the
+/// run's outcome is known. Replaces the old single, always-overwritten `.ruchat_trace.md`.
+const TRACE_DIR: &str = "ruchat_traces";
+const TRACE_SUCCESS_DIR: &str = "ruchat_traces/successes";
+const TRACE_FAILURE_DIR: &str = "ruchat_traces/failures";
+
+/// Parses `N` out of a `ruchat_trace_<N>.md` filename; `None` for anything else found sitting
+/// in one of the trace directories.
+fn parse_trace_index(name: &str) -> Option<u64> {
+    name.strip_prefix("ruchat_trace_")?
+        .strip_suffix(".md")?
+        .parse()
+        .ok()
+}
 
 #[derive(Debug, Clone)]
 pub(crate) struct Issue {
@@ -48,6 +65,11 @@ pub(crate) struct Context {
     /// calls (see the multi-file loop there), each to a different file. Order doesn't matter;
     /// membership does (`record_patch`/`revert_pending_patches`).
     pub(crate) pending_patches: Vec<PendingPatch>,
+    /// This run's slot in `TRACE_DIR` — set once via `init_trace_index()` right after
+    /// construction. Left at 0 (colliding with the first real run's file, harmlessly, since
+    /// nothing reads it) for `Context::new` callers — mostly tests — that never touch a trace
+    /// file at all.
+    pub(crate) trace_index: u64,
 }
 
 impl Context {
@@ -59,7 +81,43 @@ impl Context {
             context_config: Value::Null,
             round: 0,
             pending_patches: Vec::new(),
+            trace_index: 0,
         }
+    }
+
+    /// Picks this run's trace-file slot by scanning `TRACE_DIR` (plus both outcome
+    /// subdirectories, in case a prior run's file was already archived there) for existing
+    /// `ruchat_trace_<N>.md` files and using one past the highest `N` found — so every run
+    /// gets its own file instead of every run overwriting the same path. Call once, right
+    /// after `Context::new`, before the first `trace()` call.
+    pub(crate) async fn init_trace_index(&mut self) {
+        let mut max_seen = 0u64;
+        for dir in [TRACE_DIR, TRACE_SUCCESS_DIR, TRACE_FAILURE_DIR] {
+            let Ok(mut entries) = tokio::fs::read_dir(dir).await else {
+                continue;
+            };
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                if let Some(n) = entry
+                    .file_name()
+                    .to_str()
+                    .and_then(parse_trace_index)
+                {
+                    max_seen = max_seen.max(n);
+                }
+            }
+        }
+        self.trace_index = max_seen + 1;
+    }
+
+    fn trace_filename(&self) -> String {
+        format!("ruchat_trace_{}.md", self.trace_index)
+    }
+
+    /// This run's live, in-progress trace file — refreshed on every `trace()` call while the
+    /// run is ongoing, then removed once `finalize_success_trace`/`finalize_failure_trace`
+    /// archives the final version under `TRACE_SUCCESS_DIR`/`TRACE_FAILURE_DIR`.
+    fn live_trace_path(&self) -> PathBuf {
+        Path::new(TRACE_DIR).join(self.trace_filename())
     }
 
     pub(crate) fn push_turn(&mut self, kind: TurnKind, source: &str, content: String) {
@@ -130,7 +188,8 @@ impl Context {
         if !msg.is_empty() {
             let _ = tx.send(Ok(StreamItem::Event(AgentEvent::Trace(msg)))).await;
         }
-        let _ = tokio::fs::write(".ruchat_trace.md", self.trace_body()).await;
+        let _ = tokio::fs::create_dir_all(TRACE_DIR).await;
+        let _ = tokio::fs::write(self.live_trace_path(), self.trace_body()).await;
     }
 
     /// Renders the full on-disk trace body: goal, latest plan/implementation, and every turn
@@ -150,17 +209,33 @@ impl Context {
         )
     }
 
-    /// Rewrites `.ruchat_trace.md` with a short failure-analysis summary prepended above the
-    /// normal trace body. Called once, after an unsuccessful run (escalated, or the iteration
-    /// budget exhausted without ever reaching `Stage::Commit`) — so opening the file
-    /// immediately shows why it failed instead of requiring a scroll through every round to
-    /// work that out.
-    pub(crate) async fn prepend_failure_summary(&self, summary: &str) {
-        let with_summary = format!(
+    /// Archives this run's trace under `TRACE_FAILURE_DIR` — `summary` plus the full
+    /// round-by-round trace body underneath it (kept in full here, unlike the success case,
+    /// since a failure is exactly when a maintainer needs to dig through every round to see
+    /// what actually happened) — and removes the live in-progress file. Called once, after an
+    /// unsuccessful run (escalated, or the iteration budget exhausted without ever reaching
+    /// `Stage::Commit`).
+    pub(crate) async fn finalize_failure_trace(&self, summary: &str) {
+        let _ = tokio::fs::create_dir_all(TRACE_FAILURE_DIR).await;
+        let content = format!(
             "# Why this run did not succeed\n\n{summary}\n\n---\n\n{}",
             self.trace_body()
         );
-        let _ = tokio::fs::write(".ruchat_trace.md", with_summary).await;
+        let dest = Path::new(TRACE_FAILURE_DIR).join(self.trace_filename());
+        let _ = tokio::fs::write(&dest, content).await;
+        let _ = tokio::fs::remove_file(self.live_trace_path()).await;
+    }
+
+    /// Archives this run's trace under `TRACE_SUCCESS_DIR` — deliberately just `summary`, not
+    /// the full round-by-round trace body: a successful run doesn't need the blow-by-blow to
+    /// be useful later, and keeping `successes/` to one short file per run makes it easy to
+    /// skim. Removes the live in-progress file. Called once, after `Stage::Commit` succeeds.
+    pub(crate) async fn finalize_success_trace(&self, summary: &str) {
+        let _ = tokio::fs::create_dir_all(TRACE_SUCCESS_DIR).await;
+        let content = format!("# Why this run succeeded\n\n{summary}\n");
+        let dest = Path::new(TRACE_SUCCESS_DIR).join(self.trace_filename());
+        let _ = tokio::fs::write(&dest, content).await;
+        let _ = tokio::fs::remove_file(self.live_trace_path()).await;
     }
     pub(crate) fn build_collections_summary(&self) -> String {
         let mut summary = String::from("AVAILABLE COLLECTIONS (loaded from config):\n");
@@ -475,5 +550,23 @@ mod tests {
         assert!(body.contains("make a plan"));
         assert!(body.contains("ReadFile"));
         assert!(body.contains("fn parse_key_val<T, U>(s: &str) -> ..."));
+    }
+
+    #[test]
+    fn parse_trace_index_extracts_the_number_from_a_well_formed_filename() {
+        // The scan `init_trace_index` runs over TRACE_DIR/TRACE_SUCCESS_DIR/TRACE_FAILURE_DIR
+        // relies on this to find the highest existing run number and pick one past it — every
+        // run must get its own file instead of every run overwriting the same path (the old
+        // `.ruchat_trace.md` behavior).
+        assert_eq!(parse_trace_index("ruchat_trace_42.md"), Some(42));
+        assert_eq!(parse_trace_index("ruchat_trace_0.md"), Some(0));
+    }
+
+    #[test]
+    fn parse_trace_index_rejects_anything_that_is_not_that_exact_shape() {
+        assert_eq!(parse_trace_index("ruchat_trace.md"), None);
+        assert_eq!(parse_trace_index("notes.md"), None);
+        assert_eq!(parse_trace_index("ruchat_trace_abc.md"), None);
+        assert_eq!(parse_trace_index("ruchat_trace_3.txt"), None);
     }
 }

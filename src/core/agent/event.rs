@@ -12,8 +12,8 @@ pub enum AgentEvent {
     ColorChange(&'static str),
     /// Transient status line (e.g. "... thinking"), cleared on first real chunk.
     StatusUpdate(String),
-    /// Persistent trace/debug message, written to `.ruchat_trace.md` and optionally
-    /// surfaced to the user.
+    /// Persistent trace/debug message, written to this run's file under `ruchat_traces/` and
+    /// optionally surfaced to the user.
     Trace(String),
     /// Coarse completion progress in percent, `[0.0, 100.0]`. Not yet emitted by
     /// any caller — reserved for future use (e.g. multi-stage progress bars).

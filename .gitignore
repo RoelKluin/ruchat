@@ -4,4 +4,4 @@ responses
 Cargo.lock
 tags
 tarpaulin-report.html
-.ruchat_trace.md
+ruchat_traces/
