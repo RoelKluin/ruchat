@@ -2,8 +2,8 @@
 use crate::{Result, RuChatError};
 use chroma::types::{
     BooleanOperator, CompositeExpression, ContainsOperator, DocumentExpression, DocumentOperator,
-    MetadataComparison, MetadataExpression, MetadataSetValue, MetadataValue, PrimitiveOperator,
-    SetOperator, SparseVector, Where,
+    Metadata, MetadataComparison, MetadataExpression, MetadataSetValue, MetadataValue,
+    PrimitiveOperator, SetOperator, SparseVector, Where,
 };
 use clap::Parser;
 use serde::Deserialize;
@@ -412,6 +412,125 @@ fn map_sql_comparison(op: &str, val: &str) -> Result<MetadataComparison> {
             )));
         }
     })
+}
+
+/// True if `w` contains a metadata `CONTAINS`/`NOT CONTAINS` anywhere in its expression tree.
+///
+/// Chroma's metadata filter language has no scalar-substring operator — `MetadataComparison::
+/// ArrayContains` (what `CONTAINS`/`NOT CONTAINS` always compile to, see `map_sql_comparison`
+/// above) is real array-membership only. Sent to Chroma against a field whose actual stored
+/// value is a plain string (`file`, `name`, ...), it silently matches nothing — a real bug
+/// found from a live run using `file CONTAINS 'cli'` (one of `db_config.json`'s own documented
+/// example queries) against the `repo_src` collection's scalar `file` field.
+///
+/// The fix is client-side: when this returns true, the caller must not send `w` to Chroma at
+/// all (it would just filter everything out) and instead fetch an unfiltered/over-fetched
+/// candidate set and evaluate the *whole* expression itself via `metadata_matches`, which
+/// interprets `CONTAINS` correctly for both cases — a real substring check against a scalar
+/// string, or a real membership check against an actual array field (so genuinely array-typed
+/// fields like `references` keep working exactly as before, just evaluated client-side now
+/// instead of relying on Chroma to get it right).
+pub(crate) fn where_needs_client_side_eval(w: &Where) -> bool {
+    match w {
+        Where::Composite(c) => c.children.iter().any(where_needs_client_side_eval),
+        Where::Document(_) => false,
+        Where::Metadata(expr) => matches!(expr.comparison, MetadataComparison::ArrayContains(..)),
+    }
+}
+
+/// Evaluates `w` against one result row's metadata. Only called when
+/// `where_needs_client_side_eval` returned true for the whole expression — at that point the
+/// *entire* expression is evaluated here rather than splitting it into "what Chroma already
+/// filtered" plus "what we still need to check", to avoid double-counting or mis-combining
+/// AND/OR semantics across two different evaluators.
+///
+/// `Where::Document` leaves (full-text search over document *content*, not metadata — already
+/// works correctly via Chroma's native `DocumentOperator`) always evaluate to `true` here: this
+/// function only exists to patch a metadata-filter gap, not to reimplement document search.
+pub(crate) fn metadata_matches(w: &Where, metadata: &Metadata) -> bool {
+    match w {
+        Where::Composite(c) => match c.operator {
+            BooleanOperator::And => c.children.iter().all(|child| metadata_matches(child, metadata)),
+            BooleanOperator::Or => c.children.iter().any(|child| metadata_matches(child, metadata)),
+        },
+        Where::Document(_) => true,
+        Where::Metadata(expr) => metadata_expr_matches(expr, metadata),
+    }
+}
+
+fn metadata_expr_matches(expr: &MetadataExpression, metadata: &Metadata) -> bool {
+    let Some(actual) = metadata.get(&expr.key) else {
+        return false;
+    };
+    match &expr.comparison {
+        MetadataComparison::Primitive(op, expected) => primitive_matches(op, actual, expected),
+        MetadataComparison::Set(op, set) => set_matches(op, actual, set),
+        MetadataComparison::ArrayContains(op, needle) => {
+            let is_member = value_contains(actual, needle);
+            match op {
+                ContainsOperator::Contains => is_member,
+                ContainsOperator::NotContains => !is_member,
+            }
+        }
+    }
+}
+
+/// The actual fix: unlike Chroma's server-side `ArrayContains` (real array-membership only,
+/// always false against a scalar value), this checks substring containment when `actual` is a
+/// plain string, and falls back to real membership when `actual` is genuinely one of the array
+/// variants — so both the originally-broken case (`file CONTAINS 'cli'`) and the
+/// already-working case (`references CONTAINS 'x'`) evaluate correctly through the same path.
+fn value_contains(actual: &MetadataValue, needle: &MetadataValue) -> bool {
+    match (actual, needle) {
+        (MetadataValue::Str(s), MetadataValue::Str(sub)) => s.contains(sub.as_str()),
+        (MetadataValue::StringArray(arr), MetadataValue::Str(v)) => arr.contains(v),
+        (MetadataValue::IntArray(arr), MetadataValue::Int(v)) => arr.contains(v),
+        (MetadataValue::FloatArray(arr), MetadataValue::Float(v)) => arr.contains(v),
+        (MetadataValue::FloatArray(arr), MetadataValue::Int(v)) => arr.contains(&(*v as f64)),
+        (MetadataValue::BoolArray(arr), MetadataValue::Bool(v)) => arr.contains(v),
+        _ => false,
+    }
+}
+
+fn primitive_matches(op: &PrimitiveOperator, actual: &MetadataValue, expected: &MetadataValue) -> bool {
+    use std::cmp::Ordering;
+    let ord = compare_metadata_values(actual, expected);
+    match op {
+        PrimitiveOperator::Equal => ord == Some(Ordering::Equal),
+        PrimitiveOperator::NotEqual => ord != Some(Ordering::Equal),
+        PrimitiveOperator::GreaterThan => ord == Some(Ordering::Greater),
+        PrimitiveOperator::GreaterThanOrEqual => matches!(ord, Some(Ordering::Greater | Ordering::Equal)),
+        PrimitiveOperator::LessThan => ord == Some(Ordering::Less),
+        PrimitiveOperator::LessThanOrEqual => matches!(ord, Some(Ordering::Less | Ordering::Equal)),
+    }
+}
+
+fn compare_metadata_values(a: &MetadataValue, b: &MetadataValue) -> Option<std::cmp::Ordering> {
+    match (a, b) {
+        (MetadataValue::Str(x), MetadataValue::Str(y)) => Some(x.cmp(y)),
+        (MetadataValue::Bool(x), MetadataValue::Bool(y)) => Some(x.cmp(y)),
+        (MetadataValue::Int(x), MetadataValue::Int(y)) => Some(x.cmp(y)),
+        (MetadataValue::Float(x), MetadataValue::Float(y)) => x.partial_cmp(y),
+        (MetadataValue::Int(x), MetadataValue::Float(y)) => (*x as f64).partial_cmp(y),
+        (MetadataValue::Float(x), MetadataValue::Int(y)) => x.partial_cmp(&(*y as f64)),
+        _ => None,
+    }
+}
+
+fn set_matches(op: &SetOperator, actual: &MetadataValue, set: &MetadataSetValue) -> bool {
+    let is_member = match (actual, set) {
+        (MetadataValue::Str(s), MetadataSetValue::Str(vs)) => vs.contains(s),
+        (MetadataValue::Int(v), MetadataSetValue::Int(vs)) => vs.contains(v),
+        (MetadataValue::Float(v), MetadataSetValue::Float(vs)) => {
+            vs.iter().any(|x| (x - v).abs() < f64::EPSILON)
+        }
+        (MetadataValue::Bool(v), MetadataSetValue::Bool(vs)) => vs.contains(v),
+        _ => false,
+    };
+    match op {
+        SetOperator::In => is_member,
+        SetOperator::NotIn => !is_member,
+    }
 }
 
 fn parse_metadata_value(value_str: &str) -> MetadataValue {
@@ -951,5 +1070,95 @@ mod tests {
             .update_from_json(&serde_json::json!({ "where": 5 }))
             .unwrap_err();
         assert!(matches!(err, RuChatError::Is(_)));
+    }
+
+    fn metadata_str(pairs: &[(&str, &str)]) -> Metadata {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), MetadataValue::Str(v.to_string())))
+            .collect()
+    }
+
+    // Regression: a real run found `file CONTAINS 'cli'` (one of db_config.json's own
+    // documented example queries) always returned zero rows against the repo_src collection's
+    // scalar `file` metadata field — because CONTAINS always compiles to Chroma's
+    // ArrayContains, real array-membership only, which can never match a plain string.
+    #[test]
+    fn where_needs_client_side_eval_true_for_contains_on_any_field() {
+        let w = parse_where("file CONTAINS 'cli'").unwrap();
+        assert!(where_needs_client_side_eval(&w));
+    }
+
+    #[test]
+    fn where_needs_client_side_eval_false_without_any_contains() {
+        let w = parse_where("language = 'rust' AND kind IN ['function', 'method']").unwrap();
+        assert!(!where_needs_client_side_eval(&w));
+    }
+
+    #[test]
+    fn where_needs_client_side_eval_detects_contains_nested_inside_and_or() {
+        let w = parse_where("language = 'rust' AND (kind = 'function' OR name CONTAINS 'read')")
+            .unwrap();
+        assert!(where_needs_client_side_eval(&w));
+    }
+
+    #[test]
+    fn metadata_matches_does_real_substring_matching_on_a_scalar_string_field() {
+        let w = parse_where("file CONTAINS 'cli'").unwrap();
+        assert!(metadata_matches(&w, &metadata_str(&[("file", "src/cli/args.rs")])));
+        assert!(!metadata_matches(&w, &metadata_str(&[("file", "src/tui/io.rs")])));
+    }
+
+    #[test]
+    fn metadata_matches_not_contains_negates_the_substring_check() {
+        let w = parse_where("file NOT CONTAINS 'cli'").unwrap();
+        assert!(!metadata_matches(&w, &metadata_str(&[("file", "src/cli/args.rs")])));
+        assert!(metadata_matches(&w, &metadata_str(&[("file", "src/tui/io.rs")])));
+    }
+
+    #[test]
+    fn metadata_matches_still_does_real_membership_on_a_genuine_array_field() {
+        // `references` is a StringArray in this repo's actual schema — CONTAINS against it
+        // already worked correctly via Chroma before this fix, and must keep working exactly
+        // the same way now that it's evaluated client-side.
+        let w = parse_where("references CONTAINS 'src/foo.rs'").unwrap();
+        let mut with_ref = Metadata::new();
+        with_ref.insert(
+            "references".to_string(),
+            MetadataValue::StringArray(vec!["src/foo.rs".to_string(), "src/bar.rs".to_string()]),
+        );
+        assert!(metadata_matches(&w, &with_ref));
+
+        let mut without_ref = Metadata::new();
+        without_ref.insert(
+            "references".to_string(),
+            MetadataValue::StringArray(vec!["src/bar.rs".to_string()]),
+        );
+        assert!(!metadata_matches(&w, &without_ref));
+    }
+
+    #[test]
+    fn metadata_matches_combines_and_correctly_with_a_client_side_contains() {
+        let w = parse_where("language = 'rust' AND file CONTAINS 'cli'").unwrap();
+        assert!(metadata_matches(
+            &w,
+            &metadata_str(&[("language", "rust"), ("file", "src/cli/args.rs")])
+        ));
+        // Right field name matches, but the other AND-ed condition doesn't.
+        assert!(!metadata_matches(
+            &w,
+            &metadata_str(&[("language", "python"), ("file", "src/cli/args.rs")])
+        ));
+        // Language matches, but the CONTAINS substring doesn't.
+        assert!(!metadata_matches(
+            &w,
+            &metadata_str(&[("language", "rust"), ("file", "src/tui/io.rs")])
+        ));
+    }
+
+    #[test]
+    fn metadata_matches_missing_key_is_false() {
+        let w = parse_where("file CONTAINS 'cli'").unwrap();
+        assert!(!metadata_matches(&w, &Metadata::new()));
     }
 }
