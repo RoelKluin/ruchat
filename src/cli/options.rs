@@ -41,6 +41,24 @@ async fn read_options_file(options: &str) -> Result<Value> {
 ///
 /// A `Result` containing the `ModelOptions` or a `RuChatError`.
 pub(crate) async fn get_options(options: &str) -> Result<(ModelOptions, HashMap<String, Value>)> {
+    let (defaults, remain) = merge_options_json(options).await?;
+    serde_json::from_value(defaults)
+        .map_err(|e| {
+            tracing::error!(error = ?e, "failed to deserialize JSON into ModelOptions");
+            e
+        })
+        .map_err(RuChatError::SerdeError)
+        .map(|opts| (opts, remain))
+}
+
+/// Merges `options` (a JSON file path or literal JSON string) onto
+/// `ModelOptions::default()`'s JSON shape, without deserializing back to
+/// `ModelOptions` yet. Shared by `get_options` above and
+/// `ModelArgs::build_generation_request`, the latter needing to merge in
+/// CLI flag overrides on top before doing the (single) final deserialize —
+/// pulled out so that caller doesn't need its own separate
+/// `ModelOptions` -> JSON -> `ModelOptions` round trip to get there.
+pub(crate) async fn merge_options_json(options: &str) -> Result<(Value, HashMap<String, Value>)> {
     let mut remain = HashMap::new();
     let mut defaults = serde_json::to_value(ModelOptions::default())?;
 
@@ -56,13 +74,7 @@ pub(crate) async fn get_options(options: &str) -> Result<(ModelOptions, HashMap<
             }
         }
     }
-    serde_json::from_value(defaults)
-        .map_err(|e| {
-            tracing::error!(error = ?e, "failed to deserialize JSON into ModelOptions");
-            e
-        })
-        .map_err(RuChatError::SerdeError)
-        .map(|opts| (opts, remain))
+    Ok((defaults, remain))
 }
 
 #[cfg(test)]

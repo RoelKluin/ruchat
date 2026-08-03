@@ -1,4 +1,4 @@
-use crate::options::get_options;
+use crate::options::merge_options_json;
 use crate::{Result, RuChatError};
 use clap::Parser;
 use ollama_rs::generation::completion::request::GenerationRequest;
@@ -99,13 +99,8 @@ impl ModelArgs {
     ) -> Result<GenerationRequest<'_>> {
         // 1. Get base options from file/string or start with empty JSON
         let mut opts_val = if let Some(opts_raw) = cfg.get("model_options") {
-            let (opts, _etc) = get_options(format!("{opts_raw}").as_str()).await?;
-            serde_json::to_value(opts)
-                .map_err(|e| {
-                    tracing::error!(error = ?e, "failed to serialize ModelOptions to JSON");
-                    e
-                })
-                .map_err(RuChatError::SerdeError)?
+            let (opts_val, _etc) = merge_options_json(format!("{opts_raw}").as_str()).await?;
+            opts_val
         } else {
             serde_json::json!({})
         };
@@ -216,3 +211,60 @@ async fn get_model_name_inner(ollama: &Ollama, name: &str, pull_attempts: u8) ->
         }
     }
 }
+
+#[cfg(test)]
+mod build_generation_request_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn cli_flags_only() {
+        let args = ModelArgs {
+            temperature: Some(0.5),
+            seed: Some(42),
+            ..Default::default()
+        };
+        let req = args
+            .build_generation_request("m".into(), "p".into(), &serde_json::json!({}))
+            .await
+            .unwrap();
+        let v = serde_json::to_value(&req).unwrap();
+        assert_eq!(v["options"]["temperature"], 0.5);
+        assert_eq!(v["options"]["seed"], 42);
+    }
+
+    #[tokio::test]
+    async fn cli_flag_wins_over_config_model_options() {
+        let args = ModelArgs {
+            temperature: Some(0.25),
+            ..Default::default()
+        };
+        let cfg = serde_json::json!({ "model_options": { "temperature": 0.1 } });
+        let req = args
+            .build_generation_request("m".into(), "p".into(), &cfg)
+            .await
+            .unwrap();
+        let v = serde_json::to_value(&req).unwrap();
+        assert_eq!(v["options"]["temperature"], 0.25);
+    }
+
+    // Pins a pre-existing (not introduced by the round-trip removal above) bug:
+    // `ModelOptions::default()` serializes to `{}` (every field is `None` and
+    // `skip_serializing_if`-omitted), so `merge_options_json`'s
+    // `defaults.contains_key(&k)` gate is never true for ANY key coming from a
+    // `model_options` file/string — config-supplied values silently land in the
+    // discarded `remain` map instead of `defaults`, so they never reach the
+    // final `ModelOptions`. Only CLI-flag values (set unconditionally, no gate)
+    // actually take effect. See TODO.md.
+    #[tokio::test]
+    async fn config_only_model_options_are_currently_silently_dropped() {
+        let args = ModelArgs::default();
+        let cfg = serde_json::json!({ "model_options": { "seed": 7 } });
+        let req = args
+            .build_generation_request("m".into(), "p".into(), &cfg)
+            .await
+            .unwrap();
+        let v = serde_json::to_value(&req).unwrap();
+        assert_eq!(v["options"]["seed"], serde_json::Value::Null);
+    }
+}
+

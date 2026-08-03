@@ -5,7 +5,8 @@ Last updated: 2026-08-02
 ## High Priority
 
 ### 1. Configuration & CLI Improvements
-- [ ] Merge `options.rs` and CLI flag overrides more cleanly (avoid double JSON round-trip in `ModelArgs::build_generation_request`)
+- [x] Removed the double JSON round-trip in `ModelArgs::build_generation_request` — it called `get_options` (which already does `ModelOptions::default()` → JSON → merge → `ModelOptions`), then serialized that `ModelOptions` back to JSON a second time just to merge in CLI flags, then deserialized again. Extracted `options::merge_options_json` (the pre-deserialize half of `get_options`) so `build_generation_request` merges CLI flags directly onto the same JSON `Value` and deserializes once.
+- [ ] **Found while doing the above, not fixed (separate, larger issue)**: `merge_options_json`'s file/string-based override merge is a no-op in practice. `ModelOptions::default()` serializes to `{}` (every field is `None` and `skip_serializing_if`-omitted), so its `defaults.contains_key(&k)` gate is never true for any key from a `model_options` file/string — those values silently land in the discarded `remain` map instead of `defaults` and never reach the final `ModelOptions`. Only CLI-flag values (set unconditionally, no gate) currently take effect. Affects both `ModelArgs::build_generation_request` and `options::get_options`'s only other caller (`core/agent.rs`). Regression-pinned by `model.rs`'s `config_only_model_options_are_currently_silently_dropped` test. Needs a design decision (drop the `contains_key` gate entirely? pre-populate `defaults` with every known key at `Value::Null` before the check?) rather than a unilateral fix.
 - [ ] Add proper environment variable support for all Chroma and Ollama settings (use `clap::env` consistently)
 - [ ] Implement global config file (`~/.config/ruchat/config.toml` or `.json`) with profile support
 - [ ] Deprecate/phase out scattered JSON string hacks in favor of structured sub-configs
