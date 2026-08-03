@@ -73,13 +73,19 @@ Implement → Worker responds. If it emitted a *read-only* tool call
             2) allows it, the orchestrator executes it, appends the result,
             and re-asks the Worker once more in the same stage.
             `apply_patch`/`memorize` calls are executed afterward by
-            `execute_and_verify`. A successful `apply_patch` doesn't
-            necessarily end the round: if the plan's `FILES:` line named more
-            files than have been patched so far, and a per-round patch budget
-            (default 3, reset every round) isn't exhausted, the orchestrator
-            re-asks the Worker for the next file instead of moving on — see
+            `execute_and_verify` (`Orchestrator::run_implement_patch_loop`).
+            A successful `apply_patch` doesn't necessarily end the round: if
+            the plan's `FILES:` line named more files than have been patched
+            so far, and a per-round patch budget (default 3, reset every
+            round) isn't exhausted, the orchestrator re-asks the Worker for
+            the next file instead of moving on — see
             `should_continue_patch_loop`. A plan naming zero or one file
-            behaves exactly like a single-patch round always did.
+            behaves exactly like a single-patch round always did. If the
+            Worker's *first* attempt this round produced no recognized tool
+            call at all (e.g. a narrative walkthrough instead of an actual
+            tool call) the round is rejected immediately with a precise,
+            deterministic reason — not silently sent to `Stage::Test` to
+            trivially pass on unchanged code.
   ↓
 Test      → cargo check + cargo test (60s / 120s timeouts) against the applied patch.
             Failure → Stage::Retry.

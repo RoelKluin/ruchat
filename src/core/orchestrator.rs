@@ -557,47 +557,7 @@ impl Orchestrator {
                         last_worker_output = Some(ctx.output.clone());
                     }
                     ctx.push_turn(TurnKind::Implementation, "Worker", ctx.output.clone());
-
-                    // Allows up to `patch_budget` sequential `apply_patch` calls in THIS round
-                    // (reset fresh every time this stage is entered, i.e. every new round —
-                    // unlike `retrieve_budget` above, which is a conservative cap for the whole
-                    // run) so a plan naming multiple files in its `FILES:` line can land as one
-                    // commit instead of only ever touching the first of them. Only continues
-                    // looping when the plan actually named more files than have been patched so
-                    // far (`ctx.planned_files().len() > ctx.pending_patches.len()`) — a plan
-                    // with no `FILES:` line at all (or exactly one) behaves identically to the
-                    // single-patch-per-round flow this replaces. Ends the same way a
-                    // single-patch round always did: on `Failure` (reject/retry), or anything
-                    // that isn't a successful `ApplyPatch` (`memorize`, unparseable output).
-                    let mut patch_budget: u32 = 3;
-                    loop {
-                        let is_apply_patch = matches!(
-                            tools::parse_tool_call(&ctx.output),
-                            Ok(tools::StructuredToolCall { tool: ToolName::ApplyPatch, .. })
-                        );
-                        match self.worker.execute_and_verify(ctx).await? {
-                            Validation::Failure(err) => {
-                                ctx.push_turn(TurnKind::Rejection, "ApplyPatch", err);
-                                break Stage::Retry;
-                            }
-                            Validation::Success if is_apply_patch => {
-                                patch_budget = patch_budget.saturating_sub(1);
-                                if !should_continue_patch_loop(ctx, patch_budget) {
-                                    break Stage::Test;
-                                }
-                                ctx.push_turn(
-                                    TurnKind::System,
-                                    "Orchestrator",
-                                    "Patch applied. The plan's FILES: line names more files \
-                                    than you've changed so far — call apply_patch for the next \
-                                    one now, or emit no tool call if you're done.".into(),
-                                );
-                                retry_transient!(self.worker.query_stream(&self.ollama, ctx, &tx))?;
-                                ctx.push_turn(TurnKind::Implementation, "Worker", ctx.output.clone());
-                            }
-                            _ => break Stage::Test,
-                        }
-                    }
+                    self.run_implement_patch_loop(ctx, &tx).await?
                 }
                 Stage::Test => {
                     let report = Validation::run_build_and_test(&cancel).await?;
@@ -943,6 +903,72 @@ impl Orchestrator {
             ToolName::Memorize | ToolName::ApplyPatch => Ok(()),
         }
     }
+
+    /// `Stage::Implement`'s patch loop, run once the Worker's turn is already pushed as an
+    /// `Implementation` turn. Allows up to a per-round `patch_budget` of sequential
+    /// `apply_patch` calls (reset fresh every time this stage is entered, i.e. every new round —
+    /// unlike `retrieve_budget`, which is a conservative cap for the whole run) so a plan naming
+    /// multiple files in its `FILES:` line can land as one commit instead of only ever touching
+    /// the first of them (see `should_continue_patch_loop`). Ends the same way a single-patch
+    /// round always did on `Failure` (reject/retry) or a successful `Memorize`/no-op reask after
+    /// at least one patch already landed (proceed to Test) — the one new case is a Worker turn
+    /// that produced no recognized tool_call *at all* on its first attempt this round (e.g. a
+    /// narrative walkthrough instead of an actual tool call): rejected immediately with a
+    /// precise, deterministic reason rather than silently proceeding to a Test cycle that will
+    /// trivially pass (nothing changed) and hoping the Validator LLM happens to notice.
+    async fn run_implement_patch_loop(
+        &mut self,
+        ctx: &mut Context,
+        tx: &mpsc::Sender<OrchestratorResult>,
+    ) -> Result<Stage> {
+        let mut patch_budget: u32 = 3;
+        let mut any_patch_applied = false;
+        loop {
+            let is_apply_patch = matches!(
+                tools::parse_tool_call(&ctx.output),
+                Ok(tools::StructuredToolCall { tool: ToolName::ApplyPatch, .. })
+            );
+            match self.worker.execute_and_verify(ctx).await? {
+                Validation::Failure(err) => {
+                    ctx.push_turn(TurnKind::Rejection, "ApplyPatch", err);
+                    return Ok(Stage::Retry);
+                }
+                Validation::Success if is_apply_patch => {
+                    any_patch_applied = true;
+                    patch_budget = patch_budget.saturating_sub(1);
+                    if !should_continue_patch_loop(ctx, patch_budget) {
+                        return Ok(Stage::Test);
+                    }
+                    ctx.push_turn(
+                        TurnKind::System,
+                        "Orchestrator",
+                        "Patch applied. The plan's FILES: line names more files than you've \
+                        changed so far — call apply_patch for the next one now, or emit no \
+                        tool call if you're done."
+                            .into(),
+                    );
+                    retry_transient!(self.worker.query_stream(&self.ollama, ctx, tx))?;
+                    ctx.push_turn(TurnKind::Implementation, "Worker", ctx.output.clone());
+                }
+                // `Validation::Skip` means `parse_tool_call` found nothing it recognized
+                // anywhere in the Worker's output — no tool_call fence, no bare-diff fallback
+                // either. On a *follow-up* reask within this same round (after at least one
+                // apply_patch already succeeded) that's the Worker's normal way of signaling
+                // "I'm done" — fine, proceed to Test. On the *first* attempt this round it means
+                // the Worker did nothing actionable at all.
+                Validation::Skip if !any_patch_applied => {
+                    ctx.push_turn(
+                        TurnKind::Rejection,
+                        "Worker",
+                        NO_TOOL_CALL_REJECTION.to_string(),
+                    );
+                    return Ok(Stage::Retry);
+                }
+                _ => return Ok(Stage::Test),
+            }
+        }
+    }
+
     async fn run_scope_stage(
         &mut self,
         ctx: &mut Context,
@@ -1017,6 +1043,13 @@ impl Orchestrator {
 fn should_continue_patch_loop(ctx: &Context, remaining_patch_budget: u32) -> bool {
     remaining_patch_budget > 0 && ctx.planned_files().len() > ctx.pending_patches.len()
 }
+
+/// Rejection reason for a Worker turn with no recognized tool call anywhere in it — see
+/// `Orchestrator::run_implement_patch_loop`.
+const NO_TOOL_CALL_REJECTION: &str = "refused: no recognized tool_call found anywhere in your \
+    output — every round you must emit exactly one tool_call (e.g. apply_patch, memorize). A \
+    narrative walkthrough, an explanation of what you would do, or any other prose without an \
+    actual tool_call accomplishes nothing on its own.";
 
 /// Treats an explicit empty string the same as an omitted optional field.
 /// Models reliably emit `"path": ""` instead of leaving an optional arg out
@@ -1293,6 +1326,38 @@ mod tests {
         assert!(summary.contains("Validator=validator-model"));
         assert!(summary.contains("Security=critic-model"));
         assert!(summary.contains(".ruchat_trace.md"));
+    }
+
+    // Regression test for a real failure: the Worker replied with a narrative walkthrough
+    // ("### Identified First Warning... ### Applying the Fix...") wrapped around fenced blocks
+    // that weren't actually a tool_call (a ```bash block naming a tool as if it were a shell
+    // command, then a ```rust block with raw source, not a diff) — `parse_tool_call` correctly
+    // found nothing, but the orchestrator used to treat that identically to a successful
+    // `memorize` and silently proceed to `Stage::Test`, wasting a cycle and leaving the Worker
+    // with no specific feedback about what it did wrong.
+    #[tokio::test]
+    async fn implement_patch_loop_rejects_a_worker_turn_with_no_tool_call_at_all() {
+        let mut orchestrator = build_test_orchestrator(base_config(), vec![], None).await;
+        let mut ctx = Context::new("goal".to_string());
+        ctx.output = "### Identified First Warning\n\nAssuming cargo_clippy has been run, \
+            here's what I would do next. If the warning is resolved, proceed with the next \
+            steps."
+            .to_string();
+        let (tx, _rx) = mpsc::channel(100);
+
+        let stage = orchestrator
+            .run_implement_patch_loop(&mut ctx, &tx)
+            .await
+            .unwrap();
+
+        assert_eq!(stage, Stage::Retry);
+        let rejection = ctx
+            .turns
+            .iter()
+            .find(|t| t.kind == TurnKind::Rejection)
+            .expect("a no-tool-call Worker turn should be rejected");
+        assert_eq!(rejection.source, "Worker");
+        assert!(rejection.content.contains("no recognized tool_call"));
     }
 
     #[tokio::test]
