@@ -3,6 +3,7 @@ pub(crate) mod fs;
 pub(crate) mod search;
 pub(crate) mod scope;
 pub(crate) mod cargo;
+pub(crate) mod doc_summary;
 pub(crate) mod run_summary;
 pub(super) mod task;
 
@@ -343,6 +344,61 @@ impl Orchestrator {
         Ok(())
     }
 
+    /// Retrieved documents at or above this size are worth spending an LLM call to compress
+    /// before they reach the Worker's prompt — below it, the token savings wouldn't justify the
+    /// extra round trip (or the small risk of the compression step itself introducing an
+    /// error). A fixed threshold, not proportional to the model's context window: a single
+    /// retrieval being "a few dense paragraphs" is the right trigger regardless of how large the
+    /// overall history budget happens to be.
+    const DOC_SUMMARIZATION_THRESHOLD_TOKENS: u64 = 800;
+
+    /// Compresses `docs` (raw retrieved RAG content) before it's pushed as a `TurnKind::
+    /// Retrieval` turn, if a Summarizer is configured and `docs` is large enough to be worth it
+    /// (see `DOC_SUMMARIZATION_THRESHOLD_TOKENS`). Reuses the Summarizer's configured *model*,
+    /// not its `agent_role/summarizer.md` *template* (that template is specifically about
+    /// compressing round history, not retrieved documents — seeing
+    /// `doc_summary::summarize_retrieved_documents`'s own doc comment for why a distinct prompt
+    /// is used instead). Opt-in the same way whole-history compression already is: a run with no
+    /// Summarizer configured sees this as a complete no-op, identical to before this existed.
+    /// Never fails the round: a summarization failure falls back to the original, uncompressed
+    /// `docs` rather than losing the retrieval outright — a diagnostic nicety failing must never
+    /// cost the round its actual context.
+    async fn maybe_summarize_retrieved_docs(
+        &self,
+        docs: String,
+        ctx: &mut Context,
+        tx: &mpsc::Sender<OrchestratorResult>,
+    ) -> String {
+        let Some(summarizer) = self.summarizer.as_ref() else {
+            return docs;
+        };
+        let before = crate::agent::tokens::count_tokens(&docs);
+        if before < Self::DOC_SUMMARIZATION_THRESHOLD_TOKENS {
+            return docs;
+        }
+        let model = summarizer.get_str("model").unwrap_or("");
+        match doc_summary::summarize_retrieved_documents(&self.chat, model, &ctx.goal, &docs)
+            .await
+        {
+            Ok(summary) => {
+                let after = crate::agent::tokens::count_tokens(&summary);
+                ctx.trace(
+                    tx,
+                    format!(
+                        "Condensed retrieved documents (~{before} → ~{after} tokens) before \
+                         adding them to context."
+                    ),
+                )
+                .await;
+                summary
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "document summarization failed; using raw retrieved content");
+                docs
+            }
+        }
+    }
+
     async fn run_librarian_retrieval(
         &mut self,
         ctx: &mut Context,
@@ -406,7 +462,10 @@ impl Orchestrator {
         // of which need RAG context to function — degrade gracefully instead, mirroring
         // `recall_prior_memories`'s same stance for the deterministic pre-run recall.
         match librarian.retrieve_and_generate(client, &self.embed, q).await {
-            Ok(docs) => ctx.push_turn(TurnKind::Retrieval, "Librarian", docs),
+            Ok(docs) => {
+                let docs = self.maybe_summarize_retrieved_docs(docs, ctx, tx).await;
+                ctx.push_turn(TurnKind::Retrieval, "Librarian", docs);
+            }
             Err(e) => {
                 tracing::warn!(error = %e, "Librarian retrieval failed; continuing without RAG context");
                 ctx.trace(
@@ -480,6 +539,7 @@ impl Orchestrator {
         let _ = q.update_from_json(query_json);
         match q.query(client, &self.embed, &embed_model).await {
             Ok(docs) if !docs.trim().is_empty() => {
+                let docs = self.maybe_summarize_retrieved_docs(docs, ctx, tx).await;
                 ctx.push_turn(TurnKind::Retrieval, "Memory", docs);
             }
             Ok(_) => {}
@@ -652,7 +712,7 @@ impl Orchestrator {
                         // Record the failure as a turn and let the Worker see
                         // it and try something else, instead of propagating a
                         // fatal error out of the stage machine entirely.
-                        match self.handle_structured_tool(&call, ctx).await {
+                        match self.handle_structured_tool(&call, ctx, &tx).await {
                             Err(e) => {
                                 ctx.push_turn(
                                     TurnKind::System,
@@ -977,7 +1037,12 @@ impl Orchestrator {
         Ok(())
     }
 
-    async fn handle_retrieve(&mut self, query_text: &str, ctx: &mut Context) -> Result<()> {
+    async fn handle_retrieve(
+        &mut self,
+        query_text: &str,
+        ctx: &mut Context,
+        tx: &mpsc::Sender<OrchestratorResult>,
+    ) -> Result<()> {
         let client = self.client.as_ref().ok_or_else(|| {
             RuChatError::Is("Retrieve tool called but no Chroma client is configured".into())
         })?;
@@ -992,6 +1057,7 @@ impl Orchestrator {
         q.update_from_json(serde_json::json!({ "query": [query_text] }))?;
 
         let docs = q.query(client, &self.embed, &model).await?;
+        let docs = self.maybe_summarize_retrieved_docs(docs, ctx, tx).await;
         ctx.push_turn(TurnKind::Retrieval, "Retrieve", docs);
         Ok(())
     }
@@ -1004,11 +1070,12 @@ impl Orchestrator {
         &mut self,
         call: &tools::StructuredToolCall,
         ctx: &mut Context,
+        tx: &mpsc::Sender<OrchestratorResult>,
     ) -> Result<()> {
         match call.tool {
             ToolName::Retrieve => {
                 let query = call.args["query"].as_str().unwrap_or_default();
-                self.handle_retrieve(query, ctx).await
+                self.handle_retrieve(query, ctx, tx).await
             }
             ToolName::GitLog => {
                 let path = opt_str(&call.args, "path");
@@ -1210,7 +1277,7 @@ impl Orchestrator {
             }
             match tools::structured_call_from_value(item) {
                 Ok(call) => {
-                    if let Err(e) = self.handle_structured_tool(&call, ctx).await {
+                    if let Err(e) = self.handle_structured_tool(&call, ctx, tx).await {
                         ctx.push_turn(TurnKind::System, "Scoper", format!("lookup failed: {e}"));
                     }
                 }
@@ -2018,6 +2085,83 @@ mod tests {
         )
         .await;
         assert!(!items.is_empty());
+    }
+
+    // Regression canary for document summarization before the Worker (maintainer: "work on
+    // roadmap 0.3 items" -> "Document summarization before the Worker"). Retrieved RAG content
+    // used to always go straight into a Retrieval turn raw, however large — no compression step
+    // existed between `Query::query`'s rendered output and `ctx.push_turn`.
+    #[tokio::test]
+    async fn maybe_summarize_retrieved_docs_is_a_noop_without_a_summarizer_configured() {
+        let orchestrator = build_test_orchestrator(base_config(), vec![], None).await;
+        let mut ctx = Context::new("goal".to_string());
+        let (tx, _rx) = mpsc::channel(100);
+        let large_docs = "x ".repeat(2000); // well over the summarization threshold
+
+        let result = orchestrator
+            .maybe_summarize_retrieved_docs(large_docs.clone(), &mut ctx, &tx)
+            .await;
+
+        assert_eq!(result, large_docs, "no Summarizer configured -> pass through unchanged");
+    }
+
+    #[tokio::test]
+    async fn maybe_summarize_retrieved_docs_passes_through_small_docs_unchanged() {
+        let mut config = base_config();
+        config["Summarizer"] = json!({ "model": "fake" });
+        // A FakeLlmClient with zero scripted responses would panic if chat_stream were called —
+        // proves small docs never trigger the summarization LLM call at all.
+        let orchestrator = build_test_orchestrator(config, vec![], None).await;
+        let mut ctx = Context::new("goal".to_string());
+        let (tx, _rx) = mpsc::channel(100);
+        let small_docs = "a short retrieved snippet".to_string();
+
+        let result = orchestrator
+            .maybe_summarize_retrieved_docs(small_docs.clone(), &mut ctx, &tx)
+            .await;
+
+        assert_eq!(result, small_docs);
+    }
+
+    #[tokio::test]
+    async fn maybe_summarize_retrieved_docs_condenses_large_docs_when_a_summarizer_is_configured() {
+        let mut config = base_config();
+        config["Summarizer"] = json!({ "model": "fake" });
+        let orchestrator = build_test_orchestrator(
+            config,
+            vec!["Condensed: fn foo() lives in src/lib.rs; rest was boilerplate metadata."],
+            None,
+        )
+        .await;
+        let mut ctx = Context::new("goal".to_string());
+        let (tx, _rx) = mpsc::channel(100);
+        let large_docs = "x ".repeat(2000);
+
+        let result = orchestrator
+            .maybe_summarize_retrieved_docs(large_docs.clone(), &mut ctx, &tx)
+            .await;
+
+        assert_eq!(result, "Condensed: fn foo() lives in src/lib.rs; rest was boilerplate metadata.");
+        assert_ne!(result, large_docs);
+    }
+
+    #[tokio::test]
+    async fn maybe_summarize_retrieved_docs_falls_back_to_raw_docs_if_summarization_fails() {
+        let mut config = base_config();
+        config["Summarizer"] = json!({ "model": "fake" });
+        // An empty scripted response makes `summarize_retrieved_documents` return an error
+        // ("LLM returned an empty document summary") — the retrieval must not be lost because
+        // the compression step itself failed.
+        let orchestrator = build_test_orchestrator(config, vec!["   "], None).await;
+        let mut ctx = Context::new("goal".to_string());
+        let (tx, _rx) = mpsc::channel(100);
+        let large_docs = "x ".repeat(2000);
+
+        let result = orchestrator
+            .maybe_summarize_retrieved_docs(large_docs.clone(), &mut ctx, &tx)
+            .await;
+
+        assert_eq!(result, large_docs, "a failed summarization must fall back to the raw docs");
     }
 
     #[tokio::test]
