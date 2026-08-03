@@ -231,6 +231,38 @@ fn columns(options: &OutputArgs) -> Vec<&'static str> {
         .collect()
 }
 
+/// Cap on a single metadata value's rendered length — a backstop against any one field (e.g.
+/// an unbounded `references` list from a ctags-derived collection) blowing up the token cost
+/// of a retrieval result, regardless of which collection or field it comes from. Same idea as
+/// `agent/protocol.rs`'s `MAX_SHOWN_ORIGINAL_CHARS` truncation for file content.
+const MAX_METADATA_VALUE_CHARS: usize = 300;
+
+/// Renders a metadata map as compact, sorted `key: value` pairs using each value's own JSON
+/// form (`MetadataValue` already derives `Serialize`) instead of `format!("{:?}", map)`'s raw
+/// Rust debug syntax (`Str("ask")`, `Int(2)`) — same information, without the enum-variant
+/// wrapper noise that cost tokens on every single field for no benefit to the model reading
+/// it. Any individual value longer than `MAX_METADATA_VALUE_CHARS` is truncated with a note,
+/// so one oversized field can't blow up the whole row regardless of source.
+fn format_metadata(m: &types::Metadata) -> String {
+    let mut keys: Vec<&String> = m.keys().collect();
+    keys.sort();
+    let parts: Vec<String> = keys
+        .into_iter()
+        .map(|k| {
+            let rendered = serde_json::to_string(&m[k]).unwrap_or_default();
+            let char_count = rendered.chars().count();
+            let rendered = if char_count > MAX_METADATA_VALUE_CHARS {
+                let truncated: String = rendered.chars().take(MAX_METADATA_VALUE_CHARS).collect();
+                format!("{truncated}...(truncated, {char_count} chars total)")
+            } else {
+                rendered
+            };
+            format!("{k}: {rendered}")
+        })
+        .collect();
+    format!("{{{}}}", parts.join(", "))
+}
+
 fn cell(row: &OutputRow, field: &str) -> String {
     match field {
         "id" => row.id.clone(),
@@ -313,7 +345,7 @@ fn flatten_get(r: &types::GetResponse) -> Vec<OutputRow> {
             metadata: r
                 .metadatas
                 .as_ref()
-                .and_then(|m| m[i].as_ref().map(|map| format!("{:?}", map))),
+                .and_then(|m| m[i].as_ref().map(format_metadata)),
             embedding: r.embeddings.as_ref().and_then(|e| e.get(i).cloned()),
             score: None,
             distance: None,
@@ -335,7 +367,7 @@ fn flatten_search(r: &types::SearchResponse, index: usize) -> Vec<OutputRow> {
                 .and_then(|d| d.as_ref().and_then(|docs| docs[i].clone())),
             metadata: r.metadatas.get(index).and_then(|m| {
                 m.as_ref()
-                    .and_then(|metas| metas[i].as_ref().map(|m| format!("{:?}", m)))
+                    .and_then(|metas| metas[i].as_ref().map(format_metadata))
             }),
             embedding: r
                 .embeddings
@@ -370,7 +402,7 @@ fn flatten_query(r: &types::QueryResponse, index: usize) -> Vec<OutputRow> {
                 .metadatas
                 .as_ref()
                 .and_then(|m| m.get(index))
-                .and_then(|metas| metas[i].as_ref().map(|m| format!("{:?}", m))),
+                .and_then(|metas| metas[i].as_ref().map(format_metadata)),
             embedding: r
                 .embeddings
                 .as_ref()
@@ -423,6 +455,40 @@ mod tests {
         assert_eq!(row.uri.unwrap(), "http://example.com");
         assert_eq!(row.include.unwrap(), "{\"extra\": \"info\"}");
         assert_eq!(row.select.unwrap(), "{\"field\": \"data\"}");
+    }
+
+    // Regression: a real Librarian retrieval turn rendered metadata via `format!("{:?}", map)`
+    // — Rust's Debug syntax for the enum (`Str("ask")`, `Int(2)`) — instead of the value's own
+    // clean JSON form, wasting tokens on wrapper noise with no benefit to the model reading it.
+    #[test]
+    fn format_metadata_uses_clean_json_not_rust_debug_syntax() {
+        let mut m: types::Metadata = HashMap::new();
+        m.insert("name".to_string(), MetadataValue::Str("ask".to_string()));
+        m.insert("start".to_string(), MetadataValue::Int(1));
+        let rendered = format_metadata(&m);
+        assert!(!rendered.contains("Str("), "should not contain Rust Debug enum syntax: {rendered}");
+        assert!(!rendered.contains("Int("), "should not contain Rust Debug enum syntax: {rendered}");
+        assert!(rendered.contains("\"ask\""));
+        assert!(rendered.contains("1"));
+    }
+
+    // Regression: a real ctags-derived `references` metadata field was an unbounded,
+    // whole-repo comma-joined "file:line,file:line,..." string (60+ entries in the reported
+    // case) — one oversized field blowing up the token cost of an entire retrieval result.
+    // `format_metadata` truncates any single value past `MAX_METADATA_VALUE_CHARS` regardless
+    // of which field or collection it came from, as a backstop independent of fixing the
+    // ingestion side that actually produces `references`.
+    #[test]
+    fn format_metadata_truncates_an_oversized_value() {
+        let mut m: types::Metadata = HashMap::new();
+        let huge = "./src/foo.rs:1,".repeat(50); // well past MAX_METADATA_VALUE_CHARS
+        m.insert("references".to_string(), MetadataValue::Str(huge));
+        let rendered = format_metadata(&m);
+        assert!(
+            rendered.contains("...(truncated,"),
+            "expected a truncation marker, got: {rendered}"
+        );
+        assert!(rendered.len() < 500, "rendered value should be capped, got {} chars: {rendered}", rendered.len());
     }
 
     #[test]

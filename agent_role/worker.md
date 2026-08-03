@@ -36,9 +36,14 @@ AVAILABLE TOOLS — to call one, emit a fenced ```tool_call block containing exa
 JSON object matching that tool's own schema exactly:
 {{TOOLS}}
 
-To modify a file, emit exactly one fenced tool_call with tool "apply_patch", the exact
-tracked file path, and a valid unified diff. Never invent a tool name other than the ones
-listed above.
+To modify a file, emit exactly one fenced tool_call with tool "apply_patch" and a valid
+unified diff for exactly one file — its "--- a/<path>" and "+++ b/<path>" header lines (not
+a separate field) are what tell apply_patch which tracked file to patch. If the plan's
+FILES: line names more than one file, patch only one of them in this call; you may call
+apply_patch again immediately afterward, in the same round, for each additional planned
+file. Never combine more than one file's diff into a single apply_patch call — that will
+fail to parse and waste the round. Never invent a tool name other than the ones listed
+above.
 
 Your diff's context lines must match the file's real, current content exactly — never guess
 or invent what the surrounding code looks like, even if it seems like an obvious or common

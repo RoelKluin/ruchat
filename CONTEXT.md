@@ -100,11 +100,18 @@ state to keep in sync:
 - `collapse_to_summary(text)` — drops all turns at or before the current round
   and replaces them with a single `Summary` turn; invoked from `Stage::Retry`
   when the Summarizer's token-budget check trips.
-- `record_patch(path, original)` / `revert_pending_patch(tx)` — track and, if
-  needed, undo the one file write `apply_patch` makes per round. See
-  `ORCHESTRATION.md`'s tool catalog notes for the full rollback flow.
-- `trace(tx, msg)` — sends a `Trace` event to the UI stream and rewrites
-  `.ruchat_trace.md` with the current goal/context/history snapshot.
+- `record_patch(path, original)` / `revert_pending_patches(tx)` — track and, if
+  needed, undo every file write `apply_patch` makes in a round (a round can
+  touch more than one file — see `ORCHESTRATION.md`'s tool catalog notes for
+  the full rollback flow).
+- `trace(tx, msg)` — sends a `Trace` event to the UI stream and rewrites this
+  run's live file under `ruchat_traces/` with the current goal/context/history
+  snapshot (including retrieval/tool-output turns, unlike the `HISTORY` prompt
+  variable — see `full_history_view`/`trace_body`). `init_trace_index()` picks
+  the run's file slot once, at the very start; `finalize_success_trace(summary)`
+  / `finalize_failure_trace(summary)` archive the final result into
+  `ruchat_traces/successes/` or `ruchat_traces/failures/` once the run ends —
+  see `ORCHESTRATION.md` for how the summary itself is generated.
 
 ### How Context Flows Through the Orchestration Loop
 

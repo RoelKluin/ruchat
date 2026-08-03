@@ -81,7 +81,7 @@ We prioritize **predictability**, **performance**, **token efficiency**, and **t
 - [ ] Model context window auto-management and smart chunking
 - [ ] Built-in benchmarking suite vs LangGraph/CrewAI on local hardware
 - [ ] Optional distributed mode (multiple local machines via simple message bus — still offline-first)
-- [ ] Advanced observability (local trace viewer) — `comparisons/*.md` repeatedly call out LangSmith/AutoGen Studio-style inspection as a strength ruchat lacks; today's `.ruchat_trace.md` + colored terminal events are a snapshot/stream, not a navigable history. Scope as a local, offline viewer over the existing `Context.turns` log (e.g. a `ruchat trace` subcommand rendering round-by-round turns/rejections), not a hosted service — stays consistent with the "no cloud dependency" constraint above.
+- [ ] Advanced observability (local trace viewer) — `comparisons/*.md` repeatedly call out LangSmith/AutoGen Studio-style inspection as a strength ruchat lacks; today's per-run `ruchat_traces/ruchat_trace_<N>.md` files (archived into `successes/`/`failures/` with a one-shot LLM summary once a run ends — see `ORCHESTRATION.md`) are a set of individually-navigable snapshots, not a queryable/searchable history across runs. Scope as a local, offline viewer over the existing `Context.turns` log and the `ruchat_traces/` archive (e.g. a `ruchat trace` subcommand listing/filtering past runs and rendering round-by-round turns/rejections), not a hosted service — stays consistent with the "no cloud dependency" constraint above.
 
 ---
 

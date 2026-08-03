@@ -26,7 +26,12 @@ impl MetadataArgs {
 #[derive(Parser, Debug, Clone, PartialEq, Deserialize, Default)]
 pub(crate) struct UpdateMetadataArrayArgs {
     /// An JSON string or a file path to JSON metadata
-    #[arg(short, long)]
+    ///
+    /// Explicit capital `-M`, not the auto-derived lowercase `-m`: this is flattened into
+    /// `EmbedArgs` alongside `OllamaArgs`/`ModelArgs`, whose own `--model` field already
+    /// claims `-m` — clap would otherwise register two flags on the same short letter within
+    /// one command (e.g. `ruchat index`), a real collision reported from a live run.
+    #[arg(short = 'M', long)]
     metadata: Option<String>,
 }
 

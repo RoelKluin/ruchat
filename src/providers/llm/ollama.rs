@@ -31,7 +31,13 @@ impl OllamaArgs {
 
         let ollama = server.init()?;
         let mut models = Vec::new();
-        for nr in 0..self.model.get_nr_of_models() {
+        // At least one slot even if zero `-m`/`--model` flags were given — otherwise this loop
+        // never runs at all, `models` stays empty, and a caller with a real `default` (e.g.
+        // `EmbedArgs::embed_with_metadata_items`'s "all-minilm:l6-v2") still fails downstream
+        // with "no model found" instead of ever getting a chance to use that default. Callers
+        // with no sensible default (`delete_model`/`pull`, `default = ""`) still correctly
+        // error via `get_model`'s own `model.is_empty()` check.
+        for nr in 0..self.model.get_nr_of_models().max(1) {
             let model = self.model.get_model(&ollama, nr, default).await?;
             models.push(model);
         }

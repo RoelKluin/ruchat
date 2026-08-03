@@ -119,17 +119,32 @@ Accept → Commit → `git checkout -b ai/feature-<timestamp>`, stage only
 ```
 
 `Escalate(reason)` and `Done` are terminal — the loop breaks and the reason (if
-any) is traced to `.ruchat_trace.md` and the event stream. `.ruchat_trace.md`
-itself is a full chronological dump of every turn (`Context::trace_body`),
-including retrieval/tool-output turns — those are excluded from the `HISTORY`
-prompt variable (rendered as a separate `DOCUMENTS` section instead) but not
-from the trace file. If the run ends without ever reaching `Stage::Commit`
-(escalated, or the iteration budget exhausted with nothing to surface), a
-single direct LLM call analyzes the finished trace and its result is
-prepended to the top of `.ruchat_trace.md` as "# Why this run did not
-succeed" (`Orchestrator::record_failure_summary`,
-`orchestrator/postmortem.rs`) — best-effort, same one-shot-call pattern as
-commit-message generation, so it never blocks or masks the original failure.
+any) is traced to the event stream and this run's file. Each run gets its own
+`ruchat_traces/ruchat_trace_<N>.md` (`N` picked once, at the start, by
+`Context::init_trace_index()` scanning existing files so no run ever
+overwrites another's), refreshed on every turn while the run is in progress —
+this live file is a full chronological dump of every turn
+(`Context::trace_body`/`full_history_view`), including retrieval/tool-output
+turns, which are excluded from the `HISTORY` prompt variable (rendered as a
+separate `DOCUMENTS` section instead) but not from the trace file.
+
+Once the run ends, `Orchestrator::finalize_trace` makes a single direct LLM
+call (`orchestrator/run_summary.rs`, same one-shot pattern as commit-message
+generation — best-effort, so a failed analysis call never blocks or masks the
+original outcome) analyzing the finished trace, and archives the result,
+removing the live file:
+- **Success** (`Stage::Commit` actually succeeded): `generate_success_summary`
+  explains how/why the run succeeded; `Context::finalize_success_trace` writes
+  *just that summary* — deliberately not the full round-by-round trace, since
+  a successful run doesn't need it and a short file per run keeps
+  `ruchat_traces/successes/` easy to skim — as
+  `ruchat_traces/successes/ruchat_trace_<N>.md`.
+- **Failure** (escalated, or the iteration budget exhausted without ever
+  reaching Commit): `generate_failure_summary` explains why the run didn't
+  succeed; `Context::finalize_failure_trace` writes that summary *plus* the
+  full trace body underneath it — a failure is exactly when a maintainer
+  needs to dig through every round — as
+  `ruchat_traces/failures/ruchat_trace_<N>.md`.
 
 ### Tool Catalog (Worker + Scoper)
 

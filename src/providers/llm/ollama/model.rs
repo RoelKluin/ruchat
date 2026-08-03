@@ -90,6 +90,28 @@ pub(crate) struct ModelArgs {
     pub seed: Option<i32>,
 }
 
+/// Pure resolution of which model name `get_model` should look up, given whatever's at the
+/// requested `-m`/`--model` index (`None` if that many flags were never given at all) and the
+/// caller's default. `None` (missing entirely) and `Some("")` (an explicit empty value) are
+/// treated identically — both mean "nothing specified here, use the caller's default" — since
+/// they used to be handled differently: `None` errored immediately regardless of `default`, so
+/// a command like `ruchat index`/`ruchat embed`, which passes a real default
+/// ("all-minilm:l6-v2"), still failed with "no model specified" whenever `-m` was simply
+/// omitted, the common case. Callers with no sensible default (`delete_model`/`pull`, which
+/// pass `default = ""`) are unaffected: an empty resolved value still returns `None` here,
+/// same as before. Split out from `get_model`'s network call for direct testability.
+fn resolve_model_arg<'a>(model: Option<&'a str>, default: &'a str) -> Option<&'a str> {
+    let resolved = match model {
+        Some("") | None => default,
+        Some(m) => m,
+    };
+    if resolved.is_empty() {
+        None
+    } else {
+        Some(resolved)
+    }
+}
+
 impl ModelArgs {
     pub(crate) async fn build_generation_request(
         &self,
@@ -157,16 +179,9 @@ impl ModelArgs {
         nr: usize,
         default: &str,
     ) -> Result<String> {
-        let model = match self.model.get(nr).map(|s| s.as_str()) {
-            Some("") => default,
-            Some(m) => m,
-            None => return Err(RuChatError::NoModelSpecified),
-        };
-        if model.is_empty() {
-            Err(RuChatError::NoModelSpecified)
-        } else {
-            get_model_name(ollama, model).await
-        }
+        let model = resolve_model_arg(self.model.get(nr).map(String::as_str), default)
+            .ok_or(RuChatError::NoModelSpecified)?;
+        get_model_name(ollama, model).await
     }
     pub(super) fn get_nr_of_models(&self) -> usize {
         self.model.len()
@@ -296,6 +311,31 @@ mod build_generation_request_tests {
             .unwrap();
         let v = serde_json::to_value(&req).unwrap();
         assert!(v["options"].get("not_a_real_field").is_none());
+    }
+
+    // Regression: `ruchat index`/`ruchat embed` (real default "all-minilm:l6-v2") failed with
+    // "no model specified" whenever `-m`/`--model` was simply omitted — the common case — even
+    // though a sensible default existed. Root cause: an empty `self.model` Vec made `get(nr)`
+    // return `None`, which used to error immediately instead of falling back to `default` the
+    // way an explicit `Some("")` already did.
+    #[test]
+    fn resolve_model_arg_falls_back_to_a_real_default_when_nothing_was_given() {
+        assert_eq!(resolve_model_arg(None, "all-minilm:l6-v2"), Some("all-minilm:l6-v2"));
+        assert_eq!(resolve_model_arg(Some(""), "all-minilm:l6-v2"), Some("all-minilm:l6-v2"));
+    }
+
+    #[test]
+    fn resolve_model_arg_prefers_an_explicit_value_over_the_default() {
+        assert_eq!(resolve_model_arg(Some("qwen2.5-coder:14b"), "all-minilm:l6-v2"), Some("qwen2.5-coder:14b"));
+    }
+
+    // `delete_model`/`pull` pass `default = ""` deliberately — there's no sensible model to
+    // fall back to for those, so omitting `-m` must still be an error, not silently resolve to
+    // an empty model name.
+    #[test]
+    fn resolve_model_arg_still_errors_when_the_default_is_also_empty() {
+        assert_eq!(resolve_model_arg(None, ""), None);
+        assert_eq!(resolve_model_arg(Some(""), ""), None);
     }
 }
 

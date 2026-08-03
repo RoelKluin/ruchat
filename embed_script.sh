@@ -23,6 +23,12 @@ done < <(ctags --list-kinds-full | awk '{print $1 ":" $2 " " $3}')
 
 model="all-minilm:l6-v2"
 collection="repo_src-${model//:/_}"
+# Cap on how many "file:line" entries the references metadata field keeps per symbol — an
+# uncapped whole-repo ripgrep match list (60+ entries for a commonly-used symbol) bloated the
+# token cost of every retrieval result that included it, for no benefit to the model reading
+# it (it's a bookkeeping field, not content). Mirrors `index.rs`'s native `--with-references`
+# cap of 50.
+max_references=50
 
 if [ -n "$1" ]; then
   files=("$@")
@@ -157,7 +163,7 @@ for f in "${files[@]}"; do
                     # Escape special chars in var for regex search
                     safe_var=$(printf '%s\n' "$var" | sed 's/[][*^$.]/\\&/g')
                     references="$(rg --color=never --no-heading -n "(^|\W)${safe_var}(\W|$)" . | cut -d: -f1,2 | \
-                        grep -v "^$f:$start$" | tr '\n' ',' | sed 's/,$//')"
+                        grep -v "^$f:$start$" | head -n "$max_references" | tr '\n' ',' | sed 's/,$//')"
 
                     if [[ -n "$references" ]]; then
                         new_json="$(jq -n \

@@ -289,6 +289,26 @@ impl Validation {
             ctx.push_turn(TurnKind::Rejection, "Validator", content.clone());
             return Ok(Validation::Failure(content));
         }
+        // `diffy::Patch::from_str` only understands one file's diff (one '--- a/'/'+++ b/'
+        // pair, followed by that file's hunks) — a real failure had the Worker concatenate two
+        // files' diffs into a single apply_patch call instead of calling apply_patch twice (the
+        // multi-file patch loop in `Stage::Implement` supports exactly that, sequentially).
+        // diffy doesn't detect this cleanly: it parses the first file's hunks, then chokes on
+        // the second '--- a/' header as unparseable trailing content ("orphaned hunk header
+        // after trailing content" or similar) — a cryptic message that doesn't tell the Worker
+        // what's actually wrong. Caught explicitly, before diffy ever sees it, with a message
+        // that does.
+        let file_header_count = diff_text.lines().filter(|l| l.starts_with("--- ")).count();
+        if file_header_count > 1 {
+            let content = format!(
+                "refused: this diff contains {file_header_count} separate '--- a/<file>' \
+                headers — apply_patch accepts only one file's diff per call. Submit a diff for \
+                just one of those files now; you may call apply_patch again afterward for each \
+                additional file this round (up to the round's patch budget)."
+            );
+            ctx.push_turn(TurnKind::Rejection, "Validator", content.clone());
+            return Ok(Validation::Failure(content));
+        }
         let normalized = normalize_diff_hunk_lines(diff_text);
         let normalized = fix_hunk_header_counts(&normalized);
         let patch = match diffy::Patch::from_str(&normalized) {
@@ -614,6 +634,41 @@ mod tests {
                 );
             }
             other => panic!("expected a Failure explaining the missing header, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn apply_patch_gives_an_actionable_message_for_a_diff_spanning_two_files() {
+        // From a real failure report: the Worker concatenated diffs for src/tui/io.rs and
+        // src/cli/prompt.rs into a single apply_patch call instead of calling apply_patch
+        // twice (the multi-file patch loop supports exactly that, sequentially, one file per
+        // call) — diffy only surfaced a cryptic "orphaned hunk header after trailing content"
+        // once it choked on the second file's header, which gave the Worker nothing to act on.
+        let diff = "--- a/src/tui/io.rs\n\
+            +++ b/src/tui/io.rs\n\
+            @@ -20,7 +20,7 @@ pub(crate) struct Io {\n\
+             }\n\
+             \n\
+             impl Io {\n\
+            -    /// Creates a new `Io` instance.\n\
+            +    /// Initializes a new `Io` instance.\n\
+             \n\
+            --- a/src/cli/prompt.rs\n\
+            +++ b/src/cli/prompt.rs\n\
+            @@ -172,7 +172,7 @@ impl Prompt {\n\
+                 pub(crate) fn get_prompt(&self) -> Result<String> {\n\
+            -        let io = Io::new();\n\
+            +        let io = Io::initialize();\n\
+             }\n";
+        let mut ctx = Context::new("goal".to_string());
+        match Validation::apply_patch(diff, &mut ctx).await.unwrap() {
+            Validation::Failure(msg) => {
+                assert!(
+                    msg.contains("only one file's diff per call"),
+                    "expected the actionable multi-file message, got: {msg}"
+                );
+            }
+            other => panic!("expected a Failure explaining the multi-file diff, got: {other:?}"),
         }
     }
 

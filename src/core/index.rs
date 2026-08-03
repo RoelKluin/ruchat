@@ -36,6 +36,39 @@ fn walk_files(root: &Path, exts: &[&str], out: &mut Vec<PathBuf>) -> std::io::Re
     Ok(())
 }
 
+/// Prefers `git ls-files` (scoped to `root`, filtered by `exts`) over `walk_files`'s raw
+/// recursive walk whenever `root` is inside a git work tree — matches the precedent in
+/// `orchestrator::search::tracked_rust_files`: a real, severe bug there came from exactly this
+/// class of unscoped recursive walk sweeping in a large, gitignored-but-physically-present
+/// directory (`docs/`) that a plain directory walk has no way to know isn't meant to be
+/// indexed. `None` means `root` isn't a git work tree (or `git` isn't on PATH) — the caller
+/// falls back to `walk_files` in that case, preserving the old behavior for non-repo use.
+/// `Some(vec![])` is a legitimate answer (a real git repo with zero matching files), distinct
+/// from `None`.
+async fn tracked_files_under(root: &Path, exts: &[&str]) -> Option<Vec<PathBuf>> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["ls-files"])
+        .output()
+        .await
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(|line| root.join(line))
+            .filter(|p| {
+                p.extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| exts.contains(&e))
+            })
+            .collect(),
+    )
+}
+
 fn language_for_ext(ext: &str) -> &'static str {
     match ext {
         "rs" => "rust",
@@ -249,10 +282,16 @@ pub(crate) struct IndexArgs {
 
 impl IndexArgs {
     pub(crate) async fn run(&self, cfg: &Value) -> Result<()> {
-        let mut files = Vec::new();
         let exts: Vec<&str> = self.ext.iter().map(String::as_str).collect();
-        walk_files(&self.path, &exts, &mut files)
-            .map_err(|e| RuChatError::InternalError(format!("walk failed: {e}")))?;
+        let files = match tracked_files_under(&self.path, &exts).await {
+            Some(tracked) => tracked,
+            None => {
+                let mut walked = Vec::new();
+                walk_files(&self.path, &exts, &mut walked)
+                    .map_err(|e| RuChatError::InternalError(format!("walk failed: {e}")))?;
+                walked
+            }
+        };
 
         if files.is_empty() {
             return Err(RuChatError::Is(format!(
@@ -316,5 +355,40 @@ impl IndexArgs {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Regression: `IndexArgs::run` used to always call `walk_files` — a raw recursive
+    // directory walk with only a small hardcoded skip-list (.git/target/node_modules/.venv/
+    // dist/build) — regardless of whether `path` was a git work tree. That's the exact class
+    // of bug already found and fixed for the ctags-freshness path
+    // (`orchestrator::search::regenerate_tags`): a recursive walk has no way to know a large,
+    // gitignored-but-physically-present directory (this repo's own `docs/`) isn't meant to be
+    // indexed. `tracked_files_under` prefers `git ls-files` when available, so pointing
+    // `ruchat index` at this repo's root must never pull in `docs/`.
+    #[tokio::test]
+    async fn tracked_files_under_this_repo_never_includes_docs() {
+        let root = Path::new(".");
+        let exts = ["rs"];
+        let files = tracked_files_under(root, &exts)
+            .await
+            .expect("this repo is a git work tree");
+        assert!(!files.is_empty(), "this repo has real .rs files to find");
+        for f in &files {
+            let s = f.to_string_lossy();
+            assert!(s.ends_with(".rs"), "non-.rs path returned: {s}");
+            assert!(!s.contains("docs/"), "docs/ path leaked in: {s}");
+        }
+    }
+
+    #[tokio::test]
+    async fn tracked_files_under_returns_none_outside_a_git_work_tree() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("foo.rs"), "fn main() {}").unwrap();
+        assert!(tracked_files_under(dir.path(), &["rs"]).await.is_none());
     }
 }
