@@ -155,6 +155,13 @@ Notes:
   `--- a/<file>` header line at all still can't be applied — there's no safe way to infer a
   target rather than trusting the header — but gets an actionable rejection message telling the
   Worker to add one, instead of a generic parse error.
+- If a syntactically valid diff still fails to apply (`diffy::apply`'s `Err` arm — the context
+  lines don't match the target's real content, almost always because the Worker guessed/
+  hallucinated the file instead of reading it), the rejection includes the file's actual current
+  content directly (capped at `MAX_SHOWN_ORIGINAL_CHARS`, 4,000 chars) rather than just the raw
+  `diffy` error. This lets the Worker write a correct diff on its very next attempt without
+  needing a separate `read_file` call, which may not even be available if `retrieve_budget` is
+  already exhausted.
 - `apply_patch` is gated: the target file must already be tracked by git
   (`git ls-files`), checked in `Validation::apply_patch` before the diff is applied.
 - `apply_patch` also checks scope: if the Architect's plan ended with a

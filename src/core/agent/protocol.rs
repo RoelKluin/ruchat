@@ -159,6 +159,12 @@ impl BuildReport {
 /// spirit to `orchestrator::fs::MAX_READ_BYTES`, just on the write side.
 const MAX_PATCH_DIFF_BYTES: usize = 8_000;
 
+/// Cap on how much of a file's real content gets echoed back in a patch-apply-failure
+/// rejection (see `Validation::apply_patch`'s `Err` arm) — large enough to show a genuinely
+/// small-to-medium file in full, small enough not to blow the Worker's context budget on a
+/// single rejection turn.
+const MAX_SHOWN_ORIGINAL_CHARS: usize = 4_000;
+
 /// Repairs the single most common diff mistake coder-tuned local models make:
 /// dropping the mandatory leading space on an unchanged (context) line inside
 /// a hunk. Unified diff requires every hunk-body line to start with ' '
@@ -341,7 +347,29 @@ impl Validation {
                 Ok(Validation::Success)
             }
             Err(e) => {
-                let content = format!("Patch apply failed on {target}: {e}");
+                // `diffy::apply` fails here for essentially one reason: the diff's context
+                // lines don't match `target`'s actual current content — almost always because
+                // the Worker guessed/hallucinated what the file looks like instead of reading
+                // it. Telling it to go call `read_file` and retry would cost another
+                // round-trip that may not even be available (`retrieve_budget` could already be
+                // exhausted) — showing the real content directly in this same rejection lets it
+                // write a correct diff on the very next attempt instead.
+                let shown: String = original.chars().take(MAX_SHOWN_ORIGINAL_CHARS).collect();
+                let truncated_note = if original.chars().count() > MAX_SHOWN_ORIGINAL_CHARS {
+                    format!(
+                        "\n... (truncated, {} bytes total — request a narrower range with \
+                        read_file if you need more)",
+                        original.len()
+                    )
+                } else {
+                    String::new()
+                };
+                let content = format!(
+                    "Patch apply failed on {target}: {e}\n\nThis means the diff's context \
+                    lines don't match {target}'s actual current content. Here is the file's \
+                    real current content — write your next diff's context lines to match this \
+                    exactly, don't guess:\n\n{shown}{truncated_note}"
+                );
                 ctx.push_turn(TurnKind::Rejection, "Validator", content);
                 Ok(Validation::Failure(e.to_string()))
             }
@@ -624,6 +652,40 @@ mod tests {
                 "expected scope rejection message, got: {msg}"
             ),
             _ => panic!("expected the patch to be rejected as out of declared scope"),
+        }
+    }
+
+    // Regression test for a real failure: the Worker wrote a diff assuming a plausible-looking
+    // but entirely hallucinated function signature instead of the file's actual content (it
+    // never read the file first), so every attempt failed to apply with only a generic
+    // "context mismatch"-shaped error — nothing telling the Worker what the file *actually*
+    // looks like, so every retry guessed again instead of correcting.
+    #[tokio::test]
+    async fn apply_patch_shows_real_file_content_when_context_does_not_match() {
+        // Cargo.toml is tracked by git in this repo (passes the tracked-file check) and no
+        // FILES: line is set (scope check is skipped) — reaches diffy::apply, which fails since
+        // these context lines don't match Cargo.toml's real content, syntactically valid diff
+        // otherwise (hunk header count matches its own body, so this isn't a parse failure).
+        let mut ctx = Context::new("goal".to_string());
+        let diff = "--- a/Cargo.toml\n+++ b/Cargo.toml\n@@ -1,3 +1,3 @@\n totally made up line one\n totally made up line two\n-totally made up line three\n+totally made up line three, changed\n";
+        let result = Validation::apply_patch(diff, &mut ctx).await.unwrap();
+        match result {
+            Validation::Failure(_) => {
+                let rejection = ctx
+                    .turns
+                    .iter()
+                    .find(|t| t.kind == TurnKind::Rejection)
+                    .expect("a failed apply should push a rejection");
+                assert!(rejection.content.contains("real current content"));
+                // Cargo.toml's actual [package] header should appear verbatim in the message —
+                // confirms the REAL content was shown, not just a generic error.
+                assert!(
+                    rejection.content.contains("[package]"),
+                    "expected Cargo.toml's real content in the message, got: {}",
+                    rejection.content
+                );
+            }
+            other => panic!("expected the patch to fail to apply, got: {other:?}"),
         }
     }
 }

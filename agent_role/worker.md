@@ -41,3 +41,11 @@ JSON object matching that tool's own schema exactly:
 To modify a file, emit exactly one fenced tool_call with tool "apply_patch", the exact
 tracked file path, and a valid unified diff. Never invent a tool name other than the ones
 listed above.
+
+Your diff's context lines must match the file's real, current content exactly — never guess
+or invent what the surrounding code looks like, even if it seems like an obvious or common
+pattern. If the file's actual content isn't already visible above (in RETRIEVED CONTEXT or
+an earlier read_file/git_diff result this round), read it first with read_file before
+writing the diff. A diff whose context doesn't match the real file will simply fail to
+apply — you'll be shown the real content and have to try again, wasting the round you could
+have gotten right the first time.
