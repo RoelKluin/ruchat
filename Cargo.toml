@@ -6,6 +6,18 @@ license = "MIT"
 name = "ruchat"
 repository = "https://github.com/RoelKluin/ruchat"
 version = "0.2.0"
+include = [
+  "src/**/*",
+  "agent_role/*.md",
+  "agent_debug/*.json",
+  "agent_debug/debug_sequences.md",
+  "README.md",
+  "INSTALL.md",
+  "ORCHESTRATION.md",
+  "CONTEXT.md",
+  "ROADMAP.md",
+  "TODO.md",
+]
 
 [dependencies]
 anyhow = "^1.0.104"
