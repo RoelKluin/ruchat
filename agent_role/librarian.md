@@ -15,11 +15,17 @@ OUTPUT FORMAT - must be valid JSON, nothing else before or after:
 {
   "query": string | [string, string, ...],  // search text(s), about YOUR GOAL
   "n_results": integer,
-  "collection": string,
+  "collection": string | [string, string, ...],
   "where": string | null,
   "ids": [string, ...] | null,
   "include": [string, ...] | null
 }
+
+"collection" is normally a single collection name — use an array of names only
+when your goal genuinely needs information from more than one of the collections
+listed above in the same query (e.g. both source code and its commit history).
+Each named collection is searched independently for the full "n_results", not
+split between them.
 
 WHERE clause syntax:
   field = 'value'          field != 'value'

@@ -1743,6 +1743,51 @@ mod tests {
         assert!(!items.is_empty());
     }
 
+    // The `agent_debug/*.json` fixture directory had two combinations (`architect_librarian_
+    // and_worker.json`, `architect_librarian_worker_validator.json`) that existed on disk but
+    // were never actually driven through `run_fixture`/`debug_stage_machine` by any test —
+    // `cargo test --lib` compiling and passing gave no signal about whether these two specific
+    // role sequences worked, since nothing exercised them. ROADMAP.md previously (incorrectly)
+    // described the fixed-sequence debug mode as "not wired into cargo test" at all, which was
+    // stale — 9 of the then-11 fixtures already were; these two were the only real gap.
+    #[tokio::test]
+    async fn architect_librarian_and_worker_completes() {
+        let mut config = base_config();
+        config["Librarian"] = json!({ "model": "fake", "embed_model": "fake-embed" });
+        let items = run_fixture(
+            "architect_librarian_and_worker.json",
+            config,
+            vec![
+                "Plan: refactor error handling to use `?` and anyhow::Context.",
+                "{\"query\": \"error handling\", \"n_results\": 5, \"collection\": \"repo\"}",
+                "Replaced unwrap() with `?` and anyhow::Context.",
+            ],
+            Some(fake_query_response()),
+        )
+        .await;
+        assert!(!items.is_empty());
+    }
+
+    #[tokio::test]
+    async fn architect_librarian_worker_validator_completes() {
+        let mut config = base_config();
+        config["Librarian"] = json!({ "model": "fake", "embed_model": "fake-embed" });
+        config["Validator"] = json!({ "model": "fake" });
+        let items = run_fixture(
+            "architect_librarian_worker_validator.json",
+            config,
+            vec![
+                "Plan: refactor error handling to use `?` and anyhow::Context.",
+                "{\"query\": \"error handling\", \"n_results\": 5, \"collection\": \"repo\"}",
+                "Replaced unwrap() with `?` and anyhow::Context.",
+                "{\"verdict\": \"VALIDATED\", \"reason\": \"\"}",
+            ],
+            Some(fake_query_response()),
+        )
+        .await;
+        assert!(!items.is_empty());
+    }
+
     // Regression test for graceful degradation when Chroma is unreachable during the
     // Librarian's on-demand retrieval (`Stage::Retrieve`). Before the fix, `run_librarian_
     // retrieval` propagated `retrieve_and_generate`'s error straight through `?`, and

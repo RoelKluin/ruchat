@@ -43,7 +43,16 @@ pub(super) struct OutputArgs {
     #[arg(short = 'F', long, value_enum, default_value_t = OutputFormat::Markdown, help_heading = "Output Control")]
     format: OutputFormat,
 
-    #[arg(short, long, default_value_t = true, help_heading = "Output Control")]
+    // Long-only, deliberately: an auto-derived `-s` collides with `ServerArgs`'s explicit
+    // `-s`/`--server` (the Ollama/Chroma server address short flag, used consistently across
+    // this CLI) whenever both are flattened into the same command — as they are for
+    // `chroma-query` (`QueryArgs` flattens both `OllamaArgs` and `Query`/`OutputArgs`). That
+    // collision made `ruchat chroma-query` panic on startup in debug builds (clap's short-name
+    // uniqueness debug_assert) and left `-s`'s actual binding undefined in release builds —
+    // found while smoke-testing an unrelated change, not something either flag's own tests
+    // could have caught (each compiles fine in isolation; the collision only exists once both
+    // are flattened together).
+    #[arg(long, default_value_t = true, help_heading = "Output Control")]
     sort: bool,
 
     #[arg(

@@ -4,8 +4,7 @@ use crate::chroma::r#where::{
 };
 use crate::chroma::{
     rerank::{rerank_query_results, RerankWeights},
-    ChromaClientConfigArgs, ChromaCollectionConfigArgs, ChromaResponse, IncludeArgs, OutputArgs,
-    WhereArgs,
+    ChromaClientConfigArgs, ChromaResponse, IncludeArgs, OutputArgs, WhereArgs,
 };
 use crate::ollama::OllamaArgs;
 use crate::{Result, RuChatError};
@@ -47,11 +46,19 @@ pub(crate) struct Query {
     n_results: Option<u32>,
 
     /// Comma separated list of document IDs to restrict the search.
-    #[arg(short, long, value_delimiter = ',', help_heading = "Filtering")]
+    // Long-only, deliberately: an auto-derived `-i` collides with `IncludeArgs`'s own `-i`
+    // (`--include`) once both are flattened into the same command, as they are here — see the
+    // identical fix/comment on `OutputArgs::sort` above for the analogous `-s` collision found
+    // in the same command while smoke-testing an unrelated change.
+    #[arg(long, value_delimiter = ',', help_heading = "Filtering")]
     ids: Option<String>,
 
-    #[command(flatten)]
-    collection: ChromaCollectionConfigArgs,
+    /// Collection(s) to search — comma separated for more than one. Each collection is queried
+    /// independently for the full `n_results` (not split across them) and reranked on its own;
+    /// results are concatenated, each block labeled with its collection name. Empty means the
+    /// literal collection named "default".
+    #[arg(short, long, value_delimiter = ',', help_heading = "Collection")]
+    collection: Vec<String>,
 
     #[command(flatten)]
     include: IncludeArgs,
@@ -79,53 +86,76 @@ impl Query {
 
         let r#where = self.r#where.parse()?;
         let ids = super::parse_ids(&self.ids);
-        let mut include = self.include.parse()?;
 
-        // Collection-name resolution moved here from
-        // `ChromaCollectionConfigArgs::get_collection` (which needed a
-        // concrete `ChromaHttpClient`) — the retry-wrapped get+query round
-        // trip itself now lives in `VectorStore::query_collection`.
-        let collection_name = if self.collection.name().is_empty() {
-            "default"
+        // Empty means the literal collection named "default" — same fallback as the old
+        // single-collection `ChromaCollectionConfigArgs::name()` behavior.
+        let collection_names: Vec<&str> = if self.collection.is_empty() {
+            vec!["default"]
         } else {
-            self.collection.name()
+            self.collection.iter().map(String::as_str).collect()
         };
+        let multiple = collection_names.len() > 1;
 
-        // See `where_needs_client_side_eval`'s doc comment: Chroma's metadata filter has no
-        // scalar-substring operator, so a CONTAINS anywhere in `where` must be evaluated
-        // ourselves rather than sent to Chroma (which would just silently filter everything
-        // out against a plain string field). Don't send `where` at all in that case, over-fetch
-        // candidates from the unfiltered similarity search instead, and make sure metadata is
-        // actually part of the response — our filter can't evaluate what it doesn't have.
-        let needs_client_filter = r#where.as_ref().is_some_and(where_needs_client_side_eval);
-        let requested_n = self.n_results.unwrap_or(10);
-        let (query_where, fetch_n) = if needs_client_filter {
-            include = Some(with_metadata_included(include));
-            (
-                None,
-                Some((requested_n.saturating_mul(CLIENT_FILTER_OVERFETCH_FACTOR)).min(CLIENT_FILTER_MAX_FETCH)),
-            )
-        } else {
-            (r#where.clone(), self.n_results)
-        };
+        // Each collection is queried, filtered, and reranked independently (the maintainer's
+        // choice: full `n_results` per collection, not split across them — a collection with
+        // only weak matches shouldn't crowd out a strong one elsewhere) and rendered as its own
+        // labeled block, then concatenated. Deliberately not merged into a single `QueryResponse`
+        // before rendering: different collections can have entirely different metadata schemas
+        // (e.g. `repo_src`'s `file`/`kind` vs `repo_hist`'s `commit`/`author`), so there's no
+        // single row shape to merge into — keeping them as separate, clearly-labeled blocks is
+        // the correct rendering, not just the simpler one. The embedding call above runs once,
+        // outside this loop, since the query text is identical across collections.
+        let mut blocks = Vec::with_capacity(collection_names.len());
+        for collection_name in collection_names {
+            let mut include = self.include.parse()?;
 
-        let mut query_result = client
-            .query_collection(
-                collection_name,
-                query_embeddings,
-                fetch_n,
-                query_where,
-                ids,
-                include,
-            )
-            .await?;
+            // See `where_needs_client_side_eval`'s doc comment: Chroma's metadata filter has no
+            // scalar-substring operator, so a CONTAINS anywhere in `where` must be evaluated
+            // ourselves rather than sent to Chroma (which would just silently filter everything
+            // out against a plain string field). Don't send `where` at all in that case,
+            // over-fetch candidates from the unfiltered similarity search instead, and make sure
+            // metadata is actually part of the response — our filter can't evaluate what it
+            // doesn't have.
+            let needs_client_filter = r#where.as_ref().is_some_and(where_needs_client_side_eval);
+            let requested_n = self.n_results.unwrap_or(10);
+            let (query_where, fetch_n) = if needs_client_filter {
+                include = Some(with_metadata_included(include));
+                (
+                    None,
+                    Some(
+                        (requested_n.saturating_mul(CLIENT_FILTER_OVERFETCH_FACTOR))
+                            .min(CLIENT_FILTER_MAX_FETCH),
+                    ),
+                )
+            } else {
+                (r#where.clone(), self.n_results)
+            };
 
-        if let Some(w) = r#where.as_ref().filter(|_| needs_client_filter) {
-            filter_query_response(&mut query_result, w, requested_n as usize);
+            let mut query_result = client
+                .query_collection(
+                    collection_name,
+                    query_embeddings.clone(),
+                    fetch_n,
+                    query_where,
+                    ids.clone(),
+                    include,
+                )
+                .await?;
+
+            if let Some(w) = r#where.as_ref().filter(|_| needs_client_filter) {
+                filter_query_response(&mut query_result, w, requested_n as usize);
+            }
+
+            rerank_query_results(&self.query, &mut query_result, &RerankWeights::default());
+            let rendered = ChromaResponse::Query(&mut query_result).as_string(&self.output)?;
+            blocks.push(if multiple {
+                format!("### Collection: {collection_name}\n{rendered}")
+            } else {
+                rendered
+            });
         }
 
-        rerank_query_results(&self.query, &mut query_result, &RerankWeights::default());
-        ChromaResponse::Query(&mut query_result).as_string(&self.output)
+        Ok(blocks.join("\n\n"))
     }
     pub(crate) fn update_from_json(&mut self, v: Value) -> Result<()> {
         if let Some(query) = v.get("query").and_then(|q| q.as_array()) {
@@ -140,8 +170,17 @@ impl Query {
         if let Some(ids) = v.get("ids").and_then(|i| i.as_str()) {
             self.ids = Some(ids.to_string());
         }
-        if v.get("collection").is_some() {
-            self.collection.update_from_json(&v)?;
+        // Accepts either shape the Librarian's prompt schema documents: a single collection
+        // name, or an array of names for a multi-collection query.
+        match v.get("collection") {
+            Some(Value::String(name)) => self.collection = vec![name.clone()],
+            Some(Value::Array(names)) => {
+                self.collection = names
+                    .iter()
+                    .filter_map(|n| n.as_str().map(str::to_string))
+                    .collect();
+            }
+            _ => {}
         }
         if v.get("include").is_some() {
             self.include.update_from_json(&v)?;
@@ -295,5 +334,52 @@ mod tests {
         assert!(rendered.contains("src/cli/args.rs"));
         assert!(rendered.contains("src/cli/prompt.rs"));
         assert!(!rendered.contains("src/tui/io.rs"));
+    }
+
+    // Regression canary for the multi-collection query feature: a Librarian JSON query with an
+    // array `"collection"` must actually query every named collection (not just the first/last)
+    // and render each as its own clearly-labeled block, since different collections can have
+    // entirely different metadata schemas and can't be merged into one table.
+    #[tokio::test]
+    async fn query_with_multiple_collections_queries_each_one_and_labels_each_block() {
+        use crate::agent::llm_client::fake_vector_store::RecordingVectorStore;
+
+        let store = RecordingVectorStore::new(fake_response(&["src/cli/args.rs"]));
+        let ollama = FakeLlmClient::new(vec![]);
+
+        let q = Query {
+            query: vec!["anything".to_string()],
+            collection: vec!["repo_src".to_string(), "repo_hist".to_string()],
+            ..Query::default()
+        };
+
+        let rendered = q.query(&store, &ollama, "all-minilm:l6-v2").await.unwrap();
+
+        assert_eq!(
+            store.recorded_collections.lock().unwrap().as_slice(),
+            ["repo_src", "repo_hist"],
+            "expected both collections to be queried, in order, each for the full n_results"
+        );
+        assert!(rendered.contains("### Collection: repo_src"));
+        assert!(rendered.contains("### Collection: repo_hist"));
+    }
+
+    #[tokio::test]
+    async fn query_with_a_single_collection_has_no_collection_label() {
+        // Backward-compat: a single-collection query's rendered output shouldn't change shape
+        // just because the field is now a Vec — no reason to label a block when there's only one.
+        let response = fake_response(&["src/cli/args.rs"]);
+        let store = FakeVectorStore { response };
+        let ollama = FakeLlmClient::new(vec![]);
+
+        let q = Query {
+            query: vec!["anything".to_string()],
+            collection: vec!["repo_src".to_string()],
+            ..Query::default()
+        };
+
+        let rendered = q.query(&store, &ollama, "all-minilm:l6-v2").await.unwrap();
+
+        assert!(!rendered.contains("### Collection:"));
     }
 }

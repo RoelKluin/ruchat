@@ -388,7 +388,11 @@ pub(crate) struct EmbedPromptArgs {
     prompt: String,
 
     /// The operation to perform.
-    #[arg(short = 'M', long, value_enum, default_value = "upsert")]
+    // Long-only, deliberately: collides with `EmbedArgs`'s flattened `UpdateMetadataArrayArgs::
+    // metadata`, which also deliberately claims `-M` (see that field's own comment) — both
+    // ending up on `EmbedPromptArgs` at once made every invocation of `ruchat embed` panic at
+    // startup in debug builds, found while auditing for the analogous collision in query.rs.
+    #[arg(long, value_enum, default_value = "upsert")]
     mode: UpsertMode,
 
     #[command(flatten)]

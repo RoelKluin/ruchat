@@ -15,7 +15,9 @@ use serde_json::Value;
 #[derive(Parser, Debug, Clone, PartialEq)]
 pub(crate) struct GetArgs {
     /// Comma separated list of document IDs to retrieve.
-    #[arg(short, long)]
+    // Long-only, deliberately: an auto-derived `-i` collides with `IncludeArgs`'s own `-i`
+    // (`--include`), both flattened into this same command — see `query.rs`'s identical fix.
+    #[arg(long)]
     ids: Option<String>,
 
     /// The number of results to return.

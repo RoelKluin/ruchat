@@ -43,13 +43,29 @@ pub(crate) struct RetrieveArgs {
     r#where: WhereArgs, // Shared for get/query/search (as filter)
 
     // Get-specific (mutually exclusive with query/search args?)
-    #[arg(short = 'i', long, requires = "mode=get")] // Enforce via Clap or custom validation
+    // Long-only, deliberately: an explicit `-i` here collides with `IncludeArgs`'s own `-i`
+    // (`--include`), both flattened into this same command — see `query.rs`'s identical fix.
+    //
+    // `requires = "mode=get"` used to be here as an attempt at "only meaningful in --mode get",
+    // but that's not valid clap syntax (`requires` takes another arg's *name*, not a
+    // `field=value` condition) — it made every invocation of this command panic at startup in
+    // debug builds (clap's own argument-validity debug_assert), found while smoke-testing an
+    // unrelated change. `determine_mode` already does the actual mode inference/validation at
+    // runtime, so this was never load-bearing — removed rather than reimplemented via clap's
+    // value-conditional `requires_if`, since nothing here actually needs mode-conditional CLI
+    // enforcement on top of what `determine_mode` already provides.
+    #[arg(long)]
     ids: Option<String>,
-    #[arg(short = 'o', long)]
+    // Long-only, deliberately: collides with `OllamaArgs`'s `ModelArgs::options` (`-o`), also
+    // flattened into this command — see `query.rs`'s identical-shape fix above.
+    #[arg(long)]
     offset: Option<u32>,
 
-    // Query-specific
-    #[arg(short = 'q', long, requires = "mode=query")]
+    // Query-specific. `requires = "mode=query"`/`"mode=search"` below were removed from this
+    // and the two Search-specific fields for the same reason as `ids` above: not valid clap
+    // syntax (every invocation of this command panicked at startup in debug builds), and
+    // `determine_mode` already does the real mode inference/validation at runtime regardless.
+    #[arg(short = 'q', long)]
     query_text: Option<String>, // Text to embed
 
     #[arg(short = 'n', long)]
@@ -63,10 +79,10 @@ pub(crate) struct RetrieveArgs {
     restrict_ids: Option<String>,
 
     // Search-specific
-    #[arg(short = 'p', long, requires = "mode=search")]
+    #[arg(short = 'p', long)]
     payload: Option<String>, // JSON or file
 
-    #[arg(short = 'v', long, value_delimiter = ',', requires = "mode=search")]
+    #[arg(short = 'v', long, value_delimiter = ',')]
     query_vector: Option<Vec<f32>>, // Simple dense vector
 
     #[arg(long, default_value = "index-and-wal")]
