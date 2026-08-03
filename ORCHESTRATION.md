@@ -80,7 +80,12 @@ Test      → cargo check + cargo test (60s / 120s timeouts) against the applied
 Validate  → Validator verdict, if configured. REJECTED or unparseable → Stage::Retry.
   ↓
 Critique  → All Critics run concurrently against a snapshot of the current
-            output/plan/implementation. Each dissent becomes a Rejection turn.
+            output/plan/implementation. Each critic streams into its own local
+            channel (not the shared output stream, to avoid interleaving two
+            critics' text mid-token); once every critic finishes,
+            `run_critics_parallel` emits one complete, labeled trace per
+            critic ("[Critic 'Security']: ..."). Each dissent becomes a
+            Rejection turn.
   ↓
 Reconcile → Any Rejection turns this round (after dedup)? → Retry : Accept
   ↓
@@ -88,8 +93,11 @@ Retry     → If the iteration budget is exhausted: surface the best-known
             implementation without committing (if one exists) or Escalate (if
             none does). Otherwise, maybe run the Summarizer, then back to Plan.
   ↓
-Accept → Commit → `git checkout -b ai/feature-<timestamp>`, commit, return to
-            the original branch → Done
+Accept → Commit → `git checkout -b ai/feature-<timestamp>`, stage only
+            `featured_changes.md` and the one file `apply_patch` touched this
+            run (not `git add .`), generate a commit message via a direct LLM
+            call over the staged diff (falls back to a deterministic message
+            on failure), commit, return to the original branch → Done
 ```
 
 `Escalate(reason)` and `Done` are terminal — the loop breaks and the reason (if

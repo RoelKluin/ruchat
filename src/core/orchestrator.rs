@@ -243,6 +243,11 @@ impl Orchestrator {
                 .get_str("approval_signal")
                 .unwrap_or("APPROVED")
                 .to_string();
+            let label = critic
+                .get_str("name")
+                .or_else(|_| critic.get_str("role"))
+                .unwrap_or("Critic")
+                .to_string();
             let mut scratch = Context::new(ctx.goal.clone());
             scratch.output = snapshot_output.clone();
             scratch.push_turn(
@@ -253,14 +258,30 @@ impl Orchestrator {
             scratch.round = round;
             let ollama = &self.ollama;
             futs.push(async move {
-                retry_transient!(critic.query_stream(ollama, &mut scratch, tx))
-                    .map(|_| (scratch.output, approval_signal))
+                // Critics run concurrently (`join_all` below), but `query_stream` streams
+                // token-by-token into whatever `tx` it's given — forwarding all of them into
+                // one shared channel interleaves multiple critics' output character-by-
+                // character with no way for a renderer to tell them apart. So each critic
+                // streams into its own local channel instead; nobody renders it live, a
+                // background task just drains it to avoid blocking `query_stream` on a full
+                // buffer. The caller emits one clearly-labeled, complete block per critic on
+                // the real `tx` afterward, sequentially, once every critic has finished.
+                let (local_tx, mut local_rx) = mpsc::channel(100);
+                let drain = async { while local_rx.recv().await.is_some() {} };
+                let query = async {
+                    let r = retry_transient!(critic.query_stream(ollama, &mut scratch, &local_tx));
+                    drop(local_tx);
+                    r
+                };
+                let (result, ()) = tokio::join!(query, drain);
+                result.map(|_| (label, scratch.output, approval_signal))
             });
         }
         let results = futures_util::future::join_all(futs).await;
         for res in results {
             match res {
-                Ok((text, approval_signal)) => {
+                Ok((label, text, approval_signal)) => {
+                    ctx.trace(tx, format!("[Critic '{label}']:\n{text}")).await;
                     if !text.contains(&approval_signal) {
                         ctx.push_turn(TurnKind::Rejection, "Critic", text);
                     }
@@ -375,6 +396,41 @@ impl Orchestrator {
         }
     }
 
+    /// One-line, once-per-run summary of which model each configured role uses. Printed a
+    /// single time at the start of the run (see `run_stage_machine`) instead of repeating
+    /// "querying 'model'..." on every single turn (every role, every round) — each role's own
+    /// colored banner already identifies who's speaking once the run is underway, so restating
+    /// the model there added noise without new information.
+    fn model_summary(&self) -> String {
+        let mut parts = vec![
+            format!("Architect={}", self.architect.get_str("model").unwrap_or("?")),
+            format!("Worker={}", self.worker.get_str("model").unwrap_or("?")),
+        ];
+        if let Some(a) = self.scoper.as_ref() {
+            parts.push(format!("Scoper={}", a.get_str("model").unwrap_or("?")));
+        }
+        if let Some(a) = self.librarian.as_ref() {
+            parts.push(format!("Librarian={}", a.get_str("model").unwrap_or("?")));
+        }
+        if let Some(a) = self.validator.as_ref() {
+            parts.push(format!("Validator={}", a.get_str("model").unwrap_or("?")));
+        }
+        for c in &self.critics {
+            let label = c
+                .get_str("name")
+                .or_else(|_| c.get_str("role"))
+                .unwrap_or("Critic");
+            parts.push(format!("{label}={}", c.get_str("model").unwrap_or("?")));
+        }
+        if let Some(a) = self.summarizer.as_ref() {
+            parts.push(format!("Summarizer={}", a.get_str("model").unwrap_or("?")));
+        }
+        format!(
+            "Models: {} — full prompts logged to .ruchat_trace.md as the run progresses.",
+            parts.join(", ")
+        )
+    }
+
     async fn run_stage_machine(
         &mut self,
         goal: String,
@@ -402,6 +458,7 @@ impl Orchestrator {
             )?;
         }
         self.recall_prior_memories(ctx, &tx).await;
+        ctx.trace(&tx, self.model_summary()).await;
 
         let mut retrieve_budget: u32 = 2; // conservative cap on Worker-initiated retrievals per run
         let mut scope_round = 0;
@@ -587,7 +644,19 @@ impl Orchestrator {
                 }
                 Stage::Accept => Stage::Commit,
                 Stage::Commit => {
-                    commit_feature_branch(ctx).await?;
+                    // Optional dedicated model for commit-message generation
+                    // (`commit_message_model`); falls back to the Worker's model — always
+                    // configured, since Worker is a required agent — rather than a made-up
+                    // default, so the message-writer uses whatever the user already trusted
+                    // enough to implement the change.
+                    let commit_model = self
+                        .orchestrator_config
+                        .get("commit_message_model")
+                        .and_then(|v| v.as_str())
+                        .or_else(|| self.worker.get_str("model").ok())
+                        .unwrap_or("qwen2.5-coder:14b")
+                        .to_string();
+                    commit_feature_branch(ctx, self.ollama.as_ref(), &commit_model).await?;
                     Stage::Done
                 }
                 Stage::Scope => {
@@ -1109,6 +1178,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn model_summary_lists_every_configured_role_once() {
+        let mut config = base_config();
+        config["Validator"] = json!({ "model": "validator-model" });
+        config["Critics"] = json!([{ "model": "critic-model", "name": "Security" }]);
+        let orchestrator = build_test_orchestrator(config, vec![], None).await;
+
+        let summary = orchestrator.model_summary();
+        assert!(summary.contains("Architect=fake"));
+        assert!(summary.contains("Worker=fake"));
+        assert!(summary.contains("Validator=validator-model"));
+        assert!(summary.contains("Security=critic-model"));
+        assert!(summary.contains(".ruchat_trace.md"));
+    }
+
+    #[tokio::test]
     async fn architect_only_completes() {
         let items = run_fixture(
             "architect_only.json",
@@ -1118,6 +1202,20 @@ mod tests {
         )
         .await;
         assert!(!items.is_empty());
+
+        // Regression: `query_stream` used to send a "[Role's input] querying 'model'..." trace
+        // on every single turn — redundant noise once each role already gets its own colored
+        // banner (`ColorChange`). That per-turn announcement is gone now (`.ruchat_trace.md`
+        // still gets refreshed, just silently); a model summary is only ever printed once, at
+        // the start of a real (non-debug) run — `debug_stage_machine`, which this fixture runs
+        // through, doesn't call `model_summary` at all, so no trace events are expected here.
+        let has_querying_trace = items.iter().any(|item| {
+            matches!(item, StreamItem::Event(AgentEvent::Trace(msg)) if msg.contains("querying"))
+        });
+        assert!(
+            !has_querying_trace,
+            "no turn should announce '...querying \\'model\\'...' anymore"
+        );
     }
 
     #[tokio::test]
@@ -1269,6 +1367,76 @@ mod tests {
         )
         .await;
         assert!(!items.is_empty());
+    }
+
+    // Regression test for `run_critics_parallel` specifically — NOT via a fixture: fixtures run
+    // through `debug_stage_machine`, whose "Critic_N" branch calls each critic's `query_stream`
+    // directly and sequentially (see the `starts_with("Critic")` arm above), which never had
+    // the bug and doesn't exercise `run_critics_parallel` at all (confirmed by temporarily
+    // reverting the fix and finding `multiple_critics_dispatches_each_critic_once` above still
+    // passed unchanged — it was testing the wrong code path). `run_critics_parallel` only runs
+    // from the real `run_stage_machine`'s `Stage::Critique`, so it's called directly here.
+    //
+    // Before the fix: critics ran concurrently (`join_all`) but all streamed their responses
+    // token-by-token onto the one shared `tx`, so two critics' output could interleave
+    // character-by-character with no way for a renderer to tell them apart. Each critic's full
+    // response must now arrive as one contiguous, clearly-labeled `Trace` block instead.
+    #[tokio::test]
+    async fn run_critics_parallel_emits_one_undamaged_labeled_trace_per_critic() {
+        let mut config = base_config();
+        config["Critics"] = json!([
+            { "model": "fake", "name": "Security", "task": "security review" },
+            { "model": "fake", "name": "Performance", "task": "performance review" },
+        ]);
+        let mut orchestrator = build_test_orchestrator(
+            config,
+            vec!["No issues found.\nAPPROVED", "Looks efficient.\nAPPROVED"],
+            None,
+        )
+        .await;
+        let mut ctx = Context::new("goal".to_string());
+        ctx.output = "some implementation".to_string();
+        let (tx, mut rx) = mpsc::channel(100);
+
+        orchestrator
+            .run_critics_parallel(&mut ctx, &tx)
+            .await
+            .unwrap();
+        drop(tx);
+        let mut traces = Vec::new();
+        while let Some(item) = rx.recv().await {
+            if let Ok(StreamItem::Event(AgentEvent::Trace(msg))) = item {
+                traces.push(msg);
+            }
+        }
+
+        // Exactly one trace block per critic — neither merged into the other nor dropped.
+        assert_eq!(
+            traces.len(),
+            2,
+            "expected exactly one trace per critic, got: {traces:?}"
+        );
+
+        // Deliberately NOT asserting which critic got which canned response: both critics race
+        // on `FakeLlmClient`'s shared scripted-response queue (a plain `VecDeque`, popped in
+        // call order), and since they now genuinely run concurrently (the fix this test
+        // guards), which one's `chat_stream` call wins that race isn't deterministic — this
+        // was a flaky test bug caught by running the full suite repeatedly, not a code bug.
+        // What must hold regardless: each critic is clearly labeled, and each trace contains
+        // exactly one critic's response, never both spliced together and never neither.
+        assert!(traces.iter().any(|t| t.starts_with("[Critic 'Security']:")));
+        assert!(traces.iter().any(|t| t.starts_with("[Critic 'Performance']:")));
+        for t in &traces {
+            let has_security_text = t.contains("No issues found.");
+            let has_performance_text = t.contains("Looks efficient.");
+            assert!(
+                has_security_text ^ has_performance_text,
+                "each trace should contain exactly one critic's response, not both or neither: {t:?}"
+            );
+        }
+
+        // Both approved, so no rejection turns.
+        assert!(!ctx.turns.iter().any(|t| t.kind == TurnKind::Rejection));
     }
 
     #[tokio::test]

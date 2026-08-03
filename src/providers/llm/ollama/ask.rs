@@ -120,7 +120,8 @@ impl AskArgs {
                 critics_array.push(serde_json::json!({
                     "model": self.team_model.clone().unwrap_or_else(|| default_model.to_string()),
                     "task": format!("Review the implementation specifically for {} concerns.", c_name),
-                    "status_msg": format!("{} Critic is reviewing...", c_name)
+                    "status_msg": format!("{} Critic is reviewing...", c_name),
+                    "name": c_name,
                 }));
             }
             config["Critics"] = serde_json::Value::Array(critics_array);
