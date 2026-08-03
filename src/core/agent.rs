@@ -195,12 +195,6 @@ impl Agent {
                 let diff = call.args["diff"].as_str().unwrap_or_default();
                 Validation::apply_patch(diff, ctx).await
             }
-            tools::ToolName::ReplaceInFile => {
-                let path = call.args["path"].as_str().unwrap_or_default();
-                let old_string = call.args["old_string"].as_str().unwrap_or_default();
-                let new_string = call.args["new_string"].as_str().unwrap_or_default();
-                Validation::replace_in_file(path, old_string, new_string, ctx).await
-            }
             tools::ToolName::Memorize => self
                 .embed(
                     call.args["content"].as_str().unwrap_or_default(),
@@ -224,8 +218,8 @@ impl Agent {
                 "refused: you called '{other:?}' again instead of applying a change. You \
                 already used this round's one information-lookup, and its result is already in \
                 your context above — re-running the same (or any other) read-only tool won't \
-                add anything new. You must now emit exactly one apply_patch, replace_in_file, \
-                or memorize tool_call to actually make the change."
+                add anything new. You must now emit exactly one apply_patch (or memorize) \
+                tool_call to actually make the change."
             ))),
         }
     }

@@ -4,6 +4,7 @@ use crate::{retry_transient, Result, RuChatError};
 use chroma::types::UpdateMetadataValue;
 use chroma::types::{Metadata, MetadataValue, UpdateMetadata};
 use chroma::ChromaCollection;
+use chroma::ChromaHttpClient;
 use chrono::Utc;
 use clap::{Parser, ValueEnum};
 use log::info;
@@ -60,6 +61,31 @@ impl EmbedArgs {
 
     pub(crate) fn set_id_prefix(&mut self, prefix: String) {
         self.id = Some(prefix);
+    }
+
+    /// The collection this `EmbedArgs` writes to (and so, the collection a caller must query
+    /// to read back what it wrote). Used by `recall_prior_memories` (`orchestrator.rs`) so a
+    /// memorize-only run (no Librarian configured) can recall via the same `EmbedArgs` the
+    /// Worker's `Memorize` tool call already writes through (`Agent::embed`), rather than the
+    /// literal `"default"` `ChromaCollectionConfigArgs::default()` would otherwise resolve to.
+    pub(crate) fn collection_name(&self) -> &str {
+        self.collection_config.name()
+    }
+
+    /// The embed model this `EmbedArgs` vectorizes with — see `collection_name`'s doc comment;
+    /// same reasoning, recall must use the same embed model a write used or the vectors aren't
+    /// comparable. Deliberately a synchronous config read (`OllamaArgs::model_name_or`), not
+    /// `OllamaArgs::init`'s network-validated resolution: this only needs the configured name,
+    /// not to confirm the model is pulled.
+    pub(crate) fn embed_model_name(&self) -> String {
+        self.ollama_args.model_name_or("all-minilm:l6-v2")
+    }
+
+    /// An independent Chroma client for this `EmbedArgs`'s own `client_config` — mirrors
+    /// `Orchestrator::new`'s Librarian client construction, but for the memorize-only path that
+    /// has no Librarian to borrow one from.
+    pub(crate) async fn client(&self, cfg: &Value) -> Result<ChromaHttpClient> {
+        Ok(self.client_config.create_client(cfg).await?)
     }
 
     /// Same as `embed`, but takes pre-built metadata items directly instead

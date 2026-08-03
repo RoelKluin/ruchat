@@ -1,12 +1,12 @@
 # Ruchat Roadmap
 
 **Vision**  
-Ruchat remains the **fastest, lightest, fully-local** AI agent orchestration tool built for software engineering workflows.  
-It stays 100% Rust-native, zero Python dependencies, and runs entirely offline with **Ollama + Chroma** (or future local vector DBs).  
+Ruchat remains the **fastest, lightest, local-first** AI agent orchestration tool built for software engineering workflows.  
+It stays 100% Rust-native, zero Python dependencies, and runs entirely offline by default with **Ollama + Chroma** (or future local vector DBs) — cloud-backed providers are a possible *opt-in* extension for use cases that call for them (see Phase 3), not a reversal of the default.  
 We prioritize **predictability**, **performance**, **token efficiency**, and **tight integration** with local tools (Git, file system, terminal) over general-purpose flexibility offered by LangChain, LangGraph, AutoGen, or CrewAI.
 
 **Core Differentiators to Preserve**
-- Fully local-first (Ollama + Chroma mandatory, no cloud)
+- Local-first by default (Ollama + Chroma today; the same `LlmClient`/`VectorStore` trait seam that already backs `FakeLlmClient`/`FakeVectorStore` in tests is the natural extension point for an opt-in cloud provider later — see Phase 3)
 - Explicit shared `Context` + fixed-role supervisor-critic pipeline
 - Predictable linear flow with approval gates and Git auto-commit
 - Minimal overhead and low token usage
@@ -42,8 +42,8 @@ We prioritize **predictability**, **performance**, **token efficiency**, and **t
 - [x] **Multi-file patches per round** — `Stage::Implement` now allows up to 3 sequential `apply_patch` calls per round (design decision: N sequential calls, not a multi-file diff format — reuses `diffy` and the existing per-call scope/tracked-file/size checks unchanged), so a plan whose `FILES:` line names more than one file can land as a single commit instead of only ever touching the first. `Context::pending_patch` became `pending_patches: Vec<PendingPatch>`; `commit_add_targets`/`fallback_commit_message` (`orchestrator/git.rs`) now cover every file touched, not just one. See `TODO.md` Done section for full detail, including the backward-compatibility guarantee (a plan naming zero or one file is unaffected).
 - [x] Parallel critic execution (`Orchestrator::run_critics_parallel`) — note: the execution mechanism itself was correct, but a separate construction bug meant `critics` was always empty in practice until fixed (see TODO.md's Done section)
 - [x] Token-aware history management + automatic summarization triggers (`Stage::Retry` → Summarizer when the token estimate exceeds the model's history limit)
-- [~] Persistent memory layer — the `memorize` tool writes to Chroma (`Agent::embed`), and `Orchestrator::recall_prior_memories` now auto-recalls at session start using the goal text as a deterministic query, but only when a Librarian is configured (reuses its Chroma client) — a memorize-only, Librarian-less run still can't recall; see `TODO.md` Done section
-- [~] Improved RAG — relevance scoring/reranking is done (`providers/vector/chroma/rerank.rs`); document summarization before the Worker and multi-collection queries are still open
+- [x] Persistent memory layer — the `memorize` tool writes to Chroma (`Agent::embed`), and `Orchestrator::recall_prior_memories` auto-recalls at session start using the goal text as a deterministic query; originally only worked when a Librarian was configured, extended (2026-08-03) so a memorize-only run with no Librarian at all still recalls via the Worker's own `embed_args`, since that's what `Memorize` already writes through — see `TODO.md` Done section
+- [~] Improved RAG — relevance scoring/reranking is done (`providers/vector/chroma/rerank.rs`); document summarization before the Worker, multi-collection queries, and smarter chunking (today's ctags-based indexing chunks by symbol boundary — real semantic/document-aware chunking for non-code or cross-symbol content is still open) are still open
 - [ ] Automatic collection management (`ruchat chroma-init` from `db_config.json`)
 - [x] Resource-limited sandboxing for tool-invoked subprocesses — every cargo subprocess (`cargo_check`/`cargo_dupes`/the Tester's check+test) now gets `RLIMIT_AS`/`RLIMIT_CPU` via `orchestrator::cargo::limit_resources`, alongside the pre-existing wall-clock timeouts; see `TODO.md` Done section
 - [ ] Debug mode improvements (step-by-step execution, breakpoint support) — the fixed-sequence debug mode itself exists (`--debug-sequence`, `agent_debug/*.json`), but isn't wired into `cargo test` yet and has no breakpoints
@@ -66,12 +66,23 @@ We prioritize **predictability**, **performance**, **token efficiency**, and **t
 - [ ] Subgraph / reusable agent modules (e.g., "CodeReviewTeam", "ResearchTeam")
 - [ ] Dynamic conditional edges based on approval signals or output patterns
 - [ ] Plugin system for custom local tools (Rust crates or WASM)
-- [ ] Multiple process types: `sequential`, `hierarchical` (lightweight manager), `parallel`
+- [ ] Multiple process types: `sequential`, `hierarchical`, `parallel` — "hierarchical" means an actual manager/sub-task decomposition (a top-level plan broken into sub-goals, each run through its own scoped stage-machine pass), not just the existing `ruchat manager`/`Team` preset expansion (which selects a fixed pipeline shape, doesn't decompose a goal into sub-goals)
 - [ ] Local vector DB abstraction (Chroma primary, support for LanceDB or SQLite-vec as alternatives)
+- [x] **Pluggable LLM provider abstraction, cloud-optional — Anthropic (Claude) shipped 2026-08-04.** `agent/llm_client.rs`'s `LlmClient` trait (already built for `FakeLlmClient` in tests) turned out to be exactly the right seam: a new `providers/llm/anthropic` module implements it directly on top of `reqwest` + the small `eventsource-stream` crate for Anthropic's SSE-based Messages API, no trait changes needed. Opt-in via `--chat-provider anthropic` (`ruchat pipe`/`ask`) plus `--anthropic-model`/`--anthropic-api-key` (or `ANTHROPIC_API_KEY`) — never a default. Anthropic has no embeddings API, so `Orchestrator` now holds two clients instead of one shared `ollama` field: `chat` (swappable) and `embed` (always Ollama-backed, unconditionally — RAG/memorize/recall are unaffected by `--chat-provider`). Two crates the maintainer flagged as candidates, `octomind`/`octolib` and `agent-client-protocol`, were researched and deliberately not used — the former is a ~25-60-dependency multi-provider megalib with unclear streaming support and a mismatched `reqwest` version, the latter solves an unrelated problem (editor↔agent protocol, not agent↔LLM-provider — a genuinely separate idea for a future `ruchat`-as-a-Zed-agent conversation, not conflated with this one). See `TODO.md` Done section for the full writeup and `--vector` provider abstraction (LanceDB/SQLite-vec) remains open below.
+- [ ] **Pluggable vector-store provider abstraction** (split out from the item above, since only the LLM side shipped) — `agent/llm_client.rs`'s `VectorStore` trait already exists (built for `FakeVectorStore` in tests) as the seam; Chroma remains the only implementation. Support for LanceDB or SQLite-vec as alternatives is unattempted.
+- [ ] **Explicit chain-of-thought / step-reasoning prompting** for Architect/Worker — today's `agent_role/*.md` templates ask for a plan or an action directly, with no structured "think step by step, then answer" scaffold. Worth a scoped experiment (particularly for the Architect's planning step) once the agentic-evals harness (`core/agent/evals.rs`) has enough scenarios to tell whether it actually improves plan quality on local models rather than just adding tokens.
 
-**Important Constraint**: All new features must remain fully local and offline-capable.
+**Important Constraint**: All new features must remain fully local and offline-capable by default; anything that isn't (e.g. a cloud provider) must be explicit, opt-in configuration, never silently required.
 
 **Milestone**: Ruchat becomes a serious lightweight alternative to LangGraph/CrewAI for local use cases.
+
+---
+
+### Open Design Question: Autonomous Goal-Setting
+
+Not scoped into any phase above, deliberately — this needs an explicit decision, not a silent yes or no.
+
+Ruchat's whole differentiator (see Comparison-Driven Positioning below) is predictable, approval-gated execution against a goal a human supplies: Architect plans, Critics/Validator gate, nothing lands without passing through those checkpoints. Autonomous goal-setting — the agent deciding *what* to work on next, not just how — is a different value proposition, closer to AutoGPT-style open-ended autonomy, and it's in real tension with "predictable and auditable." Adopting it isn't an engineering task like the items above; it's a positioning call that would need to be made explicitly, e.g. scoping it as a narrow, opt-in "propose the next goal, but a human still approves before it runs" mode rather than genuine unattended autonomy. Left here as a flagged question until there's an actual decision, rather than quietly folded into Phase 3/4 as if it were already settled.
 
 ---
 
@@ -81,17 +92,18 @@ We prioritize **predictability**, **performance**, **token efficiency**, and **t
 - [ ] Model context window auto-management and smart chunking
 - [ ] Built-in benchmarking suite vs LangGraph/CrewAI on local hardware
 - [ ] Optional distributed mode (multiple local machines via simple message bus — still offline-first)
-- [ ] Advanced observability (local trace viewer) — `comparisons/*.md` repeatedly call out LangSmith/AutoGen Studio-style inspection as a strength ruchat lacks; today's per-run `ruchat_traces/ruchat_trace_<N>.md` files (archived into `successes/`/`failures/` with a one-shot LLM summary once a run ends — see `ORCHESTRATION.md`) are a set of individually-navigable snapshots, not a queryable/searchable history across runs. Scope as a local, offline viewer over the existing `Context.turns` log and the `ruchat_traces/` archive (e.g. a `ruchat trace` subcommand listing/filtering past runs and rendering round-by-round turns/rejections), not a hosted service — stays consistent with the "no cloud dependency" constraint above.
+- [ ] Advanced observability (local trace viewer) — `comparisons/*.md` repeatedly call out LangSmith/AutoGen Studio-style inspection as a strength ruchat lacks; today's per-run `ruchat_traces/ruchat_trace_<N>.md` files (archived into `successes/`/`failures/` with a one-shot LLM summary once a run ends — see `ORCHESTRATION.md`) are a set of individually-navigable snapshots, not a queryable/searchable history across runs. Scope as a local, offline viewer over the existing `Context.turns` log and the `ruchat_traces/` archive (e.g. a `ruchat trace` subcommand listing/filtering past runs and rendering round-by-round turns/rejections), not a hosted service — stays consistent with the local-first-by-default posture above.
 
 ---
 
 ### Long-Term Vision (2027+)
 
 - Become the de-facto standard for **local software engineering agents**
-- Maintain strict “fully local + predictable” philosophy
+- Maintain a **local-first, predictable-by-default** philosophy, while staying open to opt-in cloud providers where they genuinely help (see Phase 3)
 - Explore safe WASM-based tool sandboxing
 - Support additional local vector/search backends without breaking core simplicity
 - Provide migration path / interoperability layer for users coming from Python frameworks (export/import graphs)
+- **Model fine-tuning / RLHF / reinforcement-driven self-improvement** — currently out of reach and not a priority: ruchat orchestrates existing local models rather than training them, and has none of the training infrastructure (labeled feedback pipelines, training compute/data management) this would need. Revisit only if/when it becomes genuinely feasible for a local-first tool to do this without turning ruchat into a model-training platform — not scoped into any phase above until that's true.
 
 ---
 
@@ -118,20 +130,41 @@ tool calling, parallel critics, `apply_patch` hardening (diff-size cap,
 rollback, and now a scope check against the Architect's declared `FILES:`
 plan), the Team/Manager reconciliation, the Scoper role, resource-limited
 (`RLIMIT_AS`/`RLIMIT_CPU`) cargo subprocess sandboxing, and automatic
-cross-run memory recall at session start (`Orchestrator::recall_prior_memories`,
-gated on a configured Librarian) are all done. Two real, previously-unknown
-bugs were also found and fixed along the way: the config-file `model_options`
-merge was a silent no-op (`cli/options.rs`'s field-allowlist gate was checking
-against an always-empty default shape), and — found via `comparisons/*.md`
-being brought back in sync with the codebase — the Librarian's RAG retrieval
-was silently rendering every result as an empty string in real runs
-(`OutputArgs` derived `Default` instead of matching its own documented clap
-CLI defaults). Still open in Phase 2: further RAG improvements (per-document
-summarization, multi-collection queries), automatic Chroma collection
-management, and extending memory recall to work without a Librarian
-configured. See `TODO.md` for the live, priority-ranked task list, and
+cross-run memory recall at session start (`Orchestrator::recall_prior_memories`)
+are all done — recall now works with or without a Librarian configured, since
+a memorize-only run writes via the Worker's own `embed_args` regardless.
+Also fixed this session: the CONTAINS-on-scalar-metadata client-side
+evaluation bug (Chroma has no scalar-substring operator; a plain
+`file CONTAINS 'x'` filter always returned zero rows through the server-side
+path) is now applied consistently across `query.rs`/`get.rs`/`retrieve.rs`/
+`delete.rs`, not just the RAG query path it was first found in. Two other
+real, previously-unknown bugs were found and fixed along the way: the
+config-file `model_options` merge was a silent no-op (`cli/options.rs`'s
+field-allowlist gate was checking against an always-empty default shape),
+and — found via `comparisons/*.md` being brought back in sync with the
+codebase — the Librarian's RAG retrieval was silently rendering every result
+as an empty string in real runs (`OutputArgs` derived `Default` instead of
+matching its own documented clap CLI defaults). A `replace_in_file` tool
+(search-and-replace as an `apply_patch` alternative) was tried and reverted
+the same day — real runs showed no improvement over diff-based edits, so
+`apply_patch` remains the sole write tool (see `TODO.md` Done section).
+Still open in Phase 2: further RAG improvements (per-document summarization,
+multi-collection queries, smarter chunking) and automatic Chroma collection
+management. See `TODO.md` for the live, priority-ranked task list, and
 `comparisons/*.md` for the framework-by-framework detail behind the Phase 3
 items above (resumable runs, interactive HITL) — both were identified from
 gaps those comparisons made concrete, not from a generic feature wishlist.
+The Phase 3 provider-abstraction and chain-of-thought-prompting items, and
+the Open Design Question on autonomous goal-setting, above were added after
+reviewing a general "roadmap to agentic AI" topic list against ruchat's
+actual architecture and constraints — most of that list (memory, RAG,
+multi-agent orchestration, planning) ruchat already does; model
+fine-tuning/RLHF and cloud deployment/scaling don't fit its current
+local-first-by-default, non-training-platform scope and are parked under
+Long-Term Vision rather than actively planned. The LLM half of the
+provider-abstraction item shipped the same day (Anthropic/Claude as an
+opt-in `--chat-provider`, chat-only — see Phase 3 above and `TODO.md` Done
+section); the vector-store half (LanceDB/SQLite-vec alternatives to Chroma)
+remains open, split into its own item.
 
 Contributions welcome — especially on testing, configuration, and tool framework.

@@ -2,8 +2,8 @@
 use crate::{Result, RuChatError};
 use chroma::types::{
     BooleanOperator, CompositeExpression, ContainsOperator, DocumentExpression, DocumentOperator,
-    Metadata, MetadataComparison, MetadataExpression, MetadataSetValue, MetadataValue,
-    PrimitiveOperator, SetOperator, SparseVector, Where,
+    GetResponse, Include, IncludeList, Metadata, MetadataComparison, MetadataExpression,
+    MetadataSetValue, MetadataValue, PrimitiveOperator, SetOperator, SparseVector, Where,
 };
 use clap::Parser;
 use serde::Deserialize;
@@ -530,6 +530,64 @@ fn set_matches(op: &SetOperator, actual: &MetadataValue, set: &MetadataSetValue)
     match op {
         SetOperator::In => is_member,
         SetOperator::NotIn => !is_member,
+    }
+}
+
+/// Ensures `Include::Metadata` is part of the include list before a client-side-evaluated
+/// query/get — `metadata_matches` has nothing to evaluate against otherwise. `None` (no
+/// `--include` given) becomes `default_query` plus metadata (already part of it, but explicit
+/// here rather than relying on that not changing); an explicit list keeps whatever the caller
+/// asked for, just with metadata added if missing. Shared by every Chroma read path that can
+/// hit `where_needs_client_side_eval` (`query.rs`, `get.rs`, `retrieve.rs`).
+pub(crate) fn with_metadata_included(include: Option<IncludeList>) -> IncludeList {
+    let mut list = include.map(|l| l.0).unwrap_or_else(|| IncludeList::default_query().0);
+    if !list.contains(&Include::Metadata) {
+        list.push(Include::Metadata);
+    }
+    IncludeList(list)
+}
+
+/// Rebuilds `v` keeping only the elements at `indices`, in order — the shared primitive behind
+/// every client-side `QueryResponse`/`GetResponse` filter below, since Chroma's response shape
+/// is several parallel `Vec`s (ids/documents/metadatas/...) that must all be filtered by the
+/// same kept-index set to stay aligned with each other.
+pub(crate) fn select_indices<T: Clone>(v: &[T], indices: &[usize]) -> Vec<T> {
+    indices.iter().map(|&i| v[i].clone()).collect()
+}
+
+/// Filters a `GetResponse` down to only the rows whose metadata satisfies `w` (evaluated via
+/// `metadata_matches`, since Chroma couldn't apply this filter itself — see
+/// `where_needs_client_side_eval`), then applies `offset`/`limit` *after* filtering rather than
+/// before — a `GetResponse` isn't similarity-ranked like a query result, so unlike
+/// `query.rs`'s equivalent there's no over-fetch heuristic needed, but the caller must still
+/// fetch with no server-side offset/limit of its own when this path is taken (see `get.rs`/
+/// `retrieve.rs`'s `execute_get`), or rows that would've matched after filtering could already
+/// be cut before this ever sees them.
+pub(crate) fn filter_get_response(r: &mut GetResponse, w: &Where, offset: usize, limit: Option<usize>) {
+    let keep_indices: Vec<usize> = (0..r.ids.len())
+        .filter(|&j| {
+            r.metadatas
+                .as_ref()
+                .and_then(|m| m.get(j))
+                .and_then(|opt| opt.as_ref())
+                .is_some_and(|meta| metadata_matches(w, meta))
+        })
+        .skip(offset)
+        .take(limit.unwrap_or(usize::MAX))
+        .collect();
+
+    r.ids = select_indices(&r.ids, &keep_indices);
+    if let Some(v) = r.embeddings.as_mut() {
+        *v = select_indices(v, &keep_indices);
+    }
+    if let Some(v) = r.documents.as_mut() {
+        *v = select_indices(v, &keep_indices);
+    }
+    if let Some(v) = r.uris.as_mut() {
+        *v = select_indices(v, &keep_indices);
+    }
+    if let Some(v) = r.metadatas.as_mut() {
+        *v = select_indices(v, &keep_indices);
     }
 }
 
@@ -1160,5 +1218,65 @@ mod tests {
     fn metadata_matches_missing_key_is_false() {
         let w = parse_where("file CONTAINS 'cli'").unwrap();
         assert!(!metadata_matches(&w, &Metadata::new()));
+    }
+
+    #[test]
+    fn with_metadata_included_adds_metadata_to_an_explicit_list_missing_it() {
+        let list = with_metadata_included(Some(IncludeList(vec![Include::Distance])));
+        assert!(list.0.contains(&Include::Metadata));
+        assert!(list.0.contains(&Include::Distance));
+    }
+
+    #[test]
+    fn with_metadata_included_defaults_sensibly_when_nothing_was_requested() {
+        let list = with_metadata_included(None);
+        assert!(list.0.contains(&Include::Metadata));
+    }
+
+    #[test]
+    fn select_indices_keeps_only_the_requested_positions_in_order() {
+        let v = vec!["a", "b", "c", "d"];
+        assert_eq!(select_indices(&v, &[2, 0]), vec!["c", "a"]);
+    }
+
+    fn get_response_with_files(files: &[&str]) -> GetResponse {
+        GetResponse {
+            ids: (0..files.len()).map(|i| format!("id{i}")).collect(),
+            embeddings: None,
+            documents: None,
+            uris: None,
+            metadatas: Some(
+                files
+                    .iter()
+                    .map(|f| Some(metadata_str(&[("file", f)])))
+                    .collect(),
+            ),
+            include: vec![],
+        }
+    }
+
+    // Regression: `get.rs`/`retrieve.rs`'s `execute_get` share the exact same CONTAINS-on-
+    // scalar-field bug `query.rs` had — a `--where "file CONTAINS 'cli'"` get always returned
+    // zero rows against a scalar `file` field.
+    #[test]
+    fn filter_get_response_keeps_only_matching_rows() {
+        let w = parse_where("file CONTAINS 'cli'").unwrap();
+        let mut r = get_response_with_files(&["src/cli/args.rs", "src/tui/io.rs", "src/cli/prompt.rs"]);
+        filter_get_response(&mut r, &w, 0, None);
+        assert_eq!(r.ids, vec!["id0".to_string(), "id2".to_string()]);
+    }
+
+    #[test]
+    fn filter_get_response_applies_offset_and_limit_after_filtering() {
+        let w = parse_where("file CONTAINS 'cli'").unwrap();
+        let mut r = get_response_with_files(&[
+            "src/cli/a.rs",
+            "src/tui/io.rs",
+            "src/cli/b.rs",
+            "src/cli/c.rs",
+        ]);
+        filter_get_response(&mut r, &w, 1, Some(1));
+        // 3 matches (id0, id2, id3) before offset/limit; skip 1, take 1 -> just id2.
+        assert_eq!(r.ids, vec!["id2".to_string()]);
     }
 }

@@ -1,5 +1,7 @@
 use crate::agent::llm_client::{LlmClient, VectorStore};
-use crate::chroma::r#where::{metadata_matches, where_needs_client_side_eval};
+use crate::chroma::r#where::{
+    metadata_matches, select_indices, where_needs_client_side_eval, with_metadata_included,
+};
 use crate::chroma::{
     rerank::{rerank_query_results, RerankWeights},
     ChromaClientConfigArgs, ChromaCollectionConfigArgs, ChromaResponse, IncludeArgs, OutputArgs,
@@ -7,7 +9,7 @@ use crate::chroma::{
 };
 use crate::ollama::OllamaArgs;
 use crate::{Result, RuChatError};
-use chroma::types::{Include, IncludeList, QueryResponse};
+use chroma::types::QueryResponse;
 use clap::Parser;
 use log::warn;
 use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
@@ -20,9 +22,11 @@ use serde_json::Value;
 /// more than requested and truncate after filtering. A heuristic, not a guarantee — a filter
 /// that only a small fraction of the collection satisfies can still under-return versus what a
 /// real server-side filter would have found; there's no way around that without Chroma
-/// supporting substring matching on scalar metadata natively.
-const CLIENT_FILTER_OVERFETCH_FACTOR: u32 = 5;
-const CLIENT_FILTER_MAX_FETCH: u32 = 200;
+/// supporting substring matching on scalar metadata natively. `pub(crate)` so `retrieve.rs`'s
+/// `execute_query` (the same similarity-search shape as `Query::query` below) uses the same
+/// heuristic instead of picking its own, different numbers.
+pub(crate) const CLIENT_FILTER_OVERFETCH_FACTOR: u32 = 5;
+pub(crate) const CLIENT_FILTER_MAX_FETCH: u32 = 200;
 
 #[derive(Parser, Debug, Clone, PartialEq, Deserialize, Default)]
 pub(crate) struct Query {
@@ -152,25 +156,14 @@ impl Query {
     }
 }
 
-/// Ensures `Include::Metadata` is part of the include list before a client-side-evaluated
-/// query — the filter has nothing to evaluate against otherwise. `None` (no `--include` given)
-/// becomes Chroma's own documented query default plus metadata (already part of it, but
-/// explicit here rather than relying on that not changing); an explicit list keeps whatever the
-/// caller asked for, just with metadata added if missing.
-fn with_metadata_included(include: Option<IncludeList>) -> IncludeList {
-    let mut list = include.map(|l| l.0).unwrap_or_else(|| IncludeList::default_query().0);
-    if !list.contains(&Include::Metadata) {
-        list.push(Include::Metadata);
-    }
-    IncludeList(list)
-}
-
 /// Filters an over-fetched `QueryResponse` down to only the results whose metadata satisfies
 /// `w` (evaluated via `metadata_matches`, since Chroma couldn't apply this filter itself — see
 /// `where_needs_client_side_eval`), then truncates to `keep_n` per query. `QueryResponse` batches
 /// multiple query texts in one call (one outer `Vec` entry each), so every parallel field is
-/// filtered by the same kept-index set per batch entry to stay aligned.
-fn filter_query_response(r: &mut QueryResponse, w: &chroma::types::Where, keep_n: usize) {
+/// filtered by the same kept-index set per batch entry to stay aligned. `pub(crate)` so
+/// `retrieve.rs`'s `execute_query` (structurally the same similarity-search shape as `Query::
+/// query` below, just via a different embedding call) can reuse it instead of duplicating.
+pub(crate) fn filter_query_response(r: &mut QueryResponse, w: &chroma::types::Where, keep_n: usize) {
     for i in 0..r.ids.len() {
         let keep_indices: Vec<usize> = (0..r.ids[i].len())
             .filter(|&j| {
@@ -201,10 +194,6 @@ fn filter_query_response(r: &mut QueryResponse, w: &chroma::types::Where, keep_n
             outer[i] = select_indices(&outer[i], &keep_indices);
         }
     }
-}
-
-fn select_indices<T: Clone>(v: &[T], indices: &[usize]) -> Vec<T> {
-    indices.iter().map(|&i| v[i].clone()).collect()
 }
 
 /// Command-line arguments for querying a Chroma database.
@@ -306,18 +295,5 @@ mod tests {
         assert!(rendered.contains("src/cli/args.rs"));
         assert!(rendered.contains("src/cli/prompt.rs"));
         assert!(!rendered.contains("src/tui/io.rs"));
-    }
-
-    #[test]
-    fn with_metadata_included_adds_metadata_to_an_explicit_list_missing_it() {
-        let list = with_metadata_included(Some(IncludeList(vec![Include::Distance])));
-        assert!(list.0.contains(&Include::Metadata));
-        assert!(list.0.contains(&Include::Distance));
-    }
-
-    #[test]
-    fn with_metadata_included_defaults_sensibly_when_nothing_was_requested() {
-        let list = with_metadata_included(None);
-        assert!(list.0.contains(&Include::Metadata));
     }
 }

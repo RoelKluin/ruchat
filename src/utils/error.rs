@@ -44,6 +44,11 @@ pub enum RuChatError {
     #[error("Ollama error: {0}")]
     OllamaError(#[from] ollama_rs::error::OllamaError),
 
+    /// Error from the Anthropic Messages API client (`providers/llm/anthropic`) — request
+    /// building, HTTP transport, or SSE stream parsing failures.
+    #[error("Anthropic API error: {0}")]
+    AnthropicError(String),
+
     /// Error when parsing metadata.
     #[error("Metadata parse error for input '{0}': {1}")]
     MetadataFileReadError(String, std::io::Error),

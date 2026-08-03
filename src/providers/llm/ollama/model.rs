@@ -186,6 +186,14 @@ impl ModelArgs {
     pub(super) fn get_nr_of_models(&self) -> usize {
         self.model.len()
     }
+    /// First explicitly configured model name, if any — a plain, synchronous config read with
+    /// no Ollama round trip, unlike `get_model`'s `list_local_models` validation. Used by
+    /// `EmbedArgs::embed_model_name` (`core/embed.rs`) so `recall_prior_memories`
+    /// (`orchestrator.rs`) can learn which embed model a memorize-only run's `EmbedArgs` would
+    /// use without paying for a network call just to read back a name.
+    pub(super) fn first_model_name(&self) -> Option<&str> {
+        self.model.first().map(String::as_str)
+    }
 }
 
 async fn get_model_name(ollama: &Ollama, name: &str) -> Result<String> {

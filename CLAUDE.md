@@ -9,7 +9,11 @@ working in this repository.
 
 - **ruchat** — a single-maintainer, local-first, Rust CLI for AI chat and
   multi-agent orchestration, built on **Ollama** (LLM inference) and
-  **ChromaDB** (vector store / RAG). No cloud dependency by design.
+  **ChromaDB** (vector store / RAG). No cloud dependency by default — as of
+  2026-08-04, **Anthropic (Claude) is an opt-in cloud chat-provider**
+  (`--chat-provider anthropic`, `providers/llm/anthropic/`), chat only:
+  Anthropic has no embeddings API, so RAG/`memorize`/recall stay Ollama-only
+  unconditionally. See `ROADMAP.md` Phase 3 and `TODO.md` Done section.
 - Maintainer: Roelof J.C. Kluin (`roel.kluin@gmail.com`).
 - License: MIT. Version: see `Cargo.toml` (`0.1.2`, pre-1.0 — breaking changes
   are expected and not yet semver-gated).
@@ -27,7 +31,10 @@ working in this repository.
 ```
 
 - Runtime dependencies: a local **Ollama** server and (optionally) a local
-  **ChromaDB** instance (Docker). Nothing talks to an external cloud API.
+  **ChromaDB** instance (Docker). By default nothing talks to an external
+  cloud API; `--chat-provider anthropic` is the one opt-in exception (chat
+  calls only — `api.anthropic.com`), never enabled unless explicitly asked
+  for.
 - No async web framework — this is a CLI/TUI binary (`clap` + `crossterm`),
   not a service.
 
@@ -38,8 +45,10 @@ working in this repository.
   pipeline, templates, tools, tokens).
 - `src/core/orchestrator/` — the `Stage` state machine and its side effects
   (`cargo.rs` test/check, `git.rs` auto-commit, `fs.rs`, `scope.rs`, `search.rs`).
-- `src/providers/llm/ollama/` and `src/providers/vector/chroma/` — the two
-  external integrations, each behind their own module.
+- `src/providers/llm/ollama/`, `src/providers/llm/anthropic/` (opt-in cloud
+  chat provider), and `src/providers/vector/chroma/` — the external
+  integrations, each behind their own module and the shared `LlmClient`/
+  `VectorStore` traits (`core/agent/llm_client.rs`).
 - `src/tui/` — interactive chat UI.
 - `agent_role/*.md` — the literal prompt templates for each agent role
   (Architect, Worker, Validator, Critic, Librarian, Scoper, Summarizer).
@@ -94,11 +103,10 @@ Prioritize these repo-specific concerns over generic checklist items:
   paths that canonicalize outside the repo root; `apply_patch` must keep
   requiring the target be tracked by `git ls-files`, stay under
   `MAX_PATCH_DIFF_BYTES`, and (when the plan declared a `FILES:` scope) match
-  it. `replace_in_file` (added 2026-08-03 as an easier-to-generate-correctly
-  alternative — no diff syntax, just an exact `old_string`/`new_string` pair)
-  must keep the same git-tracked/size-cap/`FILES:` scope checks, plus its own:
-  `old_string` must match exactly once, never zero or multiple times without
-  being refused. Treat any change loosening these as security-relevant.
+  it. (A `replace_in_file` alternative to `apply_patch` was tried and reverted
+  2026-08-03 — no real-run improvement over diff-based edits — so
+  `apply_patch` remains the sole write tool; see `TODO.md` Done section.)
+  Treat any change loosening these checks as security-relevant.
 - **No new generic shell/exec tool** — see architecture note above.
 - **Test placement**: each module owns its own `#[cfg(test)] mod tests`
   block next to the code it tests (types are `pub(crate)`, so tests need to

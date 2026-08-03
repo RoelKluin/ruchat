@@ -41,6 +41,7 @@ use args::Args;
 use clap::Parser;
 pub(crate) use cli::{args, options, serde};
 pub(crate) use core::{agent, orchestrator};
+pub(crate) use providers::llm::anthropic;
 pub(crate) use providers::llm::ollama;
 pub(crate) use providers::vector::chroma;
 pub(crate) use tui::io;

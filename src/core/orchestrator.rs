@@ -64,14 +64,21 @@ pub(crate) struct Orchestrator {
     summarizer: Option<Agent>,
     validator: Option<Agent>,
     orchestrator_config: Value,
-    ollama: Arc<dyn LlmClient>,
+    // Split from a single shared client (2026-08-04): Anthropic has no embeddings API, so
+    // `embed` must always stay Ollama-backed while `chat` can be an opt-in Anthropic client
+    // (`--chat-provider anthropic`, see `providers/llm/ollama/ask.rs`). Every existing call
+    // site was already unambiguously one or the other — `query_stream`/`chat_stream` uses
+    // became `chat`, `generate_embeddings`/`Query::query` uses became `embed`.
+    chat: Arc<dyn LlmClient>,
+    embed: Arc<dyn LlmClient>,
     client: Option<Arc<dyn VectorStore>>,
 }
 
 impl Orchestrator {
     pub(crate) async fn new(
         mut orchestrator_config: Value,
-        ollama: Arc<dyn LlmClient>,
+        chat: Arc<dyn LlmClient>,
+        embed: Arc<dyn LlmClient>,
         cfg: &Value,
     ) -> Result<Self> {
         let task_type = TaskType::deserialize(&orchestrator_config).ok();
@@ -169,6 +176,29 @@ impl Orchestrator {
             librarian = Some(lib);
         }
 
+        // No Librarian configured (or its client failed to build): `recall_prior_memories`
+        // still needs a Chroma client to look up whatever the Worker's `Memorize` tool call
+        // writes via `Agent::embed` (the Worker's own `embed_args`) — otherwise a memorize-only
+        // run could write memories it could never recall (see `TODO.md`). Gated on the Worker
+        // actually having `embed_args` explicitly configured, not `EmbedArgs::default()`'s
+        // fallback: unlike a Memorize *call* (an explicit action the Worker only takes when it
+        // decides to), this runs unconditionally at the start of every single run, so silently
+        // defaulting here would mean every run — including ones with no interest in Chroma at
+        // all — pays for an attempted connection to `EmbedArgs::default()`'s literal
+        // `localhost:8000`/`"default"` collection. Built here, once, at construction time
+        // rather than per-recall-call so `recall_prior_memories` itself stays a synchronous,
+        // no-network-if-`client`-is-`None` read of `self.client` — the same reason
+        // `build_test_orchestrator`'s hand-built `Orchestrator` literals can set `client`
+        // directly and keep the existing fixture tests fully offline. A failure to build here
+        // (e.g. an invalid `chroma_server` URL) is swallowed, not propagated: recall is
+        // best-effort everywhere else too (see the doc comment on `recall_prior_memories`).
+        if client.is_none()
+            && let Some(embed_args) = worker.embed_args.as_ref()
+            && let Ok(concrete_client) = embed_args.client(cfg).await
+        {
+            client = Some(Arc::new(concrete_client) as Arc<dyn VectorStore>);
+        }
+
         Ok(Self {
             scoper,
             architect,
@@ -178,7 +208,8 @@ impl Orchestrator {
             critics,
             librarian,
             orchestrator_config,
-            ollama,
+            chat,
+            embed,
             client,
         })
     }
@@ -257,7 +288,7 @@ impl Orchestrator {
                 snapshot_plan_impl.clone(),
             );
             scratch.round = round;
-            let ollama = &self.ollama;
+            let ollama = &self.chat;
             futs.push(async move {
                 // Critics run concurrently (`join_all` below), but `query_stream` streams
                 // token-by-token into whatever `tx` it's given — forwarding all of them into
@@ -325,7 +356,7 @@ impl Orchestrator {
             .as_mut()
             .ok_or_else(|| RuChatError::Is("Librarian not enabled".into()))?;
 
-        retry_transient!(librarian.query_stream(&self.ollama, ctx, tx))?;
+        retry_transient!(librarian.query_stream(&self.chat, ctx, tx))?;
 
         let mut q = Query::default();
         match serde_json::from_str::<Value>(strip_json_fences(&ctx.output)) {
@@ -351,7 +382,7 @@ impl Orchestrator {
                          no fences, no preamble."
                     ),
                 );
-                retry_transient!(librarian.query_stream(&self.ollama, ctx, tx))?;
+                retry_transient!(librarian.query_stream(&self.chat, ctx, tx))?;
                 match serde_json::from_str::<Value>(strip_json_fences(&ctx.output)) {
                     Ok(json_val) => {
                         let _ = q.update_from_json(json_val);
@@ -374,7 +405,7 @@ impl Orchestrator {
         // down for this one on-demand retrieval must not kill Architect/Worker/Test/Commit, none
         // of which need RAG context to function — degrade gracefully instead, mirroring
         // `recall_prior_memories`'s same stance for the deterministic pre-run recall.
-        match librarian.retrieve_and_generate(client, &self.ollama, q).await {
+        match librarian.retrieve_and_generate(client, &self.embed, q).await {
             Ok(docs) => ctx.push_turn(TurnKind::Retrieval, "Librarian", docs),
             Err(e) => {
                 tracing::warn!(error = %e, "Librarian retrieval failed; continuing without RAG context");
@@ -401,35 +432,53 @@ impl Orchestrator {
     /// begins. Unlike `run_librarian_retrieval` (the Librarian's on-demand, LLM-shaped query
     /// during `Stage::Retrieve`), this is deterministic — the goal text itself is the query,
     /// no LLM call needed to write a query spec, since there's no other context yet at session
-    /// start to reason about narrowing it further. Reuses the Librarian's Chroma client and
-    /// `embed_model`, so it's a no-op when no Librarian is configured for this run — see
-    /// `TODO.md` for why a memorize-only, Librarian-less run can't recall yet. Pushed as a
-    /// `TurnKind::Retrieval` turn tagged "Memory" (not "Librarian") so it's distinguishable in
-    /// `history_view`/traces from an on-demand retrieval, though both feed `documents_view`
-    /// identically. Never fails the run: an empty/missing collection (e.g. the very first run,
-    /// before anything has ever been memorized) is the normal case, not an error, so a query
-    /// failure is traced and swallowed rather than propagated.
+    /// start to reason about narrowing it further. If a Librarian is configured, reuses its
+    /// Chroma client/`embed_model`/`memory_collection` (set alongside `task_hint` in `ask.rs`).
+    /// Otherwise falls back to wherever the Worker's `Memorize` tool call actually writes
+    /// (`Agent::embed` → the Worker's own `embed_args`, or `EmbedArgs::default()` if unset) —
+    /// so a memorize-only run with no Librarian at all can still recall what it wrote, instead
+    /// of being permanently unable to (see `TODO.md`). Pushed as a `TurnKind::Retrieval` turn
+    /// tagged "Memory" (not "Librarian") so it's distinguishable in `history_view`/traces from
+    /// an on-demand retrieval, though both feed `documents_view` identically. Never fails the
+    /// run: an empty/missing collection (e.g. the very first run, before anything has ever been
+    /// memorized) is the normal case, not an error, so a query failure is traced and swallowed
+    /// rather than propagated.
     async fn recall_prior_memories(&self, ctx: &mut Context, tx: &mpsc::Sender<OrchestratorResult>) {
-        let (Some(client), Some(librarian)) = (self.client.as_ref(), self.librarian.as_ref()) else {
+        let Some(client) = self.client.as_ref() else {
             return;
         };
-        let mut q = Query::default();
-        // Unlike `run_librarian_retrieval` (where the Librarian's own LLM picks a collection
-        // name as part of its JSON query, guided by its `task_hint`), this ad-hoc pre-run
-        // recall has no LLM step to ask — without an explicit "collection" key here,
-        // `Query::default()`'s `ChromaCollectionConfigArgs::default()` falls back to the
-        // literal collection named "default", which has nothing to do with whatever
-        // `--collection` the run was actually configured with. `memory_collection` is set
-        // alongside `task_hint` in `ask.rs` for exactly this reason.
+
         let mut query_json = serde_json::json!({
             "query": [ctx.goal.clone()],
             "n_results": 3,
         });
-        if let Ok(collection) = librarian.get_str("memory_collection") {
-            query_json["collection"] = serde_json::json!(collection);
-        }
+
+        // Unlike `run_librarian_retrieval` (where the Librarian's own LLM picks a collection
+        // name as part of its JSON query, guided by its `task_hint`), this ad-hoc pre-run
+        // recall has no LLM step to ask — without an explicit "collection" key here,
+        // `Query::default()`'s `ChromaCollectionConfigArgs::default()` falls back to the
+        // literal collection named "default". With a Librarian configured, `memory_collection`
+        // (set alongside `task_hint` in `ask.rs`) supplies the right one. Without one, fall
+        // back to wherever the Worker's `Memorize` tool call actually writes (`Agent::embed` →
+        // the Worker's own `embed_args`, or `EmbedArgs::default()` if unset) — `self.client`
+        // itself was already resolved the same way in `Orchestrator::new` for exactly this case.
+        let embed_model = if let Some(librarian) = self.librarian.as_ref() {
+            if let Ok(collection) = librarian.get_str("memory_collection") {
+                query_json["collection"] = serde_json::json!(collection);
+            }
+            librarian
+                .get_str("embed_model")
+                .unwrap_or("all-minilm:l6-v2")
+                .to_string()
+        } else {
+            let embed_args = self.worker.embed_args.clone().unwrap_or_default();
+            query_json["collection"] = serde_json::json!(embed_args.collection_name());
+            embed_args.embed_model_name()
+        };
+
+        let mut q = Query::default();
         let _ = q.update_from_json(query_json);
-        match librarian.retrieve_and_generate(client, &self.ollama, q).await {
+        match q.query(client, &self.embed, &embed_model).await {
             Ok(docs) if !docs.trim().is_empty() => {
                 ctx.push_turn(TurnKind::Retrieval, "Memory", docs);
             }
@@ -547,7 +596,7 @@ impl Orchestrator {
                     if ctx.round > max_iterations {
                         Stage::Escalate("max iterations reached without acceptance".into())
                     } else {
-                        retry_transient!(self.architect.query_stream(&self.ollama, ctx, &tx))?;
+                        retry_transient!(self.architect.query_stream(&self.chat, ctx, &tx))?;
                         if let Some(prev) = &last_architect_output && prev == &ctx.output {
                             ctx.push_turn(
                                 TurnKind::Rejection,
@@ -575,7 +624,7 @@ impl Orchestrator {
                     Stage::Implement
                 }
                 Stage::Implement => {
-                    retry_transient!(self.worker.query_stream(&self.ollama, ctx, &tx))?;
+                    retry_transient!(self.worker.query_stream(&self.chat, ctx, &tx))?;
 
                     if let Ok(call) = tools::parse_tool_call(&ctx.output)
                         && matches!(
@@ -630,7 +679,7 @@ impl Orchestrator {
                                 );
                             }
                         }
-                        retry_transient!(self.worker.query_stream(&self.ollama, ctx, &tx))?;
+                        retry_transient!(self.worker.query_stream(&self.chat, ctx, &tx))?;
                         if let Some(prev) = &last_worker_output && prev == &ctx.output {
                             ctx.push_turn(
                                 TurnKind::Rejection,
@@ -656,7 +705,7 @@ impl Orchestrator {
                 }
                 Stage::Validate => {
                     if let Some(validator) = self.validator.as_mut() {
-                        retry_transient!(validator.query_stream(&self.ollama, ctx, &tx))?;
+                        retry_transient!(validator.query_stream(&self.chat, ctx, &tx))?;
                         let stripped = strip_json_fences(&ctx.output);
                         match serde_json::from_str::<ValidatorVerdict>(stripped).ok() {
                             Some(v) if v.verdict.eq_ignore_ascii_case("REJECTED") => {
@@ -723,7 +772,7 @@ impl Orchestrator {
                                 .map(|t| crate::agent::tokens::count_tokens(&t.content))
                                 .sum();
                             if approx_tokens > summarizer.get_dynamic_history_limit() {
-                                retry_transient!(summarizer.query_stream(&self.ollama, ctx, &tx))?;
+                                retry_transient!(summarizer.query_stream(&self.chat, ctx, &tx))?;
                                 ctx.collapse_to_summary(ctx.output.clone());
                             }
                         }
@@ -744,7 +793,7 @@ impl Orchestrator {
                         .or_else(|| self.worker.get_str("model").ok())
                         .unwrap_or("qwen2.5-coder:14b")
                         .to_string();
-                    commit_feature_branch(ctx, self.ollama.as_ref(), &commit_model).await?;
+                    commit_feature_branch(ctx, self.chat.as_ref(), &commit_model).await?;
                     success = true;
                     Stage::Done
                 }
@@ -798,10 +847,10 @@ impl Orchestrator {
             .to_string();
         let body = ctx.trace_body();
         let result = if success {
-            run_summary::generate_success_summary(self.ollama.as_ref(), &model, &ctx.goal, &body)
+            run_summary::generate_success_summary(self.chat.as_ref(), &model, &ctx.goal, &body)
                 .await
         } else {
-            run_summary::generate_failure_summary(self.ollama.as_ref(), &model, &ctx.goal, &body)
+            run_summary::generate_failure_summary(self.chat.as_ref(), &model, &ctx.goal, &body)
                 .await
         };
         let summary = result.unwrap_or_else(|e| {
@@ -859,13 +908,13 @@ impl Orchestrator {
                 let kind = match role.as_str() {
                     "Architect" => {
                         self.architect
-                            .query_stream(&self.ollama, &mut ctx, &tx)
+                            .query_stream(&self.chat, &mut ctx, &tx)
                             .await?;
                         TurnKind::Plan
                     }
                     "Worker" => {
                         self.worker
-                            .query_stream(&self.ollama, &mut ctx, &tx)
+                            .query_stream(&self.chat, &mut ctx, &tx)
                             .await?;
                         TurnKind::Implementation
                     }
@@ -873,7 +922,7 @@ impl Orchestrator {
                         self.validator
                             .as_mut()
                             .ok_or(RuChatError::Is("Validator not enabled".into()))?
-                            .query_stream(&self.ollama, &mut ctx, &tx)
+                            .query_stream(&self.chat, &mut ctx, &tx)
                             .await?;
                         let reason = strip_json_fences(&ctx.output)
                             .to_string();
@@ -884,7 +933,7 @@ impl Orchestrator {
                         self.summarizer
                             .as_mut()
                             .ok_or(RuChatError::Is("Summarizer not enabled".into()))?
-                            .query_stream(&self.ollama, &mut ctx, &tx)
+                            .query_stream(&self.chat, &mut ctx, &tx)
                             .await?;
                         TurnKind::Summary
                     }
@@ -892,7 +941,7 @@ impl Orchestrator {
                         self.scoper
                             .as_mut()
                             .ok_or(RuChatError::Is("Scoper not enabled".into()))?
-                            .query_stream(&self.ollama, &mut ctx, &tx)
+                            .query_stream(&self.chat, &mut ctx, &tx)
                             .await?;
                         TurnKind::Plan
                     }
@@ -905,7 +954,7 @@ impl Orchestrator {
                         self.critics
                             .get_mut(idx)
                             .ok_or(RuChatError::Is("Critic index out of bounds".into()))?
-                            .query_stream(&self.ollama, &mut ctx, &tx)
+                            .query_stream(&self.chat, &mut ctx, &tx)
                             .await?;
                         let reason = strip_json_fences(&ctx.output)
                             .to_string();
@@ -942,13 +991,13 @@ impl Orchestrator {
         let mut q = Query::default();
         q.update_from_json(serde_json::json!({ "query": [query_text] }))?;
 
-        let docs = q.query(client, &self.ollama, &model).await?;
+        let docs = q.query(client, &self.embed, &model).await?;
         ctx.push_turn(TurnKind::Retrieval, "Retrieve", docs);
         Ok(())
     }
 
     /// Dispatches a validated structured tool call from `Stage::Implement`.
-    /// Only the read-only tools reach here; `Memorize`/`ApplyPatch`/`ReplaceInFile` are
+    /// Only the read-only tools reach here; `Memorize`/`ApplyPatch` are
     /// handled later by `Agent::execute_and_verify` since they mutate state
     /// tied to the agent's own config, not the orchestrator's.
     async fn handle_structured_tool(
@@ -1038,23 +1087,22 @@ impl Orchestrator {
                 ctx.push_turn(TurnKind::Retrieval, "CargoDupes", out);
                 Ok(())
             }
-            ToolName::Memorize | ToolName::ApplyPatch | ToolName::ReplaceInFile => Ok(()),
+            ToolName::Memorize | ToolName::ApplyPatch => Ok(()),
         }
     }
 
     /// `Stage::Implement`'s patch loop, run once the Worker's turn is already pushed as an
     /// `Implementation` turn. Allows up to a per-round `patch_budget` of sequential
-    /// `apply_patch`/`replace_in_file` calls (reset fresh every time this stage is entered, i.e.
-    /// every new round — unlike `retrieve_budget`, which is a conservative cap for the whole
-    /// run) so a plan naming multiple files in its `FILES:` line can land as one commit instead
-    /// of only ever touching the first of them (see `should_continue_patch_loop`). Ends the
-    /// same way a single-patch round always did on `Failure` (reject/retry) or a successful
-    /// `Memorize`/no-op reask after at least one edit already landed (proceed to Test) — the
-    /// one new case is a Worker turn that produced no recognized tool_call *at all* on its
-    /// first attempt this round (e.g. a narrative walkthrough instead of an actual tool call):
-    /// rejected immediately with a precise, deterministic reason rather than silently
-    /// proceeding to a Test cycle that will trivially pass (nothing changed) and hoping the
-    /// Validator LLM happens to notice.
+    /// `apply_patch` calls (reset fresh every time this stage is entered, i.e. every new round —
+    /// unlike `retrieve_budget`, which is a conservative cap for the whole run) so a plan naming
+    /// multiple files in its `FILES:` line can land as one commit instead of only ever touching
+    /// the first of them (see `should_continue_patch_loop`). Ends the same way a single-patch
+    /// round always did on `Failure` (reject/retry) or a successful `Memorize`/no-op reask after
+    /// at least one patch already landed (proceed to Test) — the one new case is a Worker turn
+    /// that produced no recognized tool_call *at all* on its first attempt this round (e.g. a
+    /// narrative walkthrough instead of an actual tool call): rejected immediately with a
+    /// precise, deterministic reason rather than silently proceeding to a Test cycle that will
+    /// trivially pass (nothing changed) and hoping the Validator LLM happens to notice.
     async fn run_implement_patch_loop(
         &mut self,
         ctx: &mut Context,
@@ -1063,32 +1111,16 @@ impl Orchestrator {
         let mut patch_budget: u32 = 3;
         let mut any_patch_applied = false;
         loop {
-            // Either write tool counts the same way toward the per-round patch budget and the
-            // multi-file loop below — `replace_in_file` is just an easier-to-generate-correctly
-            // alternative to `apply_patch` for the Worker, not a functionally different action
-            // from the orchestrator's perspective.
-            let edit_tool_used = match tools::parse_tool_call(&ctx.output) {
-                Ok(tools::StructuredToolCall { tool: ToolName::ApplyPatch, .. }) => {
-                    Some("apply_patch")
-                }
-                Ok(tools::StructuredToolCall { tool: ToolName::ReplaceInFile, .. }) => {
-                    Some("replace_in_file")
-                }
-                _ => None,
-            };
+            let is_apply_patch = matches!(
+                tools::parse_tool_call(&ctx.output),
+                Ok(tools::StructuredToolCall { tool: ToolName::ApplyPatch, .. })
+            );
             match self.worker.execute_and_verify(ctx).await? {
                 Validation::Failure(err) => {
-                    // Matches whichever write tool was actually attempted this round when it's
-                    // one of the two edit tools; falls back to the historical generic label for
-                    // anything else that can reach `Failure` here (e.g. a failed `memorize`).
-                    let source = match edit_tool_used {
-                        Some("replace_in_file") => "ReplaceInFile",
-                        _ => "ApplyPatch",
-                    };
-                    ctx.push_turn(TurnKind::Rejection, source, err);
+                    ctx.push_turn(TurnKind::Rejection, "ApplyPatch", err);
                     return Ok(Stage::Retry);
                 }
-                Validation::Success if edit_tool_used.is_some() => {
+                Validation::Success if is_apply_patch => {
                     any_patch_applied = true;
                     patch_budget = patch_budget.saturating_sub(1);
                     if !should_continue_patch_loop(ctx, patch_budget) {
@@ -1097,12 +1129,12 @@ impl Orchestrator {
                     ctx.push_turn(
                         TurnKind::System,
                         "Orchestrator",
-                        "Change applied. The plan's FILES: line names more files than you've \
-                        changed so far — call apply_patch or replace_in_file for the next one \
-                        now, or emit no tool call if you're done."
+                        "Patch applied. The plan's FILES: line names more files than you've \
+                        changed so far — call apply_patch for the next one now, or emit no \
+                        tool call if you're done."
                             .into(),
                     );
-                    retry_transient!(self.worker.query_stream(&self.ollama, ctx, tx))?;
+                    retry_transient!(self.worker.query_stream(&self.chat, ctx, tx))?;
                     ctx.push_turn(TurnKind::Implementation, "Worker", ctx.output.clone());
                 }
                 // `Validation::Skip` means `parse_tool_call` found nothing it recognized
@@ -1134,7 +1166,7 @@ impl Orchestrator {
             .as_mut()
             .ok_or_else(|| RuChatError::Is("Scoper not enabled".into()))?;
 
-        retry_transient!(scoper.query_stream(&self.ollama, ctx, tx))?;
+        retry_transient!(scoper.query_stream(&self.chat, ctx, tx))?;
         // The Scoper's own raw output used to only ever reach `ctx.turns` in fragments — the
         // `notes` field below if non-empty, a rejected-lookup reason, a failed-lookup message —
         // never the actual action it took this round. A round where the Scoper found nothing
@@ -1327,7 +1359,8 @@ mod tests {
             summarizer,
             validator,
             orchestrator_config: config,
-            ollama: Arc::new(FakeLlmClient::new(responses)),
+            chat: Arc::new(FakeLlmClient::new(responses)),
+            embed: Arc::new(FakeLlmClient::new(vec![])),
             client,
         }
     }
@@ -1383,6 +1416,7 @@ mod tests {
         let result = tracing::subscriber::with_default(subscriber, || {
             rt.block_on(Orchestrator::new(
                 config,
+                Arc::new(FakeLlmClient::new(vec![])),
                 Arc::new(FakeLlmClient::new(vec![])),
                 &json!({}),
             ))
@@ -1742,9 +1776,10 @@ mod tests {
             summarizer: None,
             validator: None,
             orchestrator_config: config,
-            ollama: Arc::new(FakeLlmClient::new(vec![
+            chat: Arc::new(FakeLlmClient::new(vec![
                 "{\"query\": \"error handling\", \"n_results\": 5, \"collection\": \"repo\"}",
             ])),
+            embed: Arc::new(FakeLlmClient::new(vec![])),
             client: Some(Arc::new(FailingVectorStore)),
         };
 
@@ -1792,6 +1827,11 @@ mod tests {
 
     #[tokio::test]
     async fn recall_prior_memories_is_a_noop_without_a_librarian() {
+        // `query_response: None` here means no Chroma client at all was resolved for this
+        // Orchestrator — not just "no Librarian" but "nothing to query against, period" (in a
+        // real run, `Orchestrator::new`'s Worker-`embed_args` fallback below would also have
+        // had to fail for this to happen). See the next test for "no Librarian, but a client
+        // still resolved via the Worker's `embed_args`" — that one does recall successfully.
         let orchestrator = build_test_orchestrator(base_config(), vec![], None).await;
         let mut ctx = Context::new("fix the flaky test".to_string());
         let (tx, _rx) = mpsc::channel(100);
@@ -1799,6 +1839,35 @@ mod tests {
         orchestrator.recall_prior_memories(&mut ctx, &tx).await;
 
         assert!(ctx.turns.is_empty());
+    }
+
+    // Regression: a memorize-only run (no Librarian configured at all) could write memories via
+    // the Worker's `Memorize` tool call (`Agent::embed`, which already builds its own
+    // independent client from the Worker's `embed_args`/`EmbedArgs::default()`) but could never
+    // recall them — `recall_prior_memories` required `self.librarian` to be `Some`, unrelated to
+    // whether anything was actually memorized. Fixed by resolving `self.client` independently in
+    // `Orchestrator::new` from the Worker's `embed_args` whenever no Librarian client was built,
+    // and having `recall_prior_memories` fall back to the Worker's own `embed_args` for the
+    // collection name/embed model when no Librarian is configured to supply them.
+    #[tokio::test]
+    async fn recall_prior_memories_works_without_a_librarian_via_the_workers_embed_args() {
+        let orchestrator =
+            build_test_orchestrator(base_config(), vec![], Some(fake_query_response())).await;
+        assert!(
+            orchestrator.librarian.is_none(),
+            "this scenario is specifically the no-Librarian case"
+        );
+        let mut ctx = Context::new("fix the flaky test".to_string());
+        let (tx, _rx) = mpsc::channel(100);
+
+        orchestrator.recall_prior_memories(&mut ctx, &tx).await;
+
+        let memory_turn = ctx
+            .turns
+            .iter()
+            .find(|t| t.kind == TurnKind::Retrieval && t.source == "Memory")
+            .expect("recall_prior_memories should push a Memory retrieval turn even without a Librarian");
+        assert!(memory_turn.content.contains("fake retrieved document"));
     }
 
     // Regression: a real run showed `recall_prior_memories` pulling in content that looked
@@ -1840,7 +1909,8 @@ mod tests {
             summarizer: None,
             validator: None,
             orchestrator_config: config,
-            ollama: Arc::new(FakeLlmClient::new(vec![])),
+            chat: Arc::new(FakeLlmClient::new(vec![])),
+            embed: Arc::new(FakeLlmClient::new(vec![])),
             client: Some(store.clone()),
         };
 

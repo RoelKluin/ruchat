@@ -60,6 +60,15 @@ impl OllamaArgs {
         }
         Ok((ollama, models))
     }
+    /// The first explicitly configured model name, or `default` — a synchronous config read,
+    /// unlike `init`'s `get_model`, which validates against a live Ollama server via
+    /// `list_local_models`. Used by `EmbedArgs::embed_model_name` (`core/embed.rs`).
+    pub(crate) fn model_name_or(&self, default: &str) -> String {
+        self.model
+            .first_model_name()
+            .unwrap_or(default)
+            .to_string()
+    }
     /// Subcommand to remove a model from the local Ollama instance.
     ///
     /// This function connects to the local Ollama instance, retrieves the specified

@@ -1,3 +1,4 @@
+use crate::agent::llm_client::LlmClient;
 use crate::agent::pipeline::AgentPipeline;
 use crate::agent::Team;
 use crate::io::Io;
@@ -77,9 +78,12 @@ impl Manager {
             ManagerCommands::Run => {
                 let manager = load_manager(config_path.as_str()).await?;
                 let team = manager.current_team()?;
-                let ollama = args.server_args.init()?;
+                let ollama: Arc<dyn LlmClient> = Arc::new(args.server_args.init()?);
+                // `ruchat manager`/Team presets have no provider-selection field yet (unlike
+                // `ask`'s `--chat-provider`) — both chat and embed stay on the same Ollama
+                // client, preserving current behavior exactly. Deferred, not attempted here.
                 let orchestrator =
-                    Orchestrator::new(team.config.clone(), Arc::new(ollama), cfg).await?;
+                    Orchestrator::new(team.config.clone(), ollama.clone(), ollama, cfg).await?;
                 let pipeline = AgentPipeline::Orchestrator {
                     orchestrator,
                     goal: team.goal.clone(),

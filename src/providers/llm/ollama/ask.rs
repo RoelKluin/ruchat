@@ -1,12 +1,25 @@
+use crate::agent::llm_client::LlmClient;
+use crate::agent::pipeline::AgentPipeline;
+use crate::anthropic::AnthropicArgs;
 use crate::cli::prompt::PromptArgs;
 use crate::io::Io;
 use crate::ollama::OllamaArgs;
 use crate::orchestrator::Orchestrator;
 use crate::{Result, RuChatError};
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use serde_json::Value;
-use crate::agent::pipeline::AgentPipeline;
 use std::sync::Arc;
+
+/// Which backend a run's chat-capable roles (Architect/Worker/Validator/Critics/Summarizer/
+/// Scoper/Librarian) use. Embeddings (RAG, memorize/recall) always stay on Ollama regardless —
+/// see `Orchestrator`'s `chat`/`embed` client split (`core/orchestrator.rs`) — Anthropic has no
+/// embeddings API, so this flag only ever affects the chat client.
+#[derive(ValueEnum, Clone, Debug, Default, PartialEq)]
+enum ChatProvider {
+    #[default]
+    Ollama,
+    Anthropic,
+}
 
 const DEFAULT_MODEL: &str = "qwen2.5vl:latest";
 
@@ -69,6 +82,15 @@ pub(crate) struct AskArgs {
 
     #[command(flatten)]
     ollama: OllamaArgs,
+
+    /// Which backend chat-capable roles use — Ollama (default, fully local) or Anthropic
+    /// (opt-in, requires --anthropic-model and an API key; embeddings/RAG/memory always stay on
+    /// Ollama regardless, since Anthropic has no embeddings API).
+    #[arg(long, value_enum, default_value_t = ChatProvider::Ollama, help_heading = "Agent Configuration")]
+    chat_provider: ChatProvider,
+
+    #[command(flatten)]
+    anthropic: AnthropicArgs,
 }
 
 impl AskArgs {
@@ -203,15 +225,31 @@ impl AskArgs {
             Err(e) => return Err(e),
         };
 
-        let (ollama, model) = self.ollama.init("", cfg).await?;
-        let model_name = model
-            .first()
-            .cloned()
-            .unwrap_or_else(|| DEFAULT_MODEL.to_string());
+        // `embed` (RAG/memorize/recall) always stays on Ollama — Anthropic has no embeddings
+        // API — so this client is resolved unconditionally regardless of --chat-provider.
+        let (ollama, ollama_models) = self.ollama.init("", cfg).await?;
+        let embed: Arc<dyn LlmClient> = Arc::new(ollama);
+
+        // The per-role "model" config fallback (`into_config`'s default-model injection) must
+        // be a name the actually-selected chat provider understands — an Ollama model tag would
+        // be meaningless sent to Claude's API, and vice versa.
+        let (chat, model_name): (Arc<dyn LlmClient>, String) = match self.chat_provider {
+            ChatProvider::Anthropic => (
+                Arc::new(self.anthropic.build_client(cfg)?),
+                self.anthropic.model(cfg)?,
+            ),
+            ChatProvider::Ollama => (
+                embed.clone(),
+                ollama_models
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| DEFAULT_MODEL.to_string()),
+            ),
+        };
         let config = self.clone().into_config(&model_name)?;
 
         let pipeline = if config.get("Architect").is_some() || config.get("Worker").is_some() {
-            let orchestrator = Orchestrator::new(config, Arc::new(ollama), cfg).await?;
+            let orchestrator = Orchestrator::new(config, chat, embed, cfg).await?;
             AgentPipeline::Orchestrator {
                 orchestrator,
                 goal: prompt,
@@ -219,7 +257,7 @@ impl AskArgs {
             }
         } else {
             AgentPipeline::OneShot {
-                ollama: std::sync::Arc::new(ollama),
+                ollama: chat,
                 model: model_name,
                 prompt,
             }

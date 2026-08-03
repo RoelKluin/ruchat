@@ -1,4 +1,8 @@
+use crate::chroma::r#where::{
+    filter_get_response, where_needs_client_side_eval, with_metadata_included,
+};
 use crate::chroma::{
+    query::{filter_query_response, CLIENT_FILTER_MAX_FETCH, CLIENT_FILTER_OVERFETCH_FACTOR},
     rerank::{rerank_query_results, RerankWeights},
     ChromaClientConfigArgs, ChromaCollectionConfigArgs, ChromaResponse, IncludeArgs, OutputArgs,
     WhereArgs,
@@ -143,20 +147,38 @@ impl RetrieveArgs {
         });
 
         let where_cond = self.r#where.parse()?;
-        let include_list = self.include.parse()?;
+        let mut include_list = self.include.parse()?;
+
+        // See `get.rs::GetArgs::get`'s identical fix — same underlying bug, same reasoning.
+        let needs_client_filter = where_cond.as_ref().is_some_and(where_needs_client_side_eval);
+        let (query_where, fetch_limit, fetch_offset) = if needs_client_filter {
+            include_list = Some(with_metadata_included(include_list));
+            (None, None, None)
+        } else {
+            (where_cond.clone(), self.limit, self.offset)
+        };
 
         let mut result = retry_transient!(async {
             collection
                 .get(
                     ids_vec.clone(),
-                    where_cond.clone(),
-                    self.limit,
-                    self.offset,
+                    query_where.clone(),
+                    fetch_limit,
+                    fetch_offset,
                     include_list.clone(),
                 )
                 .await
                 .map_err(RuChatError::ChromaHttpClientError)
         })?;
+
+        if let Some(w) = where_cond.as_ref().filter(|_| needs_client_filter) {
+            filter_get_response(
+                &mut result,
+                w,
+                self.offset.unwrap_or(0) as usize,
+                self.limit.map(|l| l as usize),
+            );
+        }
 
         let _ = ChromaResponse::Get(&mut result).render(&self.output);
         Ok(())
@@ -190,20 +212,40 @@ impl RetrieveArgs {
                 .collect()
         });
 
-        let include = self.include.parse()?;
+        let mut include = self.include.parse()?;
+
+        // See `query.rs::Query::query`'s identical fix — same underlying bug, same reasoning.
+        let needs_client_filter = where_cond.as_ref().is_some_and(where_needs_client_side_eval);
+        let requested_n = self.n_results.or(self.limit).unwrap_or(10);
+        let (query_where, fetch_n) = if needs_client_filter {
+            include = Some(with_metadata_included(include));
+            (
+                None,
+                Some(
+                    (requested_n.saturating_mul(CLIENT_FILTER_OVERFETCH_FACTOR))
+                        .min(CLIENT_FILTER_MAX_FETCH),
+                ),
+            )
+        } else {
+            (where_cond.clone(), self.n_results.or(self.limit))
+        };
 
         let mut result = retry_transient!(async {
             collection
                 .query(
                     embeddings.clone(),
-                    self.n_results.or(self.limit),
-                    where_cond.clone(),
+                    fetch_n,
+                    query_where.clone(),
                     restrict_ids.clone(),
                     include.clone(),
                 )
                 .await
                 .map_err(RuChatError::ChromaHttpClientError)
         })?;
+
+        if let Some(w) = where_cond.as_ref().filter(|_| needs_client_filter) {
+            filter_query_response(&mut result, w, requested_n as usize);
+        }
 
         let query_texts = vec![query_text.clone()];
         rerank_query_results(&query_texts, &mut result, &RerankWeights::default());
