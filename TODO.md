@@ -25,12 +25,24 @@ Last updated: 2026-08-02
 - [ ] Expose `BuildReport::parsed_diagnostics` (`agent/protocol.rs`) to callers instead of only the flattened diagnostics string — the structured `Diagnostic { level, message, file, line, column }` is already populated per `cargo check` run but currently sits behind `#[allow(dead_code)]`; feeding it to the Worker/Validator directly would let a rejection point at an exact file/line instead of a text blob
 
 ### 4. TUI Chat
-- [ ] Fix redraw artifacts and cursor handling edge cases
-- [ ] Improve selection + copy/paste reliability
-- [ ] Add syntax highlighting for code blocks in chat view
-- [ ] Support multi-line editing with proper indentation
-- [ ] Add command palette / key bindings help screen
-- [ ] Wire up an actual producer for `AgentEvent::Progress` (`agent/event.rs`) — the render loop (`tui/render.rs::render_pipeline_stream`) already has a full `Progress(pct)` match arm that draws a "...N%" status line, but nothing in the orchestrator/agent code ever sends one; likely candidates are per-round progress (`round`/`max_iterations`) or per-chunk streaming progress
+**Reality check (2026-08-03): there is no interactive chat TUI in the codebase right
+now.** The crossterm-based interactive layer (cursor movement, text selection,
+history/undo-redo editing — `providers/llm/ollama/chat/{conversation_tree,history,
+pos,event_result}.rs`, ~1,260 lines) was deleted 2026-07-31 (`ad0708d "remove more old
+code"` and the two commits around it), a few days before the items below were last
+touched. `src/tui/` today is just `io.rs` (async stdin/stdout wrapper) and
+`render.rs` (a streaming ANSI-colored line renderer for `pipe`/`ask`/`manager run`
+output) — 175 lines total, no cursor/selection/editing code at all. The items below
+describe bugs in a subsystem that no longer exists; they'd need to be rebuilt from
+scratch, not "fixed." Leaving them here as a record of what an interactive TUI would
+need if one gets rebuilt, not as active bugs.
+- [ ] ~~Fix redraw artifacts and cursor handling edge cases~~ — moot, no cursor handling exists
+- [ ] ~~Improve selection + copy/paste reliability~~ — moot, no selection exists
+- [ ] ~~Add syntax highlighting for code blocks in chat view~~ — moot, no chat view exists
+- [ ] ~~Support multi-line editing with proper indentation~~ — moot, no editable input buffer exists
+- [ ] ~~Add command palette / key bindings help screen~~ — moot, nothing to bind keys to
+- [ ] `crossterm` (`Cargo.toml`) is now an unused dependency — nothing in `src/` references it. Left in place rather than removed unilaterally, since removing it forecloses rebuilding the interactive TUI without re-adding it; worth a deliberate decision (drop it vs. keep it for a planned rebuild) rather than a silent removal.
+- [ ] Wire up an actual producer for `AgentEvent::Progress` (`agent/event.rs`) — the render loop (`tui/render.rs::render_pipeline_stream`) already has a full `Progress(pct)` match arm that draws a "...N%" status line, but nothing in the orchestrator/agent code ever sends one; likely candidates are per-round progress (`round`/`max_iterations`) or per-chunk streaming progress. Still applies — `render.rs` is part of the code that's actually still here.
 
 ## Medium Priority
 
@@ -84,7 +96,7 @@ Last updated: 2026-08-02
 - [x] Basic multi-agent orchestration with RAG support
 - [x] Git auto-commit feature branch on approval
 - [x] Robust Chroma CLI with where/include parsing
-- [x] TUI chat with history, undo/redo, selection
+- [x] TUI chat with history, undo/redo, selection — **later removed** (2026-07-31, `ad0708d` and surrounding commits deleted the ~1,260-line `providers/llm/ollama/chat/{conversation_tree,history,pos,event_result}.rs` this was built on); no longer accurate as a "done" claim, see the "TUI Chat" section above
 - [x] Structured tool calling framework (`agent/tools.rs::ToolName`, schema-validated, replaces regex-only parsing) — 13 typed tools including `apply_patch`, `git_*`, `read_file`, `ripgrep`, `read_tags`, `cargo_check`/`cargo_dupes`
 - [x] Parallel critic execution (`Orchestrator::run_critics_parallel`, `futures_util::future::join_all`)
 - [x] RAG relevance scoring / reranking (`providers/vector/chroma/rerank.rs`, distance+lexical blend)

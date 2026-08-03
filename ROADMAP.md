@@ -23,7 +23,7 @@ We prioritize **predictability**, **performance**, **token efficiency**, and **t
 - [~] Comprehensive error handling with actionable messages — fixed the concrete cases found where an error handler discarded the real cause (model-not-found vs. unreachable-Ollama-server, unknown tool names, a crash-on-transient-failure `.unwrap()`) and removed ~8 provably-safe-but-panic-shaped unwraps; the much larger job — auditing ~85 call sites using the generic `InternalError`/`Is` catch-all variants — is still open, see `TODO.md`
 - [ ] Unit tests for all parsers (`where.rs`, `prompt.rs`, `include.rs`) — still open, see `TODO.md`
 - [~] Core orchestration test coverage — 9/10 `agent_debug/*.json` fixtures are wired into `cargo test --lib` via `FakeLlmClient`/`FakeVectorStore` (this is how the multi-critic dispatch bug below was caught); the last fixture combination and true integration tests against a live Ollama/Chroma are still open
-- [ ] Fix TUI redraw artifacts, improve selection/copy/paste, and add help screen
+- [ ] ~~Fix TUI redraw artifacts, improve selection/copy/paste, and add help screen~~ — moot as written: the interactive chat TUI this describes was deleted 2026-07-31 (~1,260 lines, see `TODO.md`). Only a non-interactive streaming-output renderer remains. Rebuilding an interactive TUI (if still wanted) is new work, not a bug fix — worth its own roadmap item rather than reusing this one
 - [x] Optimize model option merging (removed the double JSON round-trip in `ModelArgs::build_generation_request`) — surfaced a separate, deeper pre-existing bug in the process (config-file `model_options` merging is currently a silent no-op), tracked in `TODO.md`, not fixed yet
 - [x] Connection pooling for Ollama and Chroma clients — investigated, already satisfied by the existing architecture (single shared `Arc`-wrapped client per orchestrator run, reqwest's default pooling underneath, nothing disabling it), not a real gap — see `TODO.md` for the detail
 - [x] CI workflow (`.github/workflows/ci.yml`): build + `cargo clippy --lib --tests` + `cargo test --lib` on push/PR — deliberately no `-D warnings` or `fmt --check` gate yet (pre-existing dead-code warnings and repo-wide fmt drift need cleanup first, see `TODO.md`)
@@ -109,21 +109,25 @@ By v0.4.0, Ruchat should feel like “LangGraph for people who want to stay full
 ---
 
 **Current Status (August 2026)**:  
-TUI fixes haven't started; the v0.2.0 release itself hasn't happened either. Config
-system consolidation turned out to be mostly already done (config file + profiles
-existed and worked, just needed a couple of missing env vars). Everything else in
-Phase 1 is now done or verified-as-already-satisfied: structured logging (levels +
-JSON output), the eprintln!/println! migration, parser unit tests, the model-option
+The only Phase 1 item left unresolved is the v0.2.0 release itself. Everything else
+is now done or verified-as-already-satisfied: structured logging (levels + JSON
+output), the eprintln!/println! migration, parser unit tests, the model-option
 double-round-trip removal, error-handling improvements at the sites that discarded
-real causes, and connection pooling (turned out to already be handled by the existing
-shared-client architecture). Phase 2 also picked up real work this cycle: the structured tool-calling framework, parallel critic
-execution (plus finding and fixing the bug that made it a silent no-op), `apply_patch`
-hardening, the Team/Manager reconciliation, and the new Scoper role — alongside a
-round of test-infrastructure work (repairing an uncompilable suite, wiring 9/10
-`agent_debug` fixtures into `cargo test`, adding CI). See `TODO.md` for the live,
-priority-ranked task list, including two bugs found along the way and deliberately
-left open pending a design decision: the config-file `model_options` merge being a
-silent no-op, and the `InternalError`/`Is` catch-all error variants used at ~85 call
-sites.
+real causes, connection pooling (turned out to already be handled by the existing
+shared-client architecture), config system consolidation (config file + profiles
+existed and worked, just needed a couple of missing env vars), and the TUI item
+(turned out to be moot — the interactive chat TUI it described was deleted
+2026-07-31; only a non-interactive streaming-output renderer remains, see
+`TODO.md`). Phase 2 also picked up real work this cycle: the structured
+tool-calling framework, parallel critic execution (plus finding and fixing the bug
+that made it a silent no-op), `apply_patch` hardening, the Team/Manager
+reconciliation, and the new Scoper role — alongside a round of test-infrastructure
+work (repairing an uncompilable suite, wiring 9/10 `agent_debug` fixtures into
+`cargo test`, adding CI). See `TODO.md` for the live, priority-ranked task list,
+including three things found along the way and deliberately left open: the
+config-file `model_options` merge being a silent no-op, the `InternalError`/`Is`
+catch-all error variants used at ~85 call sites, and whether to rebuild an
+interactive TUI (and what to do with the now-unused `crossterm` dependency) or
+stay streaming-output-only.
 
 Contributions welcome — especially on testing, configuration, and tool framework.
