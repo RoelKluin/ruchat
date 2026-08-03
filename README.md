@@ -87,6 +87,7 @@ See `ruchat --help` and subcommand help for all options.
 - Chroma connection via env vars (`CHROMA_SERVER`, `CHROMA_TOKEN`) or CLI flags
 - Persistent team/manager state in `ruchat_manager.json`
 - Collection definitions in `db_config.json`
+- Logging: `RUST_LOG` controls level (e.g. `RUST_LOG=debug`); `RUCHAT_LOG_FORMAT=json` switches to newline-delimited JSON events for log aggregators, default is human-readable
 
 ## Project Status
 

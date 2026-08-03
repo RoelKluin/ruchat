@@ -19,7 +19,7 @@ We prioritize **predictability**, **performance**, **token efficiency**, and **t
 **Goal**: Production-ready foundation
 
 - [ ] Consolidate configuration system (`config.toml` + environment variables + CLI overrides)
-- [~] Structured logging (`tracing`) — `main.rs` already wires `tracing_subscriber` with `EnvFilter` for configurable levels; JSON output isn't implemented yet, and 25 `eprintln!`/`println!` call sites (vs. 11 `tracing::` ones) still need migrating — see `TODO.md`
+- [x] Structured logging (`tracing`) — `main.rs` wires `tracing_subscriber` with `EnvFilter` for configurable levels (`RUST_LOG`) and now also supports `RUCHAT_LOG_FORMAT=json` for newline-delimited JSON output; genuine diagnostic `eprintln!`/`println!` call sites in library code migrated to `tracing`, remaining ones are each command's actual stdout output (see `TODO.md`)
 - [ ] Comprehensive error handling with actionable messages
 - [ ] Unit tests for all parsers (`where.rs`, `prompt.rs`, `include.rs`) — still open, see `TODO.md`
 - [~] Core orchestration test coverage — 9/10 `agent_debug/*.json` fixtures are wired into `cargo test --lib` via `FakeLlmClient`/`FakeVectorStore` (this is how the multi-critic dispatch bug below was caught); the last fixture combination and true integration tests against a live Ollama/Chroma are still open
