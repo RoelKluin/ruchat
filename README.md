@@ -91,12 +91,11 @@ See `ruchat --help` and subcommand help for all options.
 
 ## Project Status
 
-**Version:** 0.1.2
+**Version:** 0.2.0
 
 Actively developed with focus on:
 - Robust error handling and logging
 - Improved configuration merging
-- Better TUI editing experience
 - Expanded agent orchestration and RAG capabilities
 
 ## Contributing

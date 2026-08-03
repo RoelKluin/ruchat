@@ -81,22 +81,23 @@ pub(crate) async fn merge_options_json(options: &str) -> Result<(Value, HashMap<
 mod tests {
     use super::*;
     use std::fs;
+    use tempfile::tempdir;
 
     #[tokio::test]
     async fn test_read_options_file() {
-        let path = "test_options.json";
-        fs::write(path, r#"{"option1": "value1"}"#).unwrap();
-        let value = read_options_file(path).await.unwrap();
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test_options.json");
+        fs::write(&path, r#"{"option1": "value1"}"#).unwrap();
+        let value = read_options_file(path.to_str().unwrap()).await.unwrap();
         assert_eq!(value["option1"], "value1");
-        fs::remove_file(path).unwrap();
     }
 
     #[tokio::test]
     async fn test_get_options_with_file() {
-        let path = "test_options.json";
-        fs::write(path, r#"{"option1": "value1"}"#).unwrap();
-        assert!(get_options(path).await.is_ok());
-        fs::remove_file(path).unwrap();
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test_options.json");
+        fs::write(&path, r#"{"option1": "value1"}"#).unwrap();
+        assert!(get_options(path.to_str().unwrap()).await.is_ok());
     }
 
     #[tokio::test]

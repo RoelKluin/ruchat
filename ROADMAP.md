@@ -27,7 +27,7 @@ We prioritize **predictability**, **performance**, **token efficiency**, and **t
 - [x] Optimize model option merging (removed the double JSON round-trip in `ModelArgs::build_generation_request`) — surfaced a separate, deeper pre-existing bug in the process (config-file `model_options` merging is currently a silent no-op), tracked in `TODO.md`, not fixed yet
 - [x] Connection pooling for Ollama and Chroma clients — investigated, already satisfied by the existing architecture (single shared `Arc`-wrapped client per orchestrator run, reqwest's default pooling underneath, nothing disabling it), not a real gap — see `TODO.md` for the detail
 - [x] CI workflow (`.github/workflows/ci.yml`): build + `cargo clippy --lib --tests` + `cargo test --lib` on push/PR — deliberately no `-D warnings` or `fmt --check` gate yet (pre-existing dead-code warnings and repo-wide fmt drift need cleanup first, see `TODO.md`)
-- [ ] Release v0.2.0 with clean `TODO.md` → `DONE` migration — still on `0.1.2`, no tags cut yet
+- [x] Release v0.2.0 with clean `TODO.md` → `DONE` migration — version bumped in `Cargo.toml`/`README.md`, all `[x]`-completed items moved out of `TODO.md`'s priority sections into its `Done` list, `cargo check --lib`/`cargo test --lib`/`cargo clippy --lib --tests`/`cargo build --release` verified clean per the deploy checklist (fixed one flaky test found in the process — `cli::options::tests::test_read_options_file` raced another test over a shared filename)
 
 **Milestone**: Reliable daily driver for local coding agents.
 
@@ -109,25 +109,30 @@ By v0.4.0, Ruchat should feel like “LangGraph for people who want to stay full
 ---
 
 **Current Status (August 2026)**:  
-The only Phase 1 item left unresolved is the v0.2.0 release itself. Everything else
-is now done or verified-as-already-satisfied: structured logging (levels + JSON
-output), the eprintln!/println! migration, parser unit tests, the model-option
+Phase 1 is complete — v0.2.0 shipped. Every item is now done or
+verified-as-already-satisfied: structured logging (levels + JSON output), the
+eprintln!/println! migration, parser unit tests, the model-option
 double-round-trip removal, error-handling improvements at the sites that discarded
 real causes, connection pooling (turned out to already be handled by the existing
 shared-client architecture), config system consolidation (config file + profiles
-existed and worked, just needed a couple of missing env vars), and the TUI item
+existed and worked, just needed a couple of missing env vars), the TUI item
 (turned out to be moot — the interactive chat TUI it described was deleted
 2026-07-31; only a non-interactive streaming-output renderer remains, see
-`TODO.md`). Phase 2 also picked up real work this cycle: the structured
+`TODO.md`), and now the release itself, including a repo-wide `TODO.md` cleanup
+(all completed items moved into its `Done` list) and one flaky test fixed along
+the way (`cli::options::tests::test_read_options_file`, a shared-filename race
+with another test). Phase 2 also picked up real work this cycle: the structured
 tool-calling framework, parallel critic execution (plus finding and fixing the bug
 that made it a silent no-op), `apply_patch` hardening, the Team/Manager
 reconciliation, and the new Scoper role — alongside a round of test-infrastructure
 work (repairing an uncompilable suite, wiring 9/10 `agent_debug` fixtures into
-`cargo test`, adding CI). See `TODO.md` for the live, priority-ranked task list,
-including three things found along the way and deliberately left open: the
-config-file `model_options` merge being a silent no-op, the `InternalError`/`Is`
-catch-all error variants used at ~85 call sites, and whether to rebuild an
-interactive TUI (and what to do with the now-unused `crossterm` dependency) or
-stay streaming-output-only.
+`cargo test`, adding CI). See `TODO.md` for the live, priority-ranked task list —
+next up is Phase 2 (persistent memory auto-recall, further RAG improvements,
+automatic Chroma collection management, `apply_patch` scope-check, resource-limited
+cargo subprocess sandboxing) — plus three things found along the way and
+deliberately left open: the config-file `model_options` merge being a silent
+no-op, the `InternalError`/`Is` catch-all error variants used at ~85 call sites,
+and whether to rebuild an interactive TUI (and what to do with the now-unused
+`crossterm` dependency) or stay streaming-output-only.
 
 Contributions welcome — especially on testing, configuration, and tool framework.
