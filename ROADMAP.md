@@ -24,7 +24,7 @@ We prioritize **predictability**, **performance**, **token efficiency**, and **t
 - [ ] Unit tests for all parsers (`where.rs`, `prompt.rs`, `include.rs`) — still open, see `TODO.md`
 - [~] Core orchestration test coverage — 9/10 `agent_debug/*.json` fixtures are wired into `cargo test --lib` via `FakeLlmClient`/`FakeVectorStore` (this is how the multi-critic dispatch bug below was caught); the last fixture combination and true integration tests against a live Ollama/Chroma are still open
 - [ ] Fix TUI redraw artifacts, improve selection/copy/paste, and add help screen
-- [ ] Optimize model option merging (remove double JSON round-trip)
+- [x] Optimize model option merging (removed the double JSON round-trip in `ModelArgs::build_generation_request`) — surfaced a separate, deeper pre-existing bug in the process (config-file `model_options` merging is currently a silent no-op), tracked in `TODO.md`, not fixed yet
 - [ ] Add connection pooling for Ollama and Chroma clients
 - [x] CI workflow (`.github/workflows/ci.yml`): build + `cargo clippy --lib --tests` + `cargo test --lib` on push/PR — deliberately no `-D warnings` or `fmt --check` gate yet (pre-existing dead-code warnings and repo-wide fmt drift need cleanup first, see `TODO.md`)
 - [ ] Release v0.2.0 with clean `TODO.md` → `DONE` migration — still on `0.1.2`, no tags cut yet
