@@ -1,4 +1,6 @@
 pub(crate) mod manager;
+#[cfg(test)]
+mod evals;
 pub(crate) mod event;
 pub(crate) mod json_extract;
 pub(crate) mod llm_client;

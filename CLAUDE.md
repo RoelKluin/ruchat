@@ -134,6 +134,16 @@ Prioritize these repo-specific concerns over generic checklist items:
 - No CI workflow exists yet in this checkout (`.github/workflows/` is absent)
   despite `TODO.md` referencing one — verify locally with the commands above
   before treating a change as "tested."
+- **Agentic evals** (`core/agent/evals.rs`, added 2026-08-03): a distinct
+  category from everything else here — these drive a role's real prompt
+  template against a *live* Ollama server (not `FakeLlmClient`) with a
+  specific scenario, checking that the actual model behaves as that role's
+  prompt intends. Every one is `#[ignore]`d (not part of `cargo test --lib`);
+  run explicitly with `cargo test --lib -- --ignored agent_eval`. Expect some
+  flakiness by design — they depend on live model behavior, not deterministic
+  code — a red run can be a genuine finding about prompt/model reliability,
+  not necessarily a code bug; see the eval's own comment before assuming
+  either way.
 
 ## Tech Debt Priorities (for `tech-debt`)
 
