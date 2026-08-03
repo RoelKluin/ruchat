@@ -537,12 +537,32 @@ impl Orchestrator {
                         // Record the failure as a turn and let the Worker see
                         // it and try something else, instead of propagating a
                         // fatal error out of the stage machine entirely.
-                        if let Err(e) = self.handle_structured_tool(&call, ctx).await {
-                            ctx.push_turn(
-                                TurnKind::System,
-                                "Orchestrator",
-                                format!("tool call failed: {e}"),
-                            );
+                        match self.handle_structured_tool(&call, ctx).await {
+                            Err(e) => {
+                                ctx.push_turn(
+                                    TurnKind::System,
+                                    "Orchestrator",
+                                    format!("tool call failed: {e}"),
+                                );
+                            }
+                            // Explicit, immediate reminder right before the reask — not just
+                            // documented once in the prompt — since a rule stated at the top of
+                            // a long prompt is easy for smaller local models to lose track of by
+                            // generation time. Local models reliably keep calling the same (or
+                            // another) read-only tool again instead of switching to act on a
+                            // result they already have; `run_implement_patch_loop` rejects that
+                            // if it happens anyway, but heading it off here avoids burning the
+                            // round on a rejection at all.
+                            Ok(()) => {
+                                ctx.push_turn(
+                                    TurnKind::System,
+                                    "Orchestrator",
+                                    "Tool result is above. You've used this round's one \
+                                    information-lookup — you must now emit exactly one \
+                                    apply_patch (or memorize) tool_call. Do not call another \
+                                    read-only tool.".into(),
+                                );
+                            }
                         }
                         retry_transient!(self.worker.query_stream(&self.ollama, ctx, &tx))?;
                         if let Some(prev) = &last_worker_output && prev == &ctx.output {
@@ -1358,6 +1378,36 @@ mod tests {
             .expect("a no-tool-call Worker turn should be rejected");
         assert_eq!(rejection.source, "Worker");
         assert!(rejection.content.contains("no recognized tool_call"));
+    }
+
+    // Regression test for a second real failure, reported right after the one above: the Worker
+    // called cargo_clippy, got its result, then called cargo_clippy *again* instead of switching
+    // to apply_patch — repeated across rounds until the exact-match stall guard escalated the
+    // whole run. `execute_and_verify` only handles ApplyPatch/Memorize; any other (valid, known)
+    // tool reaching it at verify-time used to produce a cryptic "Unexpected tool at verify
+    // stage: CargoClippy" debug dump. This exercises that same code path — CargoClippy isn't
+    // handled specially in `execute_and_verify`, so no real subprocess ever runs here.
+    #[tokio::test]
+    async fn implement_patch_loop_rejects_a_second_read_only_tool_call_with_actionable_guidance()
+    {
+        let mut orchestrator = build_test_orchestrator(base_config(), vec![], None).await;
+        let mut ctx = Context::new("goal".to_string());
+        ctx.output = "```tool_call\n{\"tool\": \"cargo_clippy\"}\n```".to_string();
+        let (tx, _rx) = mpsc::channel(100);
+
+        let stage = orchestrator
+            .run_implement_patch_loop(&mut ctx, &tx)
+            .await
+            .unwrap();
+
+        assert_eq!(stage, Stage::Retry);
+        let rejection = ctx
+            .turns
+            .iter()
+            .find(|t| t.kind == TurnKind::Rejection)
+            .expect("a repeated read-only tool call should be rejected");
+        assert!(rejection.content.contains("already used this round's one information-lookup"));
+        assert!(rejection.content.contains("apply_patch"));
     }
 
     #[tokio::test]

@@ -27,6 +27,13 @@ brief one-line lead-in is fine, but nothing after it, and no other fenced block 
 be mistaken for the tool call). If you don't yet know enough to act, use a read-only tool
 to find out — do not narrate a plan in prose instead of acting on it.
 
+You get at most one read-only lookup (retrieve/git_*/read_file/list_dir/ripgrep/read_tags/
+cargo_check/cargo_clippy/cargo_dupes) per round. Once you've made that call and its result
+appears above, you are DONE looking — your next response must be apply_patch or memorize,
+never another read-only tool, even the same one again. If a lookup's result already told you
+everything you need (e.g. cargo_clippy already reported the warning to fix), don't call it
+again to double-check — apply the fix.
+
 AVAILABLE TOOLS — to call one, emit a fenced ```tool_call block containing exactly one
 JSON object matching that tool's own schema exactly:
 {{TOOLS}}

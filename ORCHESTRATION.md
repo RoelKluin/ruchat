@@ -71,8 +71,13 @@ Implement → Worker responds. If it emitted a *read-only* tool call
             (Retrieve/Git*/ReadFile/ListDir/Ripgrep/ReadTags/CargoCheck/
             CargoClippy/CargoDupes) and the per-run retrieve budget (default
             2) allows it, the orchestrator executes it, appends the result,
-            and re-asks the Worker once more in the same stage.
-            `apply_patch`/`memorize` calls are executed afterward by
+            pushes an explicit System-turn reminder that the Worker must now
+            act (not call another read-only tool), and re-asks the Worker
+            once more in the same stage. If the Worker calls a read-only tool
+            *again* anyway (its one lookup already spent), `execute_and_verify`
+            rejects it with a specific, actionable reason instead of a
+            generic "unexpected tool" message. `apply_patch`/`memorize` calls
+            are executed afterward by
             `execute_and_verify` (`Orchestrator::run_implement_patch_loop`).
             A successful `apply_patch` doesn't necessarily end the round: if
             the plan's `FILES:` line named more files than have been patched

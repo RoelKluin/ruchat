@@ -205,12 +205,19 @@ impl Agent {
                     |e| Ok(Validation::Failure(e.to_string())),
                     |_| Ok(Validation::Success),
                 ),
-            // Retrieve/GitLog/GitBlame/GitDiff are dispatched earlier in
-            // Stage::Implement, not here — reaching them at verify-time means
-            // the Worker emitted a read tool call where a patch/memorize was
-            // expected.
+            // Retrieve/GitLog/GitBlame/GitDiff/CargoCheck/CargoClippy/etc. are dispatched
+            // earlier in Stage::Implement, not here — reaching one of them at verify-time means
+            // the Worker called a read-only tool a second time in the same round (its one
+            // information-lookup reask was already spent) instead of acting on what it already
+            // has. Give it a specific, actionable correction rather than a generic "unexpected
+            // tool" dump — this is a common failure mode for local models that keep
+            // "researching" instead of switching to making the change.
             other => Ok(Validation::Failure(format!(
-                "Unexpected tool at verify stage: {other:?}"
+                "refused: you called '{other:?}' again instead of applying a change. You \
+                already used this round's one information-lookup, and its result is already in \
+                your context above — re-running the same (or any other) read-only tool won't \
+                add anything new. You must now emit exactly one apply_patch (or memorize) \
+                tool_call to actually make the change."
             ))),
         }
     }
