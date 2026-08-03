@@ -39,13 +39,30 @@ fn render_turn_content_for_trace(kind: TurnKind, content: &str) -> String {
     let Ok(call) = tools::parse_tool_call(content) else {
         return content.to_string();
     };
-    if call.tool != ToolName::ApplyPatch {
-        return content.to_string();
+    match call.tool {
+        ToolName::ApplyPatch => {
+            let Some(diff) = call.args.get("diff").and_then(|d| d.as_str()) else {
+                return content.to_string();
+            };
+            format!("[apply_patch]\n```diff\n{diff}\n```")
+        }
+        // Same underlying problem as apply_patch's diff: old_string/new_string ride inside
+        // JSON string fields, so a multi-line snippet's newlines are literal `\`+`n`, not real
+        // line breaks — unreadable as raw JSON. Shown as a labeled before/after pair instead.
+        ToolName::ReplaceInFile => {
+            let (Some(path), Some(old), Some(new)) = (
+                call.args.get("path").and_then(|v| v.as_str()),
+                call.args.get("old_string").and_then(|v| v.as_str()),
+                call.args.get("new_string").and_then(|v| v.as_str()),
+            ) else {
+                return content.to_string();
+            };
+            format!(
+                "[replace_in_file] {path}\n--- old_string\n```\n{old}\n```\n+++ new_string\n```\n{new}\n```"
+            )
+        }
+        _ => content.to_string(),
     }
-    let Some(diff) = call.args.get("diff").and_then(|d| d.as_str()) else {
-        return content.to_string();
-    };
-    format!("[apply_patch]\n```diff\n{diff}\n```")
 }
 
 #[derive(Debug, Clone)]
@@ -639,6 +656,26 @@ mod tests {
         let body = ctx.trace_body();
         assert!(body.contains(r#"{"tool": "memorize", "content": "note"}"#));
         assert!(body.contains("plain rejection text"));
+    }
+
+    // Same underlying bug as apply_patch's diff: a multi-line old_string/new_string rides
+    // inside a JSON string field, so its newlines are literal `\`+`n` characters, not real
+    // line breaks, when printed raw.
+    #[test]
+    fn trace_body_renders_a_replace_in_file_call_with_real_newlines() {
+        let mut ctx = Context::new("goal".to_string());
+        let tool_call = r#"```tool_call
+{"tool": "replace_in_file", "path": "src/foo.rs", "old_string": "fn old() {\n    1\n}", "new_string": "fn new() {\n    2\n}"}
+```"#;
+        ctx.push_turn(TurnKind::Implementation, "Worker", tool_call.to_string());
+        let body = ctx.trace_body();
+        assert!(
+            !body.contains(r"\n    1"),
+            "old_string should not contain literal \\n escapes: {body}"
+        );
+        assert!(body.contains("fn old() {\n    1\n}"), "expected real newlines in old_string, got: {body}");
+        assert!(body.contains("fn new() {\n    2\n}"), "expected real newlines in new_string, got: {body}");
+        assert!(body.contains("src/foo.rs"));
     }
 
     #[test]

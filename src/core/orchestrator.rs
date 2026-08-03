@@ -948,7 +948,7 @@ impl Orchestrator {
     }
 
     /// Dispatches a validated structured tool call from `Stage::Implement`.
-    /// Only the read-only tools reach here; `Memorize`/`ApplyPatch` are
+    /// Only the read-only tools reach here; `Memorize`/`ApplyPatch`/`ReplaceInFile` are
     /// handled later by `Agent::execute_and_verify` since they mutate state
     /// tied to the agent's own config, not the orchestrator's.
     async fn handle_structured_tool(
@@ -1038,22 +1038,23 @@ impl Orchestrator {
                 ctx.push_turn(TurnKind::Retrieval, "CargoDupes", out);
                 Ok(())
             }
-            ToolName::Memorize | ToolName::ApplyPatch => Ok(()),
+            ToolName::Memorize | ToolName::ApplyPatch | ToolName::ReplaceInFile => Ok(()),
         }
     }
 
     /// `Stage::Implement`'s patch loop, run once the Worker's turn is already pushed as an
     /// `Implementation` turn. Allows up to a per-round `patch_budget` of sequential
-    /// `apply_patch` calls (reset fresh every time this stage is entered, i.e. every new round —
-    /// unlike `retrieve_budget`, which is a conservative cap for the whole run) so a plan naming
-    /// multiple files in its `FILES:` line can land as one commit instead of only ever touching
-    /// the first of them (see `should_continue_patch_loop`). Ends the same way a single-patch
-    /// round always did on `Failure` (reject/retry) or a successful `Memorize`/no-op reask after
-    /// at least one patch already landed (proceed to Test) — the one new case is a Worker turn
-    /// that produced no recognized tool_call *at all* on its first attempt this round (e.g. a
-    /// narrative walkthrough instead of an actual tool call): rejected immediately with a
-    /// precise, deterministic reason rather than silently proceeding to a Test cycle that will
-    /// trivially pass (nothing changed) and hoping the Validator LLM happens to notice.
+    /// `apply_patch`/`replace_in_file` calls (reset fresh every time this stage is entered, i.e.
+    /// every new round — unlike `retrieve_budget`, which is a conservative cap for the whole
+    /// run) so a plan naming multiple files in its `FILES:` line can land as one commit instead
+    /// of only ever touching the first of them (see `should_continue_patch_loop`). Ends the
+    /// same way a single-patch round always did on `Failure` (reject/retry) or a successful
+    /// `Memorize`/no-op reask after at least one edit already landed (proceed to Test) — the
+    /// one new case is a Worker turn that produced no recognized tool_call *at all* on its
+    /// first attempt this round (e.g. a narrative walkthrough instead of an actual tool call):
+    /// rejected immediately with a precise, deterministic reason rather than silently
+    /// proceeding to a Test cycle that will trivially pass (nothing changed) and hoping the
+    /// Validator LLM happens to notice.
     async fn run_implement_patch_loop(
         &mut self,
         ctx: &mut Context,
@@ -1062,16 +1063,32 @@ impl Orchestrator {
         let mut patch_budget: u32 = 3;
         let mut any_patch_applied = false;
         loop {
-            let is_apply_patch = matches!(
-                tools::parse_tool_call(&ctx.output),
-                Ok(tools::StructuredToolCall { tool: ToolName::ApplyPatch, .. })
-            );
+            // Either write tool counts the same way toward the per-round patch budget and the
+            // multi-file loop below — `replace_in_file` is just an easier-to-generate-correctly
+            // alternative to `apply_patch` for the Worker, not a functionally different action
+            // from the orchestrator's perspective.
+            let edit_tool_used = match tools::parse_tool_call(&ctx.output) {
+                Ok(tools::StructuredToolCall { tool: ToolName::ApplyPatch, .. }) => {
+                    Some("apply_patch")
+                }
+                Ok(tools::StructuredToolCall { tool: ToolName::ReplaceInFile, .. }) => {
+                    Some("replace_in_file")
+                }
+                _ => None,
+            };
             match self.worker.execute_and_verify(ctx).await? {
                 Validation::Failure(err) => {
-                    ctx.push_turn(TurnKind::Rejection, "ApplyPatch", err);
+                    // Matches whichever write tool was actually attempted this round when it's
+                    // one of the two edit tools; falls back to the historical generic label for
+                    // anything else that can reach `Failure` here (e.g. a failed `memorize`).
+                    let source = match edit_tool_used {
+                        Some("replace_in_file") => "ReplaceInFile",
+                        _ => "ApplyPatch",
+                    };
+                    ctx.push_turn(TurnKind::Rejection, source, err);
                     return Ok(Stage::Retry);
                 }
-                Validation::Success if is_apply_patch => {
+                Validation::Success if edit_tool_used.is_some() => {
                     any_patch_applied = true;
                     patch_budget = patch_budget.saturating_sub(1);
                     if !should_continue_patch_loop(ctx, patch_budget) {
@@ -1080,9 +1097,9 @@ impl Orchestrator {
                     ctx.push_turn(
                         TurnKind::System,
                         "Orchestrator",
-                        "Patch applied. The plan's FILES: line names more files than you've \
-                        changed so far — call apply_patch for the next one now, or emit no \
-                        tool call if you're done."
+                        "Change applied. The plan's FILES: line names more files than you've \
+                        changed so far — call apply_patch or replace_in_file for the next one \
+                        now, or emit no tool call if you're done."
                             .into(),
                     );
                     retry_transient!(self.worker.query_stream(&self.ollama, ctx, tx))?;

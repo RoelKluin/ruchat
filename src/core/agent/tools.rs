@@ -14,6 +14,7 @@ use std::sync::OnceLock;
 pub(crate) enum ToolName {
     Memorize,
     ApplyPatch,
+    ReplaceInFile,
     Retrieve,
     GitLog,
     GitBlame,
@@ -33,6 +34,9 @@ impl ToolName {
         match self {
             ToolName::Memorize => r#"{"tool":"memorize","content":"<string>"}"#,
             ToolName::ApplyPatch => r#"{"tool":"apply_patch","diff":"<unified diff string>"}"#,
+            ToolName::ReplaceInFile => {
+                r#"{"tool":"replace_in_file","path":"<string>","old_string":"<exact existing text>","new_string":"<replacement text>"}"#
+            }
             ToolName::Retrieve => r#"{"tool":"retrieve","query":"<string>"}"#,
             ToolName::GitLog => {
                 r#"{"tool":"git_log","path":"<string|omit>","max_count":<int|omit>}"#
@@ -61,6 +65,7 @@ impl ToolName {
         match self {
             ToolName::Memorize => &["content"],
             ToolName::ApplyPatch => &["diff"],
+            ToolName::ReplaceInFile => &["path", "old_string", "new_string"],
             ToolName::Retrieve => &["query"],
             ToolName::GitLog => &[],
             ToolName::GitBlame => &["path"],
@@ -114,6 +119,7 @@ pub(crate) fn prompt_tool_catalog(prepend: &str) -> String {
         &[
             ToolName::Memorize,
             ToolName::ApplyPatch,
+            ToolName::ReplaceInFile,
             ToolName::Retrieve,
             ToolName::GitLog,
             ToolName::GitBlame,
@@ -252,6 +258,35 @@ mod tests {
         // Implement, not a repo-fact lookup the Scoper's own JSON schema declares.
         assert!(prompt_tool_catalog(">").contains(r#""tool":"cargo_clippy""#));
         assert!(!prompt_scoper_tool_catalog(">").contains(r#""tool":"cargo_clippy""#));
+    }
+
+    #[test]
+    fn parses_replace_in_file_call() {
+        let input = "```tool_call\n{\"tool\":\"replace_in_file\",\"path\":\"src/foo.rs\",\
+            \"old_string\":\"fn old_name\",\"new_string\":\"fn new_name\"}\n```";
+        let call = parse_tool_call(input).unwrap();
+        assert_eq!(call.tool, ToolName::ReplaceInFile);
+        assert_eq!(call.args["path"], "src/foo.rs");
+        assert_eq!(call.args["old_string"], "fn old_name");
+        assert_eq!(call.args["new_string"], "fn new_name");
+    }
+
+    #[test]
+    fn replace_in_file_requires_all_three_fields() {
+        let input = "```tool_call\n{\"tool\":\"replace_in_file\",\"path\":\"src/foo.rs\",\
+            \"old_string\":\"x\"}\n```";
+        assert!(matches!(
+            parse_tool_call(input),
+            Err(ToolParseError::MissingField("new_string"))
+        ));
+    }
+
+    #[test]
+    fn replace_in_file_is_worker_only_not_offered_to_scoper() {
+        // Same posture as apply_patch: a write tool, not a repo-fact lookup the Scoper's own
+        // JSON schema declares.
+        assert!(prompt_tool_catalog(">").contains(r#""tool":"replace_in_file""#));
+        assert!(!prompt_scoper_tool_catalog(">").contains(r#""tool":"replace_in_file""#));
     }
 
     #[test]
