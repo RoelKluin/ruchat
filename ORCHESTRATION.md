@@ -134,6 +134,16 @@ so it can't drift from what the model is actually told:
 | `cargo_dupes` | `{"tool":"cargo_dupes"}` | — |
 
 Notes:
+- `apply_patch` tolerates two common local-model diff mistakes before ever trying to parse the
+  diff: `normalize_diff_hunk_lines` repairs a missing leading space on unchanged hunk lines, and
+  `fix_hunk_header_counts` recomputes each `@@ -start,count +start,count @@` hunk header's count
+  fields from the hunk body itself (models reliably get this line-count bookkeeping wrong even
+  when the actual `+`/`-` content is correct — `diffy` otherwise rejects the whole patch with
+  "hunk header does not match hunk"). Neither changes what the diff says to add/remove, only
+  fixes bookkeeping the parser needs but the body itself fully determines. A diff with no
+  `--- a/<file>` header line at all still can't be applied — there's no safe way to infer a
+  target rather than trusting the header — but gets an actionable rejection message telling the
+  Worker to add one, instead of a generic parse error.
 - `apply_patch` is gated: the target file must already be tracked by git
   (`git ls-files`), checked in `Validation::apply_patch` before the diff is applied.
 - `apply_patch` also checks scope: if the Architect's plan ended with a

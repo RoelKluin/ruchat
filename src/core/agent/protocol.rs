@@ -1,9 +1,11 @@
 use super::types::{Context, TurnKind};
 use crate::{Result, RuChatError};
+use std::sync::OnceLock;
 use std::time::Duration;
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
+#[derive(Debug)]
 pub(crate) enum Validation {
     Success,
     Failure(String),
@@ -189,6 +191,78 @@ fn normalize_diff_hunk_lines(diff: &str) -> String {
     out
 }
 
+/// Recomputes each hunk's `@@ -old_start,old_count +new_start,new_count @@` count fields from
+/// the hunk body itself. Coder-tuned local models reliably get this line-count bookkeeping
+/// wrong even when the actual `+`/`-`/context content is perfectly correct — `diffy` rejects
+/// the whole patch outright ("hunk header does not match hunk") rather than tolerating it, the
+/// same class of easy-to-trigger, easy-to-repair mistake `normalize_diff_hunk_lines` already
+/// handles for missing leading spaces. Safe to recompute unconditionally: the counts are
+/// redundant metadata fully determined by the body's own line prefixes, so this can't change
+/// what the diff says to add/remove, only fix the header to match what's actually there. Must
+/// run *after* `normalize_diff_hunk_lines` so context/added/removed classification (which line
+/// counts as which) is already correct by the time line prefixes are read here.
+fn fix_hunk_header_counts(diff: &str) -> String {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| {
+        regex::Regex::new(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$").unwrap()
+    });
+
+    let lines: Vec<&str> = diff.split_inclusive('\n').collect();
+    let mut out = String::with_capacity(diff.len());
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
+        let trimmed = line.trim_end_matches('\n');
+        let Some(caps) = re.captures(trimmed) else {
+            out.push_str(line);
+            i += 1;
+            continue;
+        };
+        let old_start = &caps[1];
+        let new_start = &caps[2];
+        let trailer = &caps[3]; // e.g. a function-context hint some diffs append; preserved as-is
+
+        let mut j = i + 1;
+        while j < lines.len() {
+            let t = lines[j].trim_end_matches('\n');
+            if t.starts_with("@@") || t.starts_with("--- ") || t.starts_with("+++ ") {
+                break;
+            }
+            j += 1;
+        }
+        let body = &lines[i + 1..j];
+        let (old_count, new_count) = count_hunk_body_lines(body);
+        out.push_str(&format!(
+            "@@ -{old_start},{old_count} +{new_start},{new_count} @@{trailer}\n"
+        ));
+        for b in body {
+            out.push_str(b);
+        }
+        i = j;
+    }
+    out
+}
+
+/// Counts (old-side, new-side) lines in an already-normalized hunk body: context lines (` `)
+/// count toward both, `-` only the old side, `+` only the new side. Anything else (a `\ No
+/// newline at end of file` marker, or a stray unrecognized line) counts toward neither.
+fn count_hunk_body_lines(body: &[&str]) -> (usize, usize) {
+    let mut old = 0usize;
+    let mut new = 0usize;
+    for line in body {
+        match line.as_bytes().first() {
+            Some(b' ') => {
+                old += 1;
+                new += 1;
+            }
+            Some(b'-') => old += 1,
+            Some(b'+') => new += 1,
+            _ => {}
+        }
+    }
+    (old, new)
+}
+
 /// True if `target` matches one of the plan's declared paths. Matches exactly or by suffix in
 /// either direction (`p.ends_with(target)`/`target.ends_with(p)`) so a plan that names just
 /// `foo.rs` still covers a target resolved as `src/foo.rs`, and vice versa.
@@ -210,6 +284,7 @@ impl Validation {
             return Ok(Validation::Failure(content));
         }
         let normalized = normalize_diff_hunk_lines(diff_text);
+        let normalized = fix_hunk_header_counts(&normalized);
         let patch = match diffy::Patch::from_str(&normalized) {
             Ok(p) => p,
             Err(e) => {
@@ -218,11 +293,20 @@ impl Validation {
                 return Ok(Validation::Failure(e.to_string()));
             }
         };
-        // Resolve target file from the patch header rather than trusting free text elsewhere.
-        let target = patch
-            .original()
-            .unwrap_or("unknown")
-            .trim_start_matches("a/");
+        // Resolve target file from the patch header rather than trusting free text elsewhere
+        // (e.g. the Architect's plan) — a diff with no `--- a/<file>` header at all gives no
+        // safe way to infer one, so this is refused with an actionable message rather than
+        // guessed at.
+        let Some(original) = patch.original() else {
+            let content = "refused: this diff has no '--- a/<file>' header line, so apply_patch \
+                can't tell which file to patch. Add '--- a/<path>' and '+++ b/<path>' lines \
+                (with the exact path of the file you're editing) immediately before the \
+                '@@ ... @@' hunk line, then resubmit the same diff."
+                .to_string();
+            ctx.push_turn(TurnKind::Rejection, "Validator", content.clone());
+            return Ok(Validation::Failure(content));
+        };
+        let target = original.trim_start_matches("a/");
         let tracked = crate::orchestrator::git::tracked_files().await?;
         if !tracked.contains(target) {
             let content = format!(
@@ -444,6 +528,65 @@ mod tests {
         // with one of the hunk-body prefixes either.
         let diff = "--- a/src/foo.rs\n+++ b/src/foo.rs\n@@ -1,1 +1,1 @@\n-old\n+new\n";
         assert_eq!(normalize_diff_hunk_lines(diff), diff);
+    }
+
+    #[test]
+    fn fix_hunk_header_counts_corrects_a_wrong_line_count() {
+        // Regression: a model wrote `@@ -1,4 +1,4 @@` (4/4) but the actual hunk body only has
+        // 3 old-side and 3 new-side lines — diffy rejects this outright ("hunk header does not
+        // match hunk") even though the +/- content itself is perfectly clear.
+        let diff = "--- a/src/foo.rs\n+++ b/src/foo.rs\n@@ -1,4 +1,4 @@\n fn foo() {\n-    old();\n+    new();\n }\n";
+        let fixed = fix_hunk_header_counts(diff);
+        assert!(fixed.contains("@@ -1,3 +1,3 @@\n"), "got: {fixed:?}");
+        diffy::Patch::from_str(&fixed).expect("corrected header should now parse");
+    }
+
+    #[test]
+    fn fix_hunk_header_counts_leaves_a_correct_count_unchanged() {
+        let diff = "--- a/src/foo.rs\n+++ b/src/foo.rs\n@@ -1,3 +1,3 @@\n fn foo() {\n-    old();\n+    new();\n }\n";
+        assert_eq!(fix_hunk_header_counts(diff), diff);
+    }
+
+    #[test]
+    fn fix_hunk_header_counts_handles_multiple_hunks_independently() {
+        let diff = "--- a/src/foo.rs\n+++ b/src/foo.rs\n\
+            @@ -1,9 +1,9 @@\n fn a() {\n-    old_a();\n+    new_a();\n }\n\
+            @@ -20,9 +20,9 @@\n fn b() {\n-    old_b();\n+    new_b();\n }\n";
+        let fixed = fix_hunk_header_counts(diff);
+        assert!(fixed.contains("@@ -1,3 +1,3 @@\n"), "got: {fixed:?}");
+        assert!(fixed.contains("@@ -20,3 +20,3 @@\n"), "got: {fixed:?}");
+        diffy::Patch::from_str(&fixed).expect("both corrected hunks should now parse");
+    }
+
+    #[tokio::test]
+    async fn apply_patch_gives_an_actionable_message_for_a_diff_with_no_file_header() {
+        // The exact diff (line-count wrong AND no --- a/ +++ b/ headers) reported by the
+        // maintainer from a real `fix_one_clippy_lint` run: qwen2.5-coder:14b emitted a
+        // header-less diff with an incorrect hunk count, which used to surface only a cryptic
+        // "Patch parse error: ... hunk header does not match hunk" — fix_hunk_header_counts now
+        // resolves the count problem, so this reaches (and exercises) the clearer,
+        // actionable-for-a-retry message for the still-missing header instead.
+        let diff = "@@ -3,12 +3,10 @@\nuse std::collections::HashMap;\n\n\
+            /// Parses a key=value pair from a string\n\
+            -fn parse_key_val(s: &str) -> Result<(String, String), String> {\n\
+            +fn _parse_key_val(s: &str) -> Result<(String, String), String> {\n\
+                 let mut parts = s.split('=');\n\
+                 match (parts.next(), parts.next()) {\n\
+                     (Some(key), Some(value)) => Ok((key.to_string(), value.to_string())),\n\
+                     _ => Err(\"Invalid key=value format\".to_string()),\n\
+                 }\n\
+            -}\n\
+            +}";
+        let mut ctx = Context::new("goal".to_string());
+        match Validation::apply_patch(diff, &mut ctx).await.unwrap() {
+            Validation::Failure(msg) => {
+                assert!(
+                    msg.contains("no '--- a/<file>' header line"),
+                    "expected the actionable missing-header message, got: {msg}"
+                );
+            }
+            other => panic!("expected a Failure explaining the missing header, got: {other:?}"),
+        }
     }
 
     #[test]
