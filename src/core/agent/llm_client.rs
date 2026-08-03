@@ -255,4 +255,25 @@ pub(crate) mod fake_vector_store {
             Ok(self.response.clone())
         }
     }
+
+    /// Simulates Chroma being entirely unreachable (server never started, or crashed and
+    /// stayed down) — as opposed to a transient blip `retry_transient!` would recover from.
+    /// Used to test that a Chroma outage during on-demand Librarian retrieval degrades
+    /// gracefully instead of killing the whole stage-machine run.
+    pub(crate) struct FailingVectorStore;
+
+    #[async_trait]
+    impl VectorStore for FailingVectorStore {
+        async fn query_collection(
+            &self,
+            _collection_name: &str,
+            _embeddings: Vec<Vec<f32>>,
+            _n_results: Option<u32>,
+            _where: Option<Where>,
+            _ids: Option<Vec<String>>,
+            _include: Option<IncludeList>,
+        ) -> Result<QueryResponse> {
+            Err(RuChatError::Is("connection refused (simulated Chroma outage)".into()))
+        }
+    }
 }

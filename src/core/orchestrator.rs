@@ -358,10 +358,33 @@ impl Orchestrator {
             }
         }
 
-        let docs = librarian
-            .retrieve_and_generate(client, &self.ollama, q)
-            .await?;
-        ctx.push_turn(TurnKind::Retrieval, "Librarian", docs);
+        // Unlike the Librarian's own `query_stream` calls above (an Ollama call, retried by
+        // `retry_transient!` and left to propagate — if Ollama itself is unreachable the whole
+        // run is dead anyway, Architect/Worker need it too), a failure here is specifically the
+        // Chroma-backed lookup (`Query::query` calls `client.query_collection`). Chroma being
+        // down for this one on-demand retrieval must not kill Architect/Worker/Test/Commit, none
+        // of which need RAG context to function — degrade gracefully instead, mirroring
+        // `recall_prior_memories`'s same stance for the deterministic pre-run recall.
+        match librarian.retrieve_and_generate(client, &self.ollama, q).await {
+            Ok(docs) => ctx.push_turn(TurnKind::Retrieval, "Librarian", docs),
+            Err(e) => {
+                tracing::warn!(error = %e, "Librarian retrieval failed; continuing without RAG context");
+                ctx.trace(
+                    tx,
+                    format!("Librarian retrieval skipped this round (retrieval failed): {e}"),
+                )
+                .await;
+                ctx.push_turn(
+                    TurnKind::System,
+                    "System",
+                    format!(
+                        "RAG retrieval was skipped this round because the retrieval lookup \
+                         failed (Chroma may be unreachable): {e}. Continuing without retrieved \
+                         context."
+                    ),
+                );
+            }
+        }
         Ok(())
     }
 
@@ -1572,6 +1595,63 @@ mod tests {
         )
         .await;
         assert!(!items.is_empty());
+    }
+
+    // Regression test for graceful degradation when Chroma is unreachable during the
+    // Librarian's on-demand retrieval (`Stage::Retrieve`). Before the fix, `run_librarian_
+    // retrieval` propagated `retrieve_and_generate`'s error straight through `?`, and
+    // `Stage::Retrieve` in `run_stage_machine` propagates that further via its own `?` —
+    // killing the whole run even though Architect/Worker/Test/Commit don't need RAG context.
+    // Confirmed this test fails against the pre-fix `?`-propagation code (reverted locally,
+    // ran, saw the panic from the unwrapped `Err`, then restored the fix) before finalizing.
+    #[tokio::test]
+    async fn run_librarian_retrieval_degrades_gracefully_when_chroma_is_unreachable() {
+        use crate::agent::llm_client::fake_vector_store::FailingVectorStore;
+
+        let mut config = base_config();
+        config["Librarian"] = json!({ "model": "fake", "embed_model": "fake-embed" });
+
+        let architect = Agent::new(&mut config, "Architect", true, None, json!({}))
+            .await
+            .unwrap();
+        let worker = Agent::new(&mut config, "Worker", true, None, json!({}))
+            .await
+            .unwrap();
+        let librarian = Agent::new(&mut config, "Librarian", false, None, json!({}))
+            .await
+            .ok();
+
+        let mut orchestrator = Orchestrator {
+            scoper: None,
+            architect,
+            worker,
+            librarian,
+            critics: Vec::new(),
+            summarizer: None,
+            validator: None,
+            orchestrator_config: config,
+            ollama: Arc::new(FakeLlmClient::new(vec![
+                "{\"query\": \"error handling\", \"n_results\": 5, \"collection\": \"repo\"}",
+            ])),
+            client: Some(Arc::new(FailingVectorStore)),
+        };
+
+        let mut ctx = Context::new("fix the flaky test".to_string());
+        let (tx, _rx) = mpsc::channel(100);
+
+        let result = orchestrator.run_librarian_retrieval(&mut ctx, &tx).await;
+
+        assert!(
+            result.is_ok(),
+            "a Chroma outage during Librarian retrieval must not fail the whole run: {result:?}"
+        );
+        let skipped = ctx.turns.iter().find(|t| {
+            t.kind == TurnKind::System && t.content.contains("RAG retrieval was skipped")
+        });
+        assert!(
+            skipped.is_some(),
+            "expected a System turn noting RAG retrieval was skipped due to the outage"
+        );
     }
 
     // `recall_prior_memories` is tested directly rather than through a fixture: it's not part
