@@ -5,6 +5,7 @@ pub(crate) mod delete;
 pub(crate) mod fork;
 pub(crate) mod get;
 pub(crate) mod include;
+pub(crate) mod init;
 pub(crate) mod ls;
 pub(crate) mod metadata;
 pub(crate) mod modify;

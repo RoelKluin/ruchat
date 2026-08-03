@@ -3,6 +3,7 @@ use crate::chroma::create::ChromaCreateArgs;
 use crate::chroma::delete::ChromaDeleteArgs;
 use crate::chroma::fork::ForkArgs;
 use crate::chroma::get::GetArgs;
+use crate::chroma::init::ChromaInitArgs;
 use crate::chroma::ls::ChromaLsArgs;
 use crate::chroma::modify::ModifyArgs;
 use crate::chroma::query::QueryArgs;
@@ -68,6 +69,7 @@ impl Args {
             Commands::ChromaSearch(args) => args.search(&cfg).await,
             Commands::ChromaFork(args) => args.fork(&cfg).await,
             Commands::ChromaCreate(args) => args.create(&cfg).await,
+            Commands::ChromaInit(args) => args.init(&cfg).await,
             Commands::ChromaModify(args) => args.modify(&cfg).await,
             Commands::ChromaLs(args) => args.ls(&cfg).await,
             Commands::ChromaDelete(args) => args.delete(&cfg).await,
@@ -123,6 +125,9 @@ pub(crate) enum Commands {
     ChromaModify(ModifyArgs),
     /// Create Chroma database collections.
     ChromaCreate(ChromaCreateArgs),
+    /// Ensure every collection documented in a db_config.json-shaped file exists (idempotent —
+    /// safe to re-run any time the config file changes).
+    ChromaInit(ChromaInitArgs),
     /// List Chroma database collections.
     ChromaLs(ChromaLsArgs),
     /// Delete Chroma database collections or entries.

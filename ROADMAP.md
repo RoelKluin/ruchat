@@ -44,7 +44,7 @@ We prioritize **predictability**, **performance**, **token efficiency**, and **t
 - [x] Token-aware history management + automatic summarization triggers (`Stage::Retry` → Summarizer when the token estimate exceeds the model's history limit)
 - [x] Persistent memory layer — the `memorize` tool writes to Chroma (`Agent::embed`), and `Orchestrator::recall_prior_memories` auto-recalls at session start using the goal text as a deterministic query; originally only worked when a Librarian was configured, extended (2026-08-03) so a memorize-only run with no Librarian at all still recalls via the Worker's own `embed_args`, since that's what `Memorize` already writes through — see `TODO.md` Done section
 - [~] Improved RAG — relevance scoring/reranking is done (`providers/vector/chroma/rerank.rs`); document summarization before the Worker, multi-collection queries, and smarter chunking (today's ctags-based indexing chunks by symbol boundary — real semantic/document-aware chunking for non-code or cross-symbol content is still open) are still open
-- [ ] Automatic collection management (`ruchat chroma-init` from `db_config.json`)
+- [x] Automatic collection management — new `ruchat chroma-init` subcommand (`providers/vector/chroma/init.rs`) reads a `db_config.json`-shaped file and ensures every documented collection exists via `get_or_create_collection`, instead of a manual `chroma-create` per collection. Idempotent by construction, verified live: re-running is a no-op for collections that already exist. See `TODO.md` Done section for detail, including a genuine nuance found while verifying against a real Chroma instance (collection metadata is only applied on first creation, not on an already-existing collection — matches Chroma's own get-or-create semantics, not a bug).
 - [x] Resource-limited sandboxing for tool-invoked subprocesses — every cargo subprocess (`cargo_check`/`cargo_dupes`/the Tester's check+test) now gets `RLIMIT_AS`/`RLIMIT_CPU` via `orchestrator::cargo::limit_resources`, alongside the pre-existing wall-clock timeouts; see `TODO.md` Done section
 - [ ] Debug mode improvements (step-by-step execution, breakpoint support) — the fixed-sequence debug mode itself exists (`--debug-sequence`, `agent_debug/*.json`), but isn't wired into `cargo test` yet and has no breakpoints
 - [x] Reconciled the legacy `Team`/`Manager` pipeline — `ruchat manager` now expands a saved `Team` preset into an `Orchestrator` config and runs the real stage machine
@@ -149,8 +149,9 @@ matching its own documented clap CLI defaults). A `replace_in_file` tool
 the same day — real runs showed no improvement over diff-based edits, so
 `apply_patch` remains the sole write tool (see `TODO.md` Done section).
 Still open in Phase 2: further RAG improvements (per-document summarization,
-multi-collection queries, smarter chunking) and automatic Chroma collection
-management. See `TODO.md` for the live, priority-ranked task list, and
+multi-collection queries, smarter chunking) — automatic Chroma collection
+management (`ruchat chroma-init`) shipped 2026-08-04. See `TODO.md` for the
+live, priority-ranked task list, and
 `comparisons/*.md` for the framework-by-framework detail behind the Phase 3
 items above (resumable runs, interactive HITL) — both were identified from
 gaps those comparisons made concrete, not from a generic feature wishlist.
