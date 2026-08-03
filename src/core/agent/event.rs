@@ -15,8 +15,10 @@ pub enum AgentEvent {
     /// Persistent trace/debug message, written to this run's file under `ruchat_traces/` and
     /// optionally surfaced to the user.
     Trace(String),
-    /// Coarse completion progress in percent, `[0.0, 100.0]`. Not yet emitted by
-    /// any caller — reserved for future use (e.g. multi-stage progress bars).
+    /// Coarse completion progress in percent, `[0.0, 100.0]`. Emitted once per round
+    /// transition by `Orchestrator::run_stage_machine`'s `Stage::Plan` arm, computed from
+    /// `ctx.round` / `max_iterations` (see `orchestrator::progress_pct`) — a rough gauge of
+    /// proximity to the iteration budget, not a precise ETA.
     Progress(f32),
     /// Signals that the agent has finished its turn and will not send more output.
     Done,

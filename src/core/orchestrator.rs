@@ -517,6 +517,13 @@ impl Orchestrator {
                 }
                 Stage::Plan => {
                     ctx.round += 1;
+                    // Per-round progress signal for a user watching a long run — the natural
+                    // per-round checkpoint the orchestrator already tracks via `ctx.round`/
+                    // `max_iterations`. Fire-and-forget like the `Done` event below: a dropped
+                    // receiver here is already handled by `cancel` on the next loop iteration,
+                    // so there's nothing more useful to do with a send error than ignore it.
+                    let pct = progress_pct(ctx.round, max_iterations);
+                    let _ = tx.send(Ok(StreamItem::Event(AgentEvent::Progress(pct)))).await;
                     if ctx.round > max_iterations {
                         Stage::Escalate("max iterations reached without acceptance".into())
                     } else {
@@ -1127,6 +1134,21 @@ impl Orchestrator {
     }
 }
 
+/// Computes `AgentEvent::Progress`'s round-based completion percentage, `[0.0, 100.0]`, for
+/// `Stage::Plan`. A coarse, monotonically-increasing signal for a user watching a long run to
+/// gauge proximity to the iteration budget — not a precise ETA, since a single round (e.g. one
+/// with a slow `cargo test`) can still take arbitrarily long. Pulled out as its own function for
+/// direct unit testing, the same tradeoff `should_continue_patch_loop` below makes: exercising
+/// `run_stage_machine` itself through a full round requires either a live Ollama/Chroma round
+/// trip or `Stage::Test`'s real `cargo test` invocation, both out of scope for a `--lib` unit
+/// test per this file's existing test-placement precedent.
+fn progress_pct(round: u64, max_iterations: u64) -> f32 {
+    if max_iterations == 0 {
+        return 100.0;
+    }
+    (round as f32 / max_iterations as f32 * 100.0).min(100.0)
+}
+
 /// Whether `Stage::Implement`'s multi-file patch loop should re-ask the Worker for another
 /// `apply_patch` call after a successful one, instead of finalizing the round. Deliberately
 /// count-based rather than matching planned paths against patched ones exactly (that would
@@ -1404,6 +1426,35 @@ mod tests {
         );
         ctx.record_patch("src/foo.rs".to_string(), "original".to_string());
         assert!(!should_continue_patch_loop(&ctx, 0));
+    }
+
+    #[test]
+    fn progress_pct_is_zero_before_the_first_round() {
+        assert_eq!(progress_pct(0, 3), 0.0);
+    }
+
+    #[test]
+    fn progress_pct_scales_linearly_with_round_over_max_iterations() {
+        // f32 division order affects the last bit or two, so compare with a small epsilon
+        // rather than exact equality (100.0/3.0 computed independently here vs. inside
+        // progress_pct doesn't round identically).
+        assert!((progress_pct(1, 3) - 100.0 / 3.0).abs() < 0.001);
+        assert!((progress_pct(2, 3) - 200.0 / 3.0).abs() < 0.001);
+        assert_eq!(progress_pct(3, 3), 100.0);
+    }
+
+    #[test]
+    fn progress_pct_clamps_at_100_when_round_exceeds_max_iterations() {
+        // `Stage::Plan`'s escalate branch increments `ctx.round` past `max_iterations`
+        // before checking the budget — progress must still read as a sane percentage,
+        // not something like 133%.
+        assert_eq!(progress_pct(4, 3), 100.0);
+    }
+
+    #[test]
+    fn progress_pct_does_not_divide_by_zero_when_max_iterations_is_zero() {
+        assert_eq!(progress_pct(0, 0), 100.0);
+        assert_eq!(progress_pct(5, 0), 100.0);
     }
 
     #[tokio::test]
