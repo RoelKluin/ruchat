@@ -25,7 +25,7 @@ We prioritize **predictability**, **performance**, **token efficiency**, and **t
 - [~] Core orchestration test coverage — 9/10 `agent_debug/*.json` fixtures are wired into `cargo test --lib` via `FakeLlmClient`/`FakeVectorStore` (this is how the multi-critic dispatch bug below was caught); the last fixture combination and true integration tests against a live Ollama/Chroma are still open
 - [ ] Fix TUI redraw artifacts, improve selection/copy/paste, and add help screen
 - [x] Optimize model option merging (removed the double JSON round-trip in `ModelArgs::build_generation_request`) — surfaced a separate, deeper pre-existing bug in the process (config-file `model_options` merging is currently a silent no-op), tracked in `TODO.md`, not fixed yet
-- [ ] Add connection pooling for Ollama and Chroma clients
+- [x] Connection pooling for Ollama and Chroma clients — investigated, already satisfied by the existing architecture (single shared `Arc`-wrapped client per orchestrator run, reqwest's default pooling underneath, nothing disabling it), not a real gap — see `TODO.md` for the detail
 - [x] CI workflow (`.github/workflows/ci.yml`): build + `cargo clippy --lib --tests` + `cargo test --lib` on push/PR — deliberately no `-D warnings` or `fmt --check` gate yet (pre-existing dead-code warnings and repo-wide fmt drift need cleanup first, see `TODO.md`)
 - [ ] Release v0.2.0 with clean `TODO.md` → `DONE` migration — still on `0.1.2`, no tags cut yet
 
@@ -109,13 +109,20 @@ By v0.4.0, Ruchat should feel like “LangGraph for people who want to stay full
 ---
 
 **Current Status (August 2026)**:  
-Most of Phase 1's own checkboxes (config consolidation, TUI fixes, connection pooling,
-the v0.2.0 release itself) haven't started. What actually shipped this cycle landed
-mostly under Phase 2 instead: the structured tool-calling framework, parallel critic
+Config system consolidation and TUI fixes haven't started; the v0.2.0 release itself
+hasn't happened either. Everything else in Phase 1 is now done or verified-as-already-
+satisfied: structured logging (levels + JSON output), the eprintln!/println! migration,
+parser unit tests, the model-option double-round-trip removal, error-handling
+improvements at the sites that discarded real causes, and connection pooling (turned
+out to already be handled by the existing shared-client architecture). Phase 2 also
+picked up real work this cycle: the structured tool-calling framework, parallel critic
 execution (plus finding and fixing the bug that made it a silent no-op), `apply_patch`
 hardening, the Team/Manager reconciliation, and the new Scoper role — alongside a
 round of test-infrastructure work (repairing an uncompilable suite, wiring 9/10
-`agent_debug` fixtures into `cargo test`, adding CI). Focus is now on configuration
-system and testing before v0.2.0. See `TODO.md` for the live, priority-ranked task list.
+`agent_debug` fixtures into `cargo test`, adding CI). See `TODO.md` for the live,
+priority-ranked task list, including two bugs found along the way and deliberately
+left open pending a design decision: the config-file `model_options` merge being a
+silent no-op, and the `InternalError`/`Is` catch-all error variants used at ~85 call
+sites.
 
 Contributions welcome — especially on testing, configuration, and tool framework.

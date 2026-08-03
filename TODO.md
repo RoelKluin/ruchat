@@ -55,7 +55,7 @@ Last updated: 2026-08-02
 - [ ] `embed_script.sh`'s ctags chunk-boundary detection has two open `FIXME: improve per lang/kind handling here` markers around its closing-brace search — the language/kind match lists (Rust, Sh, TOML, Markdown) are hand-maintained and incomplete, so other ctags-supported languages fall back to a single-line chunk instead of the real symbol extent
 
 ### Performance
-- [ ] Connection pooling for Ollama and Chroma clients
+- [x] Investigated connection pooling for Ollama and Chroma clients — turned out to already be satisfied, not a gap: `Orchestrator::new` (`core/orchestrator.rs`) constructs exactly one `Ollama` client and, when a Librarian is configured, exactly one Chroma client per run, wraps each in `Arc`, and shares that single instance across every agent role (Architect/Worker/Validator/Critics/Summarizer/Librarian) rather than each role independently constructing its own. Neither `ollama_rs::Ollama` nor `chroma::ChromaHttpClient` are wrapped with a custom `reqwest::Client::builder()` anywhere in this codebase that could disable pooling, so both get `reqwest`'s default keep-alive/idle-pool behavior for free. The standalone one-shot CLI subcommands (`chroma-get`, `chroma-search`, etc.) each make exactly one HTTP request per process invocation, so there's nothing to pool against within their lifetime anyway.
 - [ ] Streaming response handling in agent orchestrator (currently buffers)
 - [ ] Optimize history limit calculation and token counting
 - [ ] Review `reqwest` feature flags in `Cargo.toml`
