@@ -256,6 +256,42 @@ pub(crate) mod fake_vector_store {
         }
     }
 
+    /// Records the collection name every `query_collection` call was made with — used to
+    /// verify *which* collection a caller actually queried, since `FakeVectorStore`'s fixed
+    /// response can't reveal that on its own.
+    pub(crate) struct RecordingVectorStore {
+        pub(crate) response: QueryResponse,
+        pub(crate) recorded_collections: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl RecordingVectorStore {
+        pub(crate) fn new(response: QueryResponse) -> Self {
+            Self {
+                response,
+                recorded_collections: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl VectorStore for RecordingVectorStore {
+        async fn query_collection(
+            &self,
+            collection_name: &str,
+            _embeddings: Vec<Vec<f32>>,
+            _n_results: Option<u32>,
+            _where: Option<Where>,
+            _ids: Option<Vec<String>>,
+            _include: Option<IncludeList>,
+        ) -> Result<QueryResponse> {
+            self.recorded_collections
+                .lock()
+                .expect("RecordingVectorStore mutex poisoned")
+                .push(collection_name.to_string());
+            Ok(self.response.clone())
+        }
+    }
+
     /// Simulates Chroma being entirely unreachable (server never started, or crashed and
     /// stayed down) — as opposed to a transient blip `retry_transient!` would recover from.
     /// Used to test that a Chroma outage during on-demand Librarian retrieval degrades

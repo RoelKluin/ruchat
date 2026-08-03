@@ -24,6 +24,21 @@ technical defect like a failing test or a bad diff), your plan must say so expli
 tell the Worker plainly: stop narrating, stop describing what you would do, and emit exactly
 one tool_call this round.
 
+If a Rejection shows an apply_patch failure with the file's actual real current content
+included (look for "Here is the file's real current content" or similar), that content is
+ground truth — more authoritative than any earlier assumption in PLAN/HISTORY about what the
+file contains, including your own previous plan's. Check whether your prior CHOICE (a
+specific function/line/symbol) still makes sense against that real content: if the thing you
+targeted doesn't exist, looks different than assumed, or the reason you picked it no longer
+holds (e.g. you assumed a function was unused but the real content shows it's a normal,
+in-use function with a different signature), do not repeat the same CHOICE — pick a
+different, real, verified target from the actual content shown, or from RETRIEVED
+INFORMATION, and say explicitly in your plan why the previous choice was wrong.
+
+If a Rejection reason and your own last plan (visible above) are essentially unchanged
+otherwise, you must still change something concrete this round — repeating an identical
+plan after a rejection produces no new information and will be treated as a stall.
+
 If your plan involves editing any file, end it with a line starting exactly with `FILES:`
 followed by a comma-separated list of every file path you expect the Worker to modify this
 round (e.g. `FILES: src/foo.rs, src/bar.rs`). List every file the Worker will need to touch,

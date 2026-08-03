@@ -414,10 +414,21 @@ impl Orchestrator {
             return;
         };
         let mut q = Query::default();
-        let _ = q.update_from_json(serde_json::json!({
+        // Unlike `run_librarian_retrieval` (where the Librarian's own LLM picks a collection
+        // name as part of its JSON query, guided by its `task_hint`), this ad-hoc pre-run
+        // recall has no LLM step to ask — without an explicit "collection" key here,
+        // `Query::default()`'s `ChromaCollectionConfigArgs::default()` falls back to the
+        // literal collection named "default", which has nothing to do with whatever
+        // `--collection` the run was actually configured with. `memory_collection` is set
+        // alongside `task_hint` in `ask.rs` for exactly this reason.
+        let mut query_json = serde_json::json!({
             "query": [ctx.goal.clone()],
             "n_results": 3,
-        }));
+        });
+        if let Ok(collection) = librarian.get_str("memory_collection") {
+            query_json["collection"] = serde_json::json!(collection);
+        }
+        let _ = q.update_from_json(query_json);
         match librarian.retrieve_and_generate(client, &self.ollama, q).await {
             Ok(docs) if !docs.trim().is_empty() => {
                 ctx.push_turn(TurnKind::Retrieval, "Memory", docs);
@@ -1771,6 +1782,62 @@ mod tests {
         orchestrator.recall_prior_memories(&mut ctx, &tx).await;
 
         assert!(ctx.turns.is_empty());
+    }
+
+    // Regression: a real run showed `recall_prior_memories` pulling in content that looked
+    // unrelated to the task, traced to `Query::default()`'s `ChromaCollectionConfigArgs::
+    // default()` falling back to the literal collection named "default" whenever no
+    // "collection" key is set — which this ad-hoc pre-run recall never did, unlike
+    // `run_librarian_retrieval`'s LLM-driven query (which picks a collection itself, guided by
+    // `task_hint`). So a run configured with `--collection repo_src-all-minilm_l6-v2` (`ask.rs`,
+    // which also now sets `memory_collection` on the Librarian's config for exactly this) was
+    // silently querying an unrelated "default" collection for memory recall the whole time.
+    #[tokio::test]
+    async fn recall_prior_memories_queries_the_configured_memory_collection() {
+        use crate::agent::llm_client::fake_vector_store::RecordingVectorStore;
+
+        let mut config = base_config();
+        config["Librarian"] = json!({
+            "model": "fake",
+            "embed_model": "fake-embed",
+            "memory_collection": "repo_src-all-minilm_l6-v2",
+        });
+
+        let architect = Agent::new(&mut config, "Architect", true, None, json!({}))
+            .await
+            .unwrap();
+        let worker = Agent::new(&mut config, "Worker", true, None, json!({}))
+            .await
+            .unwrap();
+        let librarian = Agent::new(&mut config, "Librarian", false, None, json!({}))
+            .await
+            .ok();
+
+        let store = Arc::new(RecordingVectorStore::new(fake_query_response()));
+        let orchestrator = Orchestrator {
+            scoper: None,
+            architect,
+            worker,
+            librarian,
+            critics: Vec::new(),
+            summarizer: None,
+            validator: None,
+            orchestrator_config: config,
+            ollama: Arc::new(FakeLlmClient::new(vec![])),
+            client: Some(store.clone()),
+        };
+
+        let mut ctx = Context::new("fix the flaky test".to_string());
+        let (tx, _rx) = mpsc::channel(100);
+
+        orchestrator.recall_prior_memories(&mut ctx, &tx).await;
+
+        let recorded = store.recorded_collections.lock().unwrap();
+        assert_eq!(
+            recorded.as_slice(),
+            ["repo_src-all-minilm_l6-v2"],
+            "expected the configured collection to be queried, not the literal \"default\""
+        );
     }
 
     #[tokio::test]

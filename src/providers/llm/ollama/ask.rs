@@ -92,7 +92,14 @@ impl AskArgs {
         if let Some(col) = self.collection {
             config["Librarian"] = serde_json::json!({
                 "chroma_client": "{\"chroma_server\": \"http://localhost:8000\"}", // Default server
-                "status_msg": "Searching knowledge base..."
+                "status_msg": "Searching knowledge base...",
+                // `recall_prior_memories`'s ad-hoc pre-run recall doesn't go through the
+                // Librarian's own LLM-driven query (which picks a collection name itself,
+                // guided by the `task_hint` below) — it needs this collection name as plain,
+                // structured config it can actually read, or it falls back to
+                // `ChromaCollectionConfigArgs::default()`'s literal collection named "default",
+                // which has nothing to do with what `--collection` here actually configured.
+                "memory_collection": col,
             });
             // Ensure the librarian uses the correct collection in the prompt
             config["task_hint"] = serde_json::json!(format!("Query the {} collection", col));
