@@ -1,12 +1,25 @@
 use crate::agent::llm_client::LlmClient;
+use crate::utils::text::wrap_line;
 use crate::{Result, RuChatError};
 use ollama_rs::generation::chat::ChatMessage;
 use std::time::Duration;
 use tokio_stream::StreamExt;
 
+/// Line length the generated summary gets wrapped to before it's written to the trace file —
+/// same word-boundary wrapping as commit messages (`git::MAX_COMMIT_LINE_LEN`), just a
+/// different width: a run summary is read in a trace file, not `git log --oneline`, so there's
+/// no first-line convention to protect and every line gets wrapped the same way.
+const SUMMARY_LINE_LEN: usize = 120;
+
 /// Generates a short, human-readable explanation of why an unsuccessful run (escalated, or
 /// the iteration budget exhausted without ever reaching `Stage::Commit`) failed to reach an
 /// accepted result, from the run's own trace.
+///
+/// Deliberately asks for *every* distinct contributing issue, not just the one that ultimately
+/// ended the run — maintainer feedback that "several things may have gone wrong" during a run,
+/// and a summary naming only the single final cause was throwing away useful information about
+/// the others (e.g. an earlier stall that got worked around, followed by a genuinely fatal
+/// technical error) that would help understand the whole run, not just its last moment.
 pub(crate) async fn generate_failure_summary(
     ollama: &dyn LlmClient,
     model: &str,
@@ -16,12 +29,15 @@ pub(crate) async fn generate_failure_summary(
     let system = "You are analyzing a finished, unsuccessful run of an autonomous multi-agent \
         coding pipeline (Architect plans, Worker implements, Tester/Validator/Critics review). \
         Given the run's goal and its full trace — every round's plan, implementation, tool \
-        output, and rejection, in order — identify the single main reason the run did not \
-        reach an accepted, committed result. Output ONLY a concise explanation, 2-4 sentences: \
-        what was attempted, and specifically why it failed (e.g. a recurring rejection reason, \
-        an agent repeating identical output and stalling, a technical error like a failing \
-        test or an unparseable patch, or simply running out of iterations). No preamble, no \
-        headers, no fences.";
+        output, and rejection, in order — identify EVERY distinct thing that went wrong over \
+        the course of the run, not just the one that ultimately ended it: a recurring \
+        rejection reason, an agent repeating identical output and stalling, a technical error \
+        like a failing test or an unparseable patch, a wrong assumption an earlier round made \
+        and later abandoned, running out of iterations, etc. Several issues can contribute \
+        even when only one of them was the final, decisive cause. Output ONLY a concise list, \
+        one distinct issue per line, most significant/decisive first — a line per issue, not a \
+        single paragraph. If there's genuinely only one issue, one line is fine. No preamble, \
+        no headers, no fences, no bullet characters (line breaks alone separate the issues).";
     generate_run_summary(ollama, model, system, goal, trace, "failure").await
 }
 
@@ -81,7 +97,16 @@ async fn generate_run_summary(
     if generated.is_empty() {
         Err(RuChatError::Is(format!("LLM returned an empty {label} summary")))
     } else {
-        Ok(generated)
+        // A backstop for the prompt's own formatting instructions, same reasoning as
+        // `git::wrap_commit_message_body`: models don't reliably honor exact line-length
+        // instructions on their own. Each line (the failure summary can be several, one per
+        // distinct issue) is wrapped independently rather than the whole thing as one
+        // paragraph, so the one-issue-per-line structure survives wrapping.
+        Ok(generated
+            .lines()
+            .map(|l| wrap_line(l, SUMMARY_LINE_LEN))
+            .collect::<Vec<_>>()
+            .join("\n"))
     }
 }
 
@@ -132,5 +157,32 @@ mod tests {
         let ollama = FakeLlmClient::new(vec![]); // would panic if chat_stream were called
         let result = generate_success_summary(&ollama, "any-model", "rename a fn", "  ").await;
         assert!(result.is_err());
+    }
+
+    // Regression: maintainer feedback that the run summary should be wrapped, and that a run
+    // can have several distinct contributing issues, not just one. This test covers the
+    // wrapping backstop (models don't reliably honor the prompt's own line-length instruction);
+    // the "identify every issue" instruction itself lives in the prompt text and isn't
+    // separately testable without a live model.
+    #[tokio::test]
+    async fn generate_failure_summary_wraps_each_line_independently_at_120_chars() {
+        let scripted = "The Worker repeated an identical apply_patch attempt against a \
+            hallucinated function signature across three consecutive rounds without ever \
+            calling read_file first, so every attempt failed the exact same way.\n\
+            Short second issue.";
+        let ollama = FakeLlmClient::new(vec![scripted]);
+        let summary = generate_failure_summary(&ollama, "any-model", "fix a bug", "some trace")
+            .await
+            .unwrap();
+        for line in summary.lines() {
+            assert!(
+                line.chars().count() <= SUMMARY_LINE_LEN,
+                "line exceeds {SUMMARY_LINE_LEN} chars: {line:?} ({} chars)",
+                line.chars().count()
+            );
+        }
+        // Wrapping must not lose either issue or merge them into one.
+        assert!(summary.contains("Short second issue."));
+        assert!(summary.contains("hallucinated function signature"));
     }
 }

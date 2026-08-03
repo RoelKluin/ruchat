@@ -167,34 +167,10 @@ fn wrap_commit_message_body(message: &str) -> String {
     };
     let wrapped_body = body
         .lines()
-        .map(wrap_line)
+        .map(|l| crate::utils::text::wrap_line(l, MAX_COMMIT_LINE_LEN))
         .collect::<Vec<_>>()
         .join("\n");
     format!("{summary}\n{wrapped_body}")
-}
-
-fn wrap_line(line: &str) -> String {
-    if line.chars().count() <= MAX_COMMIT_LINE_LEN {
-        return line.to_string();
-    }
-    let mut wrapped = String::new();
-    let mut current_len = 0;
-    for word in line.split(' ') {
-        let word_len = word.chars().count();
-        if current_len == 0 {
-            wrapped.push_str(word);
-            current_len = word_len;
-        } else if current_len + 1 + word_len <= MAX_COMMIT_LINE_LEN {
-            wrapped.push(' ');
-            wrapped.push_str(word);
-            current_len += 1 + word_len;
-        } else {
-            wrapped.push('\n');
-            wrapped.push_str(word);
-            current_len = word_len;
-        }
-    }
-    wrapped
 }
 
 async fn run_git_command(args: Vec<&str>) -> Result<()> {
@@ -367,30 +343,9 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[test]
-    fn wrap_line_leaves_short_lines_alone() {
-        let line = "short line";
-        assert_eq!(wrap_line(line), line);
-    }
-
-    #[test]
-    fn wrap_line_breaks_long_lines_at_word_boundaries_under_80_chars() {
-        let line = "This explains why the change was made in quite a bit more detail \
-            than usual, spanning well past the eighty character line limit we want to enforce.";
-        let wrapped = wrap_line(line);
-        for l in wrapped.lines() {
-            assert!(
-                l.chars().count() <= MAX_COMMIT_LINE_LEN,
-                "line exceeds {MAX_COMMIT_LINE_LEN} chars: {l:?} ({} chars)",
-                l.chars().count()
-            );
-        }
-        // Wrapping must not drop or reorder words.
-        assert_eq!(
-            wrapped.split_whitespace().collect::<Vec<_>>(),
-            line.split_whitespace().collect::<Vec<_>>()
-        );
-    }
+    // `wrap_line` itself moved to `utils::text` (shared with the run-summary wrapping below)
+    // and has its own tests there; `wrap_commit_message_body` below still has its own test
+    // covering the commit-message-specific behavior (first line untouched).
 
     #[test]
     fn wrap_commit_message_body_never_wraps_the_summary_line() {
