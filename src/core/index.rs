@@ -92,8 +92,113 @@ fn language_for_ext(ext: &str) -> &'static str {
         "c" => "c",
         "cpp" | "cc" | "cxx" => "cpp",
         "h" | "hpp" => "c-header",
+        // Not in the default `--ext` list (still a conservative code-language set), but
+        // recognized so an explicit `--ext md,txt,...` gets a correct `language` metadata value
+        // instead of "unknown". `md` has real ctags support (heading-based chapter/section/
+        // subsection tags), so it chunks via the existing `build_symbol_metadata` path just like
+        // code; `txt` has none, so it always falls through to `chunk_by_paragraph` below.
+        "md" | "markdown" => "markdown",
+        "txt" => "text",
         _ => "unknown",
     }
+}
+
+/// Target size (in lines) for each paragraph-based chunk — see `chunk_by_paragraph`. A chunk
+/// only ever ends at a paragraph boundary, never mid-paragraph, so this is a target, not a hard
+/// cap: a single very long paragraph can still exceed it. Same order of magnitude as a typical
+/// ctags symbol chunk, not an arbitrary number.
+const PARAGRAPH_CHUNK_TARGET_LINES: usize = 40;
+
+/// Below this many lines, `chunk_by_paragraph` returns no chunks at all, deferring to
+/// `EmbedArgs::embed`'s existing "empty metadata_items -> whole-file embedding" fallback — a
+/// short file doesn't need splitting, and one embedding for the whole thing is both simpler and
+/// more coherent than an arbitrary partial chunk.
+const MIN_LINES_FOR_PARAGRAPH_CHUNKING: usize = PARAGRAPH_CHUNK_TARGET_LINES;
+
+/// Real semantic/document-aware chunking for content ctags can't (or didn't) tag with symbols —
+/// unsupported languages, or a supported one where ctags legitimately found nothing. Previously
+/// any such file fell all the way back to one whole-file embedding regardless of size, which is
+/// fine for a short file but hurts retrieval precision for a long one (a large prose document or
+/// plain-text file becomes a single unfocused embedding covering everything in it at once).
+///
+/// Splits on blank-line-separated paragraphs (tracking real 1-based start/end line numbers per
+/// paragraph), then greedily merges consecutive paragraphs into chunks of around
+/// `PARAGRAPH_CHUNK_TARGET_LINES` lines each. Deliberately never splits *inside* a paragraph —
+/// prose/doc structure isn't cut mid-sentence — so an individual very long paragraph can still
+/// produce an oversized chunk; that's an accepted trade-off for staying document-structure-aware
+/// rather than a fixed-size sliding window that would ignore it entirely.
+///
+/// Returns metadata items in the same shape `build_symbol_metadata` produces (`file`/`language`/
+/// `name`/`kind`/`start`/`end`), just `kind: "paragraph"` instead of a ctags symbol kind, so
+/// existing `WHERE` queries (`kind = '...'`, numeric `start`/`end` comparisons) keep working
+/// uniformly across both chunking strategies. `EmbedArgs::embed_with_metadata_items` slices the
+/// actual chunk text out of the file using these same `start`/`end` fields — no separate text
+/// extraction needed here, exactly like the existing ctags-chunk path.
+fn chunk_by_paragraph(
+    text: &str,
+    file_rel: &str,
+    language: &str,
+) -> Vec<HashMap<String, UpdateMetadataValue>> {
+    let lines: Vec<&str> = text.lines().collect();
+    if lines.len() < MIN_LINES_FOR_PARAGRAPH_CHUNKING {
+        return Vec::new();
+    }
+
+    let mut paragraphs: Vec<(usize, usize)> = Vec::new(); // (start_line, end_line), 1-based inclusive
+    let mut para_start: Option<usize> = None;
+    for (i, line) in lines.iter().enumerate() {
+        let line_no = i + 1;
+        if line.trim().is_empty() {
+            if let Some(start) = para_start.take() {
+                paragraphs.push((start, line_no - 1));
+            }
+        } else if para_start.is_none() {
+            para_start = Some(line_no);
+        }
+    }
+    if let Some(start) = para_start {
+        paragraphs.push((start, lines.len()));
+    }
+
+    let mut chunks: Vec<(usize, usize)> = Vec::new();
+    let mut cur_start: Option<usize> = None;
+    let mut cur_end = 0;
+    for (p_start, p_end) in paragraphs {
+        if cur_start.is_none() {
+            cur_start = Some(p_start);
+        }
+        cur_end = p_end;
+        if cur_end - cur_start.unwrap_or(cur_end) + 1 >= PARAGRAPH_CHUNK_TARGET_LINES {
+            chunks.push((cur_start.take().unwrap_or(cur_end), cur_end));
+        }
+    }
+    if let Some(start) = cur_start {
+        chunks.push((start, cur_end));
+    }
+
+    chunks
+        .into_iter()
+        .enumerate()
+        .map(|(i, (start, end))| {
+            let mut m: HashMap<String, UpdateMetadataValue> = HashMap::new();
+            m.insert("file".into(), UpdateMetadataValue::Str(file_rel.to_string()));
+            m.insert(
+                "language".into(),
+                UpdateMetadataValue::Str(language.to_string()),
+            );
+            m.insert(
+                "name".into(),
+                UpdateMetadataValue::Str(format!("paragraph_{i}")),
+            );
+            m.insert(
+                "kind".into(),
+                UpdateMetadataValue::Str("paragraph".to_string()),
+            );
+            m.insert("start".into(), UpdateMetadataValue::Int(start as i64));
+            m.insert("end".into(), UpdateMetadataValue::Int(end.max(start) as i64));
+            m
+        })
+        .collect()
 }
 
 /// Invokes `universal-ctags` in line-delimited JSON mode and returns the
@@ -356,11 +461,15 @@ impl IndexArgs {
                         }
                     };
 
-                    // Empty metadata_items falls back to whole-file embedding —
-                    // `EmbedArgs::embed`'s existing `metadata_items.len() < 2` branch
-                    // already handles this without any special-casing here.
+                    // No ctags symbols (unsupported language, or a supported one where ctags
+                    // found nothing): fall back to real paragraph-based chunking for a file
+                    // large enough to benefit from it, rather than always embedding the whole
+                    // file as one chunk. `chunk_by_paragraph` itself returns empty for a short
+                    // file, at which point `EmbedArgs::embed`'s existing `metadata_items.len() <
+                    // 2` branch takes over and embeds the whole thing as one chunk anyway — no
+                    // special-casing needed here either way.
                     let items = if tags.is_empty() {
-                        Vec::new()
+                        chunk_by_paragraph(&text, &rel, language)
                     } else {
                         build_symbol_metadata(tags, &rel, language, total_lines)
                     };
@@ -432,5 +541,89 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("foo.rs"), "fn main() {}").unwrap();
         assert!(tracked_files_under(dir.path(), &["rs"]).await.is_none());
+    }
+
+    #[test]
+    fn language_for_ext_recognizes_markdown_and_plain_text() {
+        // Not in the default `--ext` list, but must report a real language (not "unknown") for
+        // an explicit `--ext md,txt,...` run — see `chunk_by_paragraph`'s doc comment.
+        assert_eq!(language_for_ext("md"), "markdown");
+        assert_eq!(language_for_ext("txt"), "text");
+    }
+
+    // Builds a fixture large enough to exceed `MIN_LINES_FOR_PARAGRAPH_CHUNKING`: 5 paragraphs
+    // of 10 lines each, separated by single blank lines (54 lines total). Line numbers are
+    // deliberately traced in the doc comment above `chunk_by_paragraph`'s call site so this
+    // test's expected boundaries aren't just "whatever the code currently does."
+    fn paragraph_fixture() -> String {
+        (1..=5)
+            .map(|p| {
+                (1..=10)
+                    .map(|l| format!("p{p}l{l}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    }
+
+    #[test]
+    fn chunk_by_paragraph_merges_paragraphs_up_to_the_target_size_without_splitting_one() {
+        let text = paragraph_fixture();
+        let items = chunk_by_paragraph(&text, "notes.txt", "text");
+
+        // Paragraphs sit at lines 1-10, 12-21, 23-32, 34-43, 45-54 (blank lines at 11/22/33/44).
+        // Greedily merging until >= 40 lines: paragraphs 1-4 merge into one 43-line chunk
+        // (1..=10 is 10 lines, plus each subsequent paragraph's own span brings the running
+        // total to 43 by paragraph 4), then paragraph 5 alone becomes the final chunk — the
+        // boundary lands exactly on paragraph 4's end/paragraph 5's start, never mid-paragraph.
+        let bounds: Vec<(i64, i64)> = items
+            .iter()
+            .map(|m| {
+                let start = match m.get("start") {
+                    Some(UpdateMetadataValue::Int(n)) => *n,
+                    other => panic!("expected an Int start, got {other:?}"),
+                };
+                let end = match m.get("end") {
+                    Some(UpdateMetadataValue::Int(n)) => *n,
+                    other => panic!("expected an Int end, got {other:?}"),
+                };
+                (start, end)
+            })
+            .collect();
+        assert_eq!(bounds, vec![(1, 43), (45, 54)]);
+
+        for m in &items {
+            assert_eq!(m.get("kind"), Some(&UpdateMetadataValue::Str("paragraph".into())));
+            assert_eq!(m.get("file"), Some(&UpdateMetadataValue::Str("notes.txt".into())));
+            assert_eq!(m.get("language"), Some(&UpdateMetadataValue::Str("text".into())));
+        }
+    }
+
+    #[test]
+    fn chunk_by_paragraph_returns_nothing_for_a_short_file() {
+        // Below MIN_LINES_FOR_PARAGRAPH_CHUNKING — defers to EmbedArgs::embed's own
+        // whole-file-as-one-chunk fallback (empty metadata_items) rather than producing a
+        // pointless single paragraph chunk identical to what that fallback already does.
+        let text = "line one\n\nline two\nline three";
+        assert!(chunk_by_paragraph(text, "short.txt", "text").is_empty());
+    }
+
+    #[test]
+    fn chunk_by_paragraph_chunk_bounds_slice_back_real_paragraph_text() {
+        // Sanity check that the 1-based inclusive start/end this function produces actually
+        // line up with `EmbedArgs::embed_with_metadata_items`'s own slicing math
+        // (`line_pool[start-1..end]`), not just with this function's own internal bookkeeping.
+        let text = paragraph_fixture();
+        let lines: Vec<&str> = text.lines().collect();
+        let items = chunk_by_paragraph(&text, "notes.txt", "text");
+        let (start, end) = match (items[1].get("start"), items[1].get("end")) {
+            (Some(UpdateMetadataValue::Int(s)), Some(UpdateMetadataValue::Int(e))) => {
+                (*s as usize, *e as usize)
+            }
+            other => panic!("expected Int start/end, got {other:?}"),
+        };
+        let sliced = lines[(start - 1)..end].join("\n");
+        assert_eq!(sliced, "p5l1\np5l2\np5l3\np5l4\np5l5\np5l6\np5l7\np5l8\np5l9\np5l10");
     }
 }
