@@ -29,7 +29,16 @@ pub(crate) async fn render_pipeline_stream(mut stream: PipelineStream, cio: &mut
                 cio.write_line(&chunk.message.content).await?;
             }
             Ok(StreamItem::Event(AgentEvent::ColorChange(ansi_code))) => {
-                cio.write_line(ansi_code).await?;
+                // Leading newline, deliberately: `ansi_code` embeds the next role's banner
+                // text (e.g. "\x1b[1;34m[Worker]:\n" — see `Role::get_color()`), but carries no
+                // newline of its own *before* it. A role's streamed content very often doesn't
+                // end in a trailing newline (e.g. a fenced code block's closing "```"), so
+                // without this the next role's banner glues directly onto the end of the
+                // previous one's last line (`` ```[Architect]: ``). Writing this unconditionally
+                // guarantees every banner starts on its own fresh line regardless of what was
+                // printed just before it, including the plain reset code (`Role::no_color()`)
+                // sent at the end of every turn.
+                cio.write_line(&format!("\n{ansi_code}")).await?;
             }
             Ok(StreamItem::Event(AgentEvent::StatusUpdate(msg))) => {
                 cio.clear_status_line().await?;

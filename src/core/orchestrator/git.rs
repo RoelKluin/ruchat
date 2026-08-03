@@ -99,10 +99,11 @@ fn commit_add_targets(ctx: &Context) -> Vec<String> {
 /// unreachable, timeout, empty response) — a validated, accepted change must never fail to
 /// commit just because this nicety failed.
 fn fallback_commit_message(ctx: &Context) -> String {
-    match ctx.pending_patch.as_ref() {
+    let message = match ctx.pending_patch.as_ref() {
         Some(pending) => format!("AI: {}\n\nFile changed: {}", ctx.goal, pending.path),
         None => format!("AI: {}", ctx.goal),
-    }
+    };
+    wrap_commit_message_body(&message)
 }
 
 /// Generates a conventional commit message (imperative summary + short body) from the run's
@@ -121,8 +122,8 @@ async fn generate_commit_message(
     }
     let system = "You write git commit messages. Given a goal and a diff, output ONLY the \
         commit message: an imperative-mood summary line under 72 characters, then a blank \
-        line, then 1-3 short sentences explaining why the change was made. No fences, no \
-        preamble, no trailing commentary.";
+        line, then 1-3 short sentences explaining why the change was made, wrapped so no body \
+        line exceeds 80 characters. No fences, no preamble, no trailing commentary.";
     let user = format!("GOAL: {goal}\n\nDIFF:\n{diff}");
     let messages = vec![
         ChatMessage::system(system.to_string()),
@@ -143,8 +144,51 @@ async fn generate_commit_message(
     if generated.is_empty() {
         Err(RuChatError::Is("LLM returned an empty commit message".into()))
     } else {
-        Ok(generated)
+        Ok(wrap_commit_message_body(&generated))
     }
+}
+
+/// Hard-wraps every line of `message` after the first at `MAX_COMMIT_LINE_LEN` characters,
+/// breaking on word boundaries — a backstop for the prompt's own "wrapped at 80 characters"
+/// instruction, since models don't reliably honor exact character limits. The first line (the
+/// summary) is left untouched: git treats it specially (e.g. `git log --oneline`), so wrapping
+/// it mid-line would corrupt that convention rather than just look untidy.
+const MAX_COMMIT_LINE_LEN: usize = 80;
+
+fn wrap_commit_message_body(message: &str) -> String {
+    let Some((summary, body)) = message.split_once('\n') else {
+        return message.to_string();
+    };
+    let wrapped_body = body
+        .lines()
+        .map(wrap_line)
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!("{summary}\n{wrapped_body}")
+}
+
+fn wrap_line(line: &str) -> String {
+    if line.chars().count() <= MAX_COMMIT_LINE_LEN {
+        return line.to_string();
+    }
+    let mut wrapped = String::new();
+    let mut current_len = 0;
+    for word in line.split(' ') {
+        let word_len = word.chars().count();
+        if current_len == 0 {
+            wrapped.push_str(word);
+            current_len = word_len;
+        } else if current_len + 1 + word_len <= MAX_COMMIT_LINE_LEN {
+            wrapped.push(' ');
+            wrapped.push_str(word);
+            current_len += 1 + word_len;
+        } else {
+            wrapped.push('\n');
+            wrapped.push_str(word);
+            current_len = word_len;
+        }
+    }
+    wrapped
 }
 
 async fn run_git_command(args: Vec<&str>) -> Result<()> {
@@ -294,5 +338,51 @@ mod tests {
         let ollama = FakeLlmClient::new(vec![""]);
         let result = generate_commit_message(&ollama, "fake", "goal", "some diff").await;
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn wrap_line_leaves_short_lines_alone() {
+        let line = "short line";
+        assert_eq!(wrap_line(line), line);
+    }
+
+    #[test]
+    fn wrap_line_breaks_long_lines_at_word_boundaries_under_80_chars() {
+        let line = "This explains why the change was made in quite a bit more detail \
+            than usual, spanning well past the eighty character line limit we want to enforce.";
+        let wrapped = wrap_line(line);
+        for l in wrapped.lines() {
+            assert!(
+                l.chars().count() <= MAX_COMMIT_LINE_LEN,
+                "line exceeds {MAX_COMMIT_LINE_LEN} chars: {l:?} ({} chars)",
+                l.chars().count()
+            );
+        }
+        // Wrapping must not drop or reorder words.
+        assert_eq!(
+            wrapped.split_whitespace().collect::<Vec<_>>(),
+            line.split_whitespace().collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn wrap_commit_message_body_never_wraps_the_summary_line() {
+        let long_summary = "A".repeat(100);
+        let message = format!("{long_summary}\n\nsome body text");
+        let wrapped = wrap_commit_message_body(&message);
+        assert!(wrapped.starts_with(&long_summary));
+    }
+
+    #[test]
+    fn wrap_commit_message_body_wraps_long_body_lines() {
+        let body_line = "This explains why the change was made in quite a bit more detail \
+            than usual, spanning well past the eighty character line limit we want to enforce.";
+        let message = format!("Short summary\n\n{body_line}");
+        let wrapped = wrap_commit_message_body(&message);
+        let mut lines = wrapped.lines();
+        assert_eq!(lines.next().unwrap(), "Short summary");
+        for l in lines {
+            assert!(l.chars().count() <= MAX_COMMIT_LINE_LEN);
+        }
     }
 }
