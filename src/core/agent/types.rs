@@ -130,13 +130,37 @@ impl Context {
         if !msg.is_empty() {
             let _ = tx.send(Ok(StreamItem::Event(AgentEvent::Trace(msg)))).await;
         }
-        let trace_output = format!(
+        let _ = tokio::fs::write(".ruchat_trace.md", self.trace_body()).await;
+    }
+
+    /// Renders the full on-disk trace body: goal, latest plan/implementation, and every turn
+    /// in chronological order, including retrieval turns (see `full_history_view` — `trace()`
+    /// used to build this from `history_view`, which deliberately excludes retrievals since
+    /// those are rendered as a separate, round-scoped `DOCUMENTS` section in prompts; that
+    /// meant any round whose only content was a tool call or RAG lookup — `read_file`,
+    /// `ripgrep`, `cargo_clippy`, Librarian retrieval, etc. — never appeared in the trace file
+    /// at all, not even collapsed, even though `print_debug_info` already got this right for
+    /// debug-sequence runs).
+    pub(crate) fn trace_body(&self) -> String {
+        format!(
             "# Orchestration Trace\n\n## Goal\n{}\n\n## Context\n{}\n\n## History\n{}\n",
             self.goal,
             self.context_view(),
-            self.history_view(u64::MAX)
+            self.full_history_view()
+        )
+    }
+
+    /// Rewrites `.ruchat_trace.md` with a short failure-analysis summary prepended above the
+    /// normal trace body. Called once, after an unsuccessful run (escalated, or the iteration
+    /// budget exhausted without ever reaching `Stage::Commit`) — so opening the file
+    /// immediately shows why it failed instead of requiring a scroll through every round to
+    /// work that out.
+    pub(crate) async fn prepend_failure_summary(&self, summary: &str) {
+        let with_summary = format!(
+            "# Why this run did not succeed\n\n{summary}\n\n---\n\n{}",
+            self.trace_body()
         );
-        let _ = tokio::fs::write(".ruchat_trace.md", trace_output).await;
+        let _ = tokio::fs::write(".ruchat_trace.md", with_summary).await;
     }
     pub(crate) fn build_collections_summary(&self) -> String {
         let mut summary = String::from("AVAILABLE COLLECTIONS (loaded from config):\n");
@@ -242,6 +266,24 @@ impl Context {
         self.turns
             .iter()
             .filter(|t| t.round <= upto_round && t.kind != TurnKind::Retrieval)
+            .map(|t| {
+                format!(
+                    "### {} [{:?}, round {}]:\n{}\n",
+                    t.source, t.kind, t.round, t.content
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Every turn in chronological order, unfiltered — unlike `history_view`, this includes
+    /// `TurnKind::Retrieval` turns (tool output, RAG documents, git log/diff, memory recall).
+    /// Used only by `trace_body()` for a complete human-readable snapshot of the run; prompt
+    /// building keeps using `history_view`/`documents_view` as separate sections, since that
+    /// split is meaningful to the model (data vs. narrative), not just a formatting choice.
+    pub(crate) fn full_history_view(&self) -> String {
+        self.turns
+            .iter()
             .map(|t| {
                 format!(
                     "### {} [{:?}, round {}]:\n{}\n",
@@ -413,5 +455,25 @@ mod tests {
         ctx.round += 1;
         ctx.push_turn(TurnKind::Plan, "Architect", "FILES: new.rs".to_string());
         assert_eq!(ctx.planned_files(), vec!["new.rs"]);
+    }
+
+    #[test]
+    fn trace_body_includes_retrieval_turns() {
+        // Regression for a real bug: `.ruchat_trace.md` was built from `history_view`, which
+        // deliberately excludes TurnKind::Retrieval (tool output, RAG docs, git log/diff,
+        // cargo_check/clippy, memory recall) since prompts render those as a separate
+        // DOCUMENTS section — but that meant any round whose only content was a tool call or
+        // RAG lookup never appeared anywhere in the trace file at all.
+        let mut ctx = Context::new("goal".to_string());
+        ctx.push_turn(TurnKind::Plan, "Architect", "make a plan".to_string());
+        ctx.push_turn(
+            TurnKind::Retrieval,
+            "ReadFile",
+            "fn parse_key_val<T, U>(s: &str) -> ...".to_string(),
+        );
+        let body = ctx.trace_body();
+        assert!(body.contains("make a plan"));
+        assert!(body.contains("ReadFile"));
+        assert!(body.contains("fn parse_key_val<T, U>(s: &str) -> ..."));
     }
 }

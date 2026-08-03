@@ -3,6 +3,7 @@ pub(crate) mod fs;
 pub(crate) mod search;
 pub(crate) mod scope;
 pub(crate) mod cargo;
+pub(crate) mod postmortem;
 pub(super) mod task;
 
 use crate::agent::event::{StreamItem, AgentEvent};
@@ -466,6 +467,11 @@ impl Orchestrator {
         let mut last_scope_output: Option<String> = None;
         let mut last_architect_output: Option<String> = None;
         let mut last_worker_output: Option<String> = None;
+        // Set only by `Stage::Commit` succeeding — both `Stage::Escalate` and `Stage::Retry`'s
+        // iteration-budget-exhausted branch reach `Stage::Done` without ever going through
+        // Commit, and both are "the agents did not reach a successful, committed result" even
+        // though only one of them is technically an escalation.
+        let mut success = false;
 
         loop {
             // Checked once per stage transition — this is the boundary the
@@ -670,6 +676,7 @@ impl Orchestrator {
                         .unwrap_or("qwen2.5-coder:14b")
                         .to_string();
                     commit_feature_branch(ctx, self.ollama.as_ref(), &commit_model).await?;
+                    success = true;
                     Stage::Done
                 }
                 Stage::Scope => {
@@ -701,7 +708,44 @@ impl Orchestrator {
             };
         }
         ctx.trace(&tx, String::new()).await;
+        if !success {
+            self.record_failure_summary(ctx, &tx).await;
+        }
         Ok(())
+    }
+
+    /// Analyzes the just-finished, unsuccessful run's trace with a single LLM call and
+    /// prepends the result to `.ruchat_trace.md` — best-effort: a failure here (Ollama
+    /// unreachable, timeout, empty response) only logs a warning, since this is a diagnostic
+    /// nicety, not something that should ever mask or replace the original failure.
+    async fn record_failure_summary(&self, ctx: &Context, tx: &mpsc::Sender<OrchestratorResult>) {
+        let model = self
+            .orchestrator_config
+            .get("failure_analysis_model")
+            .and_then(|v| v.as_str())
+            .or_else(|| self.worker.get_str("model").ok())
+            .unwrap_or("qwen2.5-coder:14b")
+            .to_string();
+        match postmortem::generate_failure_summary(
+            self.ollama.as_ref(),
+            &model,
+            &ctx.goal,
+            &ctx.trace_body(),
+        )
+        .await
+        {
+            Ok(summary) => {
+                ctx.prepend_failure_summary(&summary).await;
+                let _ = tx
+                    .send(Ok(StreamItem::Event(AgentEvent::Trace(format!(
+                        "Run did not succeed: {summary}"
+                    )))))
+                    .await;
+            }
+            Err(e) => {
+                tracing::warn!(error = ?e, "failure summary generation failed");
+            }
+        }
     }
 
     async fn debug_stage_machine(
@@ -1346,6 +1390,37 @@ mod tests {
         assert!(summary.contains("Validator=validator-model"));
         assert!(summary.contains("Security=critic-model"));
         assert!(summary.contains(".ruchat_trace.md"));
+    }
+
+    // Regression: `.ruchat_trace.md` gave no indication of *why* an unsuccessful run
+    // (escalated, or the iteration budget exhausted without ever reaching `Stage::Commit`)
+    // failed — a maintainer had to read every round of a possibly long trace to reconstruct
+    // that themselves. `record_failure_summary` (called from `run_stage_machine` only when the
+    // `success` flag — set only by `Stage::Commit` — is still false) makes one direct LLM call
+    // over the trace and reports the result as a `Trace` event; `prepend_failure_summary`
+    // itself (real `.ruchat_trace.md` file I/O, exercised on every run) is covered separately.
+    #[tokio::test]
+    async fn record_failure_summary_sends_a_trace_event_with_the_analysis() {
+        let orchestrator = build_test_orchestrator(
+            base_config(),
+            vec!["Worker kept repeating itself and never produced a valid patch"],
+            None,
+        )
+        .await;
+        let ctx = Context::new("fix the bug".to_string());
+        let (tx, mut rx) = mpsc::channel(100);
+
+        orchestrator.record_failure_summary(&ctx, &tx).await;
+
+        let event = rx.recv().await.expect("expected a trace event");
+        match event.expect("expected Ok") {
+            StreamItem::Event(AgentEvent::Trace(msg)) => {
+                assert!(msg.contains(
+                    "Worker kept repeating itself and never produced a valid patch"
+                ));
+            }
+            other => panic!("expected a Trace event, got {other:?}"),
+        }
     }
 
     // Regression test for a real failure: the Worker replied with a narrative walkthrough

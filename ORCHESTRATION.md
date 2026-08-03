@@ -119,7 +119,17 @@ Accept → Commit → `git checkout -b ai/feature-<timestamp>`, stage only
 ```
 
 `Escalate(reason)` and `Done` are terminal — the loop breaks and the reason (if
-any) is traced to `.ruchat_trace.md` and the event stream.
+any) is traced to `.ruchat_trace.md` and the event stream. `.ruchat_trace.md`
+itself is a full chronological dump of every turn (`Context::trace_body`),
+including retrieval/tool-output turns — those are excluded from the `HISTORY`
+prompt variable (rendered as a separate `DOCUMENTS` section instead) but not
+from the trace file. If the run ends without ever reaching `Stage::Commit`
+(escalated, or the iteration budget exhausted with nothing to surface), a
+single direct LLM call analyzes the finished trace and its result is
+prepended to the top of `.ruchat_trace.md` as "# Why this run did not
+succeed" (`Orchestrator::record_failure_summary`,
+`orchestrator/postmortem.rs`) — best-effort, same one-shot-call pattern as
+commit-message generation, so it never blocks or masks the original failure.
 
 ### Tool Catalog (Worker + Scoper)
 
