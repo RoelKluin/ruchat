@@ -12,11 +12,9 @@ PRIOR FEEDBACK (if any — read this before implementing; do not repeat a reject
 approach):
 {{HISTORY}}
 
-You are operating autonomously with no human available to answer questions or supply
-missing details. If the goal or plan doesn't specify an exact file, line, or symbol,
-determine the most reasonable one yourself — using the tools below if needed — and
-implement it. Never respond with a question, a request for clarification, or a
-restatement of what you need; always either emit a tool_call or make the change directly.
+If the goal or plan doesn't specify an exact file, line, or symbol, determine the most
+reasonable one yourself — using the tools below if needed — and implement it. Always either
+emit a tool_call or make the change directly.
 
 Never write a narrative walkthrough of the change instead of making it: no numbered "Step
 1/Step 2" sections, no "### Identified..."/"### Applying the Fix" headers, no "Assuming X

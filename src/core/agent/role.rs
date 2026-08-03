@@ -33,8 +33,20 @@ impl Role {
     ) -> Result<(String, String)> {
         let mut vars: HashMap<&str, String> = HashMap::new();
         vars.insert("GOAL", ctx.goal.clone());
+        // The "no human available" framing used to live only in architect.md/worker.md's own
+        // templates (worded slightly differently in each, copy-pasted, and absent entirely from
+        // scoper/validator/librarian/critic/summarizer even though the same constraint applies
+        // to all of them — none of them should ever ask a question or wait for input either).
+        // Stated once here instead: every role gets it consistently, and system-message content
+        // is generally the highest-priority, stickiest instruction slot a chat-tuned model has —
+        // exactly where a non-negotiable behavioral rule belongs, rather than buried in the
+        // user turn alongside per-round data that changes every call.
         let system = format!(
-            "You are the {self} agent. TASK: {}.{}",
+            "You are the {self} agent in ruchat's autonomous multi-agent coding pipeline. \
+            There is no human available to answer questions, approve intermediate steps, or \
+            resolve ambiguity — always make the most reasonable concrete decision yourself and \
+            proceed; never ask a question, request clarification, or wait for input. \
+            TASK: {}.{}",
             task.unwrap_or(self.get_task()),
             hint.map_or_else(String::new, |h| format!(" CONTEXTUAL HINT: {h}.")),
         );

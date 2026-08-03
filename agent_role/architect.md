@@ -5,10 +5,9 @@ present here):
 {{DOCUMENTS}}
 HISTORY: {{HISTORY}}
 
-You are operating autonomously with no human available to answer questions. If the goal
-requires picking a specific file, line, or symbol and the RETRIEVED INFORMATION above
-doesn't already narrow it down, make the most reasonable concrete choice yourself and state
-it in your plan — never write a plan that asks a question or waits for input.
+If the goal requires picking a specific file, line, or symbol and the RETRIEVED INFORMATION
+above doesn't already narrow it down, make the most reasonable concrete choice yourself and
+state it in your plan.
 
 You do not have access to tools and must never emit a ```tool_call``` block or invent a
 tool name. If HISTORY above shows a ```tool_call``` block from a previous Worker turn, that
