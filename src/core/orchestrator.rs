@@ -568,6 +568,15 @@ impl Orchestrator {
                         && retrieve_budget > 0
                     {
                         retrieve_budget -= 1;
+                        // Records the read-only tool-call *action* itself — before
+                        // `handle_structured_tool` runs it and the reask below overwrites
+                        // `ctx.output` with the Worker's next response. Without this, the trace
+                        // only ever showed the tool's *output* (the Retrieval turn
+                        // `handle_structured_tool` pushes below), never what was actually
+                        // called or with what arguments — the console showed the action (via
+                        // the streamed response) but the trace file didn't, making it unclear
+                        // after the fact which tool produced which result.
+                        ctx.push_turn(TurnKind::Implementation, "Worker", ctx.output.clone());
                         // A failing tool call (bad git args, missing ripgrep, a
                         // vanished file) must not abort the whole run — same
                         // posture as the Scoper's identical dispatch below.

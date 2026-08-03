@@ -1,3 +1,4 @@
+use crate::agent::tools::{self, ToolName};
 use crate::agent::{AgentEvent, StreamItem};
 use crate::Result;
 use serde_json::Value;
@@ -18,6 +19,33 @@ fn parse_trace_index(name: &str) -> Option<u64> {
         .strip_suffix(".md")?
         .parse()
         .ok()
+}
+
+/// Renders one turn's content for the human-facing trace file. Only `TurnKind::Implementation`
+/// turns whose content contains a parseable `apply_patch` tool call get special treatment —
+/// everything else (including a non-apply_patch tool call, or content that doesn't parse as a
+/// tool call at all) passes through unchanged.
+///
+/// The fix this exists for: a model's `apply_patch` diff rides inside a JSON string field, so
+/// its newlines are the two literal characters `\`+`n`, not real line breaks — printed raw, an
+/// entire multi-hunk diff renders as one unreadable line. `tools::parse_tool_call` already does
+/// real JSON parsing (a JSON string's `\n` escapes decode to actual `\n` bytes during that
+/// parse), so extracting the `diff` field and re-emitting it as its own fenced block is enough
+/// to get real line breaks back — no manual unescaping needed beyond parsing the JSON honestly.
+fn render_turn_content_for_trace(kind: TurnKind, content: &str) -> String {
+    if kind != TurnKind::Implementation {
+        return content.to_string();
+    }
+    let Ok(call) = tools::parse_tool_call(content) else {
+        return content.to_string();
+    };
+    if call.tool != ToolName::ApplyPatch {
+        return content.to_string();
+    }
+    let Some(diff) = call.args.get("diff").and_then(|d| d.as_str()) else {
+        return content.to_string();
+    };
+    format!("[apply_patch]\n```diff\n{diff}\n```")
 }
 
 #[derive(Debug, Clone)]
@@ -204,7 +232,7 @@ impl Context {
         format!(
             "# Orchestration Trace\n\n## Goal\n{}\n\n## Context\n{}\n\n## History\n{}\n",
             self.goal,
-            self.context_view(),
+            self.context_view_for_trace(),
             self.full_history_view()
         )
     }
@@ -362,7 +390,10 @@ impl Context {
             .map(|t| {
                 format!(
                     "### {} [{:?}, round {}]:\n{}\n",
-                    t.source, t.kind, t.round, t.content
+                    t.source,
+                    t.kind,
+                    t.round,
+                    render_turn_content_for_trace(t.kind, &t.content)
                 )
             })
             .collect::<Vec<_>>()
@@ -371,16 +402,39 @@ impl Context {
 
     /// Replaces the old `ctx.context` string: latest Plan + latest Implementation only.
     pub(crate) fn context_view(&self) -> String {
+        Self::render_context(self.latest_plan_and_implementation(), |t| t.content.clone())
+    }
+
+    /// Same content as `context_view`, but with each turn passed through
+    /// `render_turn_content_for_trace` first — used only by `trace_body()`, so an
+    /// `apply_patch` diff sitting in the latest Implementation turn reads as an actual diff
+    /// there too, not just in the History section below it. `context_view` itself stays
+    /// untouched since it also feeds prompt-facing PLAN/IMPLEMENTATION variables, where the
+    /// model needs to see its own prior output exactly as it was, not reformatted.
+    fn context_view_for_trace(&self) -> String {
+        Self::render_context(self.latest_plan_and_implementation(), |t| {
+            render_turn_content_for_trace(t.kind, &t.content)
+        })
+    }
+
+    fn latest_plan_and_implementation(&self) -> (Option<&Turn>, Option<&Turn>) {
         let plan = self.turns.iter().rev().find(|t| t.kind == TurnKind::Plan);
         let implementation = self
             .turns
             .iter()
             .rev()
             .find(|t| t.kind == TurnKind::Implementation);
+        (plan, implementation)
+    }
+
+    fn render_context(
+        (plan, implementation): (Option<&Turn>, Option<&Turn>),
+        format: impl Fn(&Turn) -> String,
+    ) -> String {
         match (plan, implementation) {
-            (Some(p), Some(i)) => format!("PLAN:\n{}\n\nIMPLEMENTATION:\n{}", p.content, i.content),
-            (Some(p), None) => format!("PLAN:\n{}", p.content),
-            (None, Some(i)) => format!("IMPLEMENTATION:\n{}", i.content),
+            (Some(p), Some(i)) => format!("PLAN:\n{}\n\nIMPLEMENTATION:\n{}", format(p), format(i)),
+            (Some(p), None) => format!("PLAN:\n{}", format(p)),
+            (None, Some(i)) => format!("IMPLEMENTATION:\n{}", format(i)),
             (None, None) => String::new(),
         }
     }
@@ -550,6 +604,41 @@ mod tests {
         assert!(body.contains("make a plan"));
         assert!(body.contains("ReadFile"));
         assert!(body.contains("fn parse_key_val<T, U>(s: &str) -> ..."));
+    }
+
+    // Regression: a real apply_patch diff rides inside a JSON string field, so its newlines
+    // are the two literal characters `\`+`n`, not real line breaks — printed raw in the trace,
+    // an entire multi-hunk diff rendered as one unreadable line, making it hard to tell what a
+    // patch actually changed from the trace file alone.
+    #[test]
+    fn trace_body_renders_an_apply_patch_diff_with_real_newlines() {
+        let mut ctx = Context::new("goal".to_string());
+        let tool_call = r#"```tool_call
+{"tool": "apply_patch", "diff": "--- a/src/foo.rs\n+++ b/src/foo.rs\n@@ -1,1 +1,1 @@\n-old\n+new\n"}
+```"#;
+        ctx.push_turn(TurnKind::Implementation, "Worker", tool_call.to_string());
+        let body = ctx.trace_body();
+        // The escaped form must be gone — this is the actual bug: `\n` as two literal chars.
+        assert!(!body.contains(r"\n-old"), "diff should not contain literal \\n escapes: {body}");
+        // And the real newline-separated diff lines must be present instead.
+        assert!(body.contains("-old\n+new"), "expected real newlines in the diff, got: {body}");
+    }
+
+    // A non-apply_patch turn (or content that doesn't parse as a tool call at all, e.g. a
+    // narrative rejection reason) must pass through completely unchanged — this rendering only
+    // special-cases apply_patch's diff field.
+    #[test]
+    fn trace_body_leaves_non_apply_patch_content_unchanged() {
+        let mut ctx = Context::new("goal".to_string());
+        ctx.push_turn(
+            TurnKind::Implementation,
+            "Worker",
+            "```tool_call\n{\"tool\": \"memorize\", \"content\": \"note\"}\n```".to_string(),
+        );
+        ctx.push_turn(TurnKind::Rejection, "Validator", "plain rejection text".to_string());
+        let body = ctx.trace_body();
+        assert!(body.contains(r#"{"tool": "memorize", "content": "note"}"#));
+        assert!(body.contains("plain rejection text"));
     }
 
     #[test]
