@@ -1,25 +1,32 @@
+use super::fs::canonicalize_within_repo;
 use crate::{Result, RuChatError};
 
 /// Shells to `rg` (ripgrep). Requires ripgrep on PATH — same "tool missing"
 /// posture as `core::index::run_ctags_json`'s universal-ctags check.
+///
+/// `pattern`/`path` are Worker (model) tool-call arguments — untrusted input, same posture as
+/// every other fs-reading tool. Before 2026-08-04 this function had two real gaps: `path` was
+/// never checked against the repo root (a Worker call could read arbitrary files like
+/// `/etc/passwd` — verified live), and `pattern`/`path` were passed to `rg` with no `--` flag
+/// terminator, so a pattern like `--pre=/bin/sh` would be parsed as ripgrep's own `--pre` flag
+/// (runs an arbitrary program against every scanned file's contents) instead of being searched
+/// for literally — combined with `apply_patch` already being able to write arbitrary content to
+/// a tracked file, that's a real code-execution chain through a tool meant to be safe by
+/// construction (see CLAUDE.md's "no generic shell-execution tool" invariant). Both are closed
+/// here: `path` goes through the same `canonicalize_within_repo` every other fs tool uses, and
+/// `build_rg_args` always inserts `--` before the untrusted positionals.
 pub(crate) async fn ripgrep(
     pattern: &str,
     path: Option<&str>,
     glob: Option<&str>,
     max_count: Option<u32>,
 ) -> Result<String> {
-    let mut args = vec!["--line-number".to_string(), "--no-heading".to_string()];
-    if let Some(g) = glob {
-        args.push("--glob".into());
-        args.push(g.to_string());
-    }
-    let count = max_count.unwrap_or(50).to_string();
-    args.push("--max-count".into());
-    args.push(count);
-    args.push(pattern.to_string());
-    if let Some(p) = path {
-        args.push(p.to_string());
-    }
+    let canonical_path = path
+        .map(canonicalize_within_repo)
+        .transpose()?
+        .map(|p| p.to_string_lossy().into_owned());
+
+    let args = build_rg_args(pattern, canonical_path.as_deref(), glob, max_count);
 
     let output = tokio::process::Command::new("rg")
         .args(&args)
@@ -37,6 +44,32 @@ pub(crate) async fn ripgrep(
         return Err(RuChatError::InternalError(format!("rg failed: {err}")));
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Builds `rg`'s argv. Kept pure/synchronous (no process spawn) so the flag-terminator
+/// invariant can be tested directly without a live `rg` binary. `--` always separates the
+/// flags this function controls from `pattern`/`path`, which are untrusted — see `ripgrep`'s
+/// doc comment for why that matters.
+fn build_rg_args(
+    pattern: &str,
+    path: Option<&str>,
+    glob: Option<&str>,
+    max_count: Option<u32>,
+) -> Vec<String> {
+    let mut args = vec!["--line-number".to_string(), "--no-heading".to_string()];
+    if let Some(g) = glob {
+        args.push("--glob".into());
+        args.push(g.to_string());
+    }
+    let count = max_count.unwrap_or(50).to_string();
+    args.push("--max-count".into());
+    args.push(count);
+    args.push("--".to_string());
+    args.push(pattern.to_string());
+    if let Some(p) = path {
+        args.push(p.to_string());
+    }
+    args
 }
 
 /// Repo-root path of the `universal-ctags` symbol index `read_tags` serves lookups from —
@@ -160,6 +193,65 @@ pub(crate) async fn read_tags(symbol: Option<&str>) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Regression (found 2026-08-04, security review): without a `--` flag terminator, a
+    // Worker-supplied `pattern` like `--pre=/bin/sh` is parsed by `rg` as the `--pre` flag
+    // (runs an arbitrary program against every scanned file's contents) instead of being
+    // searched for literally — a real code-execution path. Verified live against the actual
+    // `rg` binary before this fix: `rg` accepted `--pre=...` as a flag with no complaint when
+    // passed as a bare positional, silently reinterpreting the next positional as the pattern
+    // instead. This test would have failed against the pre-fix `build_rg_args` (no `--` was
+    // ever inserted).
+    #[test]
+    fn build_rg_args_inserts_a_flag_terminator_before_the_untrusted_pattern() {
+        let args = build_rg_args("--pre=/bin/sh", None, None, None);
+        let sep_pos = args
+            .iter()
+            .position(|a| a == "--")
+            .expect("expected a `--` flag terminator in rg's argv");
+        let pattern_pos = args
+            .iter()
+            .position(|a| a == "--pre=/bin/sh")
+            .expect("the untrusted pattern should be present verbatim");
+        assert!(
+            sep_pos < pattern_pos,
+            "the `--` terminator must come before the untrusted pattern, got: {args:?}"
+        );
+    }
+
+    #[test]
+    fn build_rg_args_terminator_also_precedes_the_untrusted_path() {
+        let args = build_rg_args("needle", Some("--pre=/bin/sh"), None, None);
+        let sep_pos = args.iter().position(|a| a == "--").unwrap();
+        let path_pos = args
+            .iter()
+            .position(|a| a == "--pre=/bin/sh")
+            .expect("the untrusted path should be present verbatim");
+        assert!(sep_pos < path_pos, "got: {args:?}");
+    }
+
+    // Regression (found 2026-08-04, security review): `ripgrep`'s `path` argument was never
+    // checked against the repo root before this fix — verified live before fixing: `rg` happily
+    // read `/etc/passwd` when given an absolute path outside the repo. This test would have
+    // failed (returned `Ok` instead of `Err`) against the pre-fix `ripgrep`.
+    #[tokio::test]
+    async fn ripgrep_rejects_a_path_that_escapes_the_repo_root() {
+        let err = ripgrep("root", Some("/etc"), None, None).await.unwrap_err();
+        assert!(
+            format!("{err}").contains("escapes"),
+            "expected an escape-rejection error, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn ripgrep_still_finds_real_matches_within_the_repo() {
+        // Confirms the containment fix didn't break the ordinary in-repo case — this file
+        // itself contains its own function name.
+        let result = ripgrep("fn ripgrep", Some("src/core/orchestrator/search.rs"), None, None)
+            .await
+            .unwrap();
+        assert!(result.contains("ripgrep"), "expected a real match, got: {result:?}");
+    }
 
     #[tokio::test]
     async fn tags_are_stale_when_the_tags_file_is_missing() {

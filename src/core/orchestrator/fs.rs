@@ -7,8 +7,11 @@ const MAX_READ_BYTES: usize = 32_000; // keep a single read from blowing the pro
 /// rejects anything that canonicalizes outside it — the Worker's tool_call
 /// arguments are model output, same untrusted-input posture as retrieved
 /// document content elsewhere in this crate. Shared by every fs-reading tool
-/// so this invariant can't drift between them.
-fn canonicalize_within_repo(path: &str) -> Result<PathBuf> {
+/// so this invariant can't drift between them — `pub(crate)` (not private)
+/// because `orchestrator::search::ripgrep` needs the same containment check
+/// on its own `path` argument; before 2026-08-04 it had none at all, letting
+/// a Worker tool call read arbitrary files outside the repo.
+pub(crate) fn canonicalize_within_repo(path: &str) -> Result<PathBuf> {
     let cwd = std::env::current_dir().map_err(|e| RuChatError::InternalError(e.to_string()))?;
     let target = cwd.join(path);
     let canonical = target
@@ -68,4 +71,27 @@ pub(crate) async fn list_dir(path: &str) -> Result<String> {
     }
     out.sort();
     Ok(out.join("\n"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn canonicalize_within_repo_rejects_an_absolute_path_outside_the_repo() {
+        // `/etc` always exists on the CI/dev machines this runs on and is never inside this
+        // repo's checkout — a real, verified escape (confirmed live: without this check,
+        // `ripgrep`'s `path` argument could read arbitrary files like `/etc/passwd`).
+        let err = canonicalize_within_repo("/etc").unwrap_err();
+        assert!(
+            format!("{err}").contains("escapes"),
+            "expected an escape-rejection error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn canonicalize_within_repo_accepts_the_repo_root_itself() {
+        let canonical = canonicalize_within_repo(".").unwrap();
+        assert!(canonical.is_dir());
+    }
 }
