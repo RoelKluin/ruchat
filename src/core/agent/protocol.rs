@@ -241,6 +241,59 @@ fn file_in_scope(target: &str, planned: &[String]) -> bool {
         .any(|p| p == target || target.ends_with(p.as_str()) || p.ends_with(target))
 }
 
+/// Old-file line numbers of every `-` (removed) line across all of a unified diff's hunks — the
+/// lines this diff actually *changes*, as opposed to lines it merely shows as context. Parsed
+/// directly from `@@ -a,b +c,d @@` headers rather than via `diffy::Patch`, so this can run before
+/// (and independent of) `diffy::apply` succeeding or failing.
+fn removed_line_numbers(diff_text: &str) -> Vec<usize> {
+    let mut removed = Vec::new();
+    let mut old_line: usize = 0;
+    for line in diff_text.lines() {
+        if let Some(rest) = line.strip_prefix("@@ ") {
+            old_line = rest
+                .split_whitespace()
+                .next()
+                .and_then(|old| old.trim_start_matches('-').split(',').next())
+                .and_then(|start| start.parse::<usize>().ok())
+                .unwrap_or(0);
+            continue;
+        }
+        if old_line == 0 || line.starts_with("---") || line.starts_with("+++") {
+            continue;
+        }
+        if line.starts_with('-') {
+            removed.push(old_line);
+            old_line += 1;
+        } else if !line.starts_with('+') {
+            // Context line — present in both old and new, advances the old-file cursor.
+            old_line += 1;
+        }
+    }
+    removed
+}
+
+/// Line numbers a `CargoClippy` retrieval turn (`orchestrator.rs`'s `ToolName::CargoClippy`
+/// dispatch, output format `cargo clippy --message-format=short`: `path:line:col: level: msg`)
+/// flagged in `target` this run, if any. Empty whenever clippy wasn't consulted this run (the
+/// overwhelmingly common case) — this makes the caller's check below a no-op for every task that
+/// isn't specifically "fix a clippy-flagged line."
+fn diagnostic_lines_for(ctx: &Context, target: &str) -> Vec<usize> {
+    let file_name = target.rsplit('/').next().unwrap_or(target);
+    ctx.turns
+        .iter()
+        .filter(|t| t.kind == TurnKind::Retrieval && t.source == "CargoClippy")
+        .flat_map(|t| t.content.lines())
+        .filter_map(|line| {
+            let mut parts = line.splitn(3, ':');
+            let path = parts.next()?.trim();
+            if !(path.ends_with(target) || path.ends_with(file_name)) {
+                return None;
+            }
+            parts.next()?.trim().parse::<usize>().ok()
+        })
+        .collect()
+}
+
 impl Validation {
     pub(crate) async fn apply_patch(diff_text: &str, ctx: &mut Context) -> Result<Self> {
         if diff_text.len() > MAX_PATCH_DIFF_BYTES {
@@ -325,6 +378,33 @@ impl Validation {
             );
             ctx.push_turn(TurnKind::Rejection, "Validator", content.clone());
             return Ok(Validation::Failure(content));
+        }
+        // Real, observed failure mode (see TODO.md): the Worker's plan correctly names the
+        // clippy-flagged field (e.g. "remove the unused field `options`", quoting
+        // `path:82:5: warning: field \`options\` is never read` verbatim), but the diff it
+        // actually writes removes a different, nearby line in the same struct instead — diffy
+        // happily applies it (still syntactically valid), and the mistake surfaces only after a
+        // full cargo-check round-trip via a confusing "no field named ..." compile error. Caught
+        // here, deterministically and before any file I/O, whenever this run's own CargoClippy
+        // tool already pointed at a specific line in this exact file.
+        let diag_lines = diagnostic_lines_for(ctx, target);
+        if !diag_lines.is_empty() {
+            let touched = removed_line_numbers(diff_text);
+            if !touched.is_empty() && !diag_lines.iter().any(|d| touched.contains(d)) {
+                let flagged = diag_lines
+                    .iter()
+                    .map(|n| n.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let content = format!(
+                    "refused: this run's own cargo_clippy result flagged {target}:{flagged} — \
+                    but this diff's removed/changed line(s) are {touched:?} instead. You likely \
+                    have the right file but the wrong line: re-check the field/line the warning \
+                    actually named before writing the diff again."
+                );
+                ctx.push_turn(TurnKind::Rejection, "Validator", content.clone());
+                return Ok(Validation::Failure(content));
+            }
         }
         let original = tokio::fs::read_to_string(target).await.unwrap_or_default();
         match diffy::apply(&original, &patch) {
@@ -774,5 +854,107 @@ mod tests {
             "expected the rejection to include git's second opinion, got: {}",
             rejection.content
         );
+    }
+
+    #[test]
+    fn removed_line_numbers_ignores_context_and_added_lines() {
+        let diff = "--- a/x\n+++ b/x\n@@ -81,7 +81,6 @@ pub(crate) struct Agent {\n     options: ModelOptions,\n     agent_config: HashMap<String, Value>,\n     pub(super) embed_args: Option<EmbedArgs>,\n-    cfg: Value,\n }\n \n impl Agent {\n";
+        // Body line 1 (`options`) sits at the hunk's declared old-start (81); the removed line
+        // (`cfg`) is the 4th body line, so 81 + 3 = 84 — never 82 (`options`, what the plan
+        // actually named), which is the property this guard depends on.
+        assert_eq!(removed_line_numbers(diff), vec![84]);
+    }
+
+    #[test]
+    fn removed_line_numbers_handles_multiple_hunks() {
+        let diff =
+            "--- a/x\n+++ b/x\n@@ -1,2 +1,1 @@\n-one\n two\n@@ -10,2 +9,1 @@\n-ten\n eleven\n";
+        assert_eq!(removed_line_numbers(diff), vec![1, 10]);
+    }
+
+    #[test]
+    fn diagnostic_lines_for_reads_a_cargo_clippy_retrieval_turn() {
+        let mut ctx = Context::new("goal".to_string());
+        ctx.push_turn(
+            TurnKind::Retrieval,
+            "CargoClippy",
+            "src/core/agent.rs:82:5: warning: field `options` is never read\n\
+             src/core/index.rs:595:9: warning: this `if` statement can be collapsed"
+                .to_string(),
+        );
+        assert_eq!(diagnostic_lines_for(&ctx, "src/core/agent.rs"), vec![82]);
+        assert!(diagnostic_lines_for(&ctx, "src/core/other.rs").is_empty());
+    }
+
+    #[test]
+    fn diagnostic_lines_for_is_empty_when_clippy_was_never_run_this_turn() {
+        let ctx = Context::new("goal".to_string());
+        assert!(diagnostic_lines_for(&ctx, "Cargo.toml").is_empty());
+    }
+
+    // Regression for the real `fix_one_clippy_lint` failure documented in TODO.md: the Worker's
+    // plan correctly quotes the clippy warning at Cargo.toml:2, but the diff it writes removes a
+    // different line (4) in the same hunk instead — this must be refused before diffy::apply
+    // (and hence before any disk write), with a message pointing at the specific mismatch.
+    #[tokio::test]
+    async fn apply_patch_rejects_a_diff_that_misses_the_flagged_clippy_line() {
+        let mut ctx = Context::new("goal".to_string());
+        ctx.push_turn(
+            TurnKind::Retrieval,
+            "CargoClippy",
+            "Cargo.toml:2:1: warning: field `authors` is never read".to_string(),
+        );
+        let diff = "--- a/Cargo.toml\n+++ b/Cargo.toml\n@@ -1,4 +1,3 @@\n [package]\n authors = [\"Roelof J.C. Kluin\"]\n description = \"ollama/chroma command-line AI chat tool\"\n-edition = \"2024\"\n";
+        let result = Validation::apply_patch(diff, &mut ctx).await.unwrap();
+        match result {
+            Validation::Failure(_) => {
+                let rejection = ctx
+                    .turns
+                    .iter()
+                    .rev()
+                    .find(|t| t.kind == TurnKind::Rejection)
+                    .expect("a mismatched-line diff should be rejected");
+                assert!(
+                    rejection.content.contains("cargo_clippy result flagged"),
+                    "expected the flagged-line mismatch message, got: {}",
+                    rejection.content
+                );
+            }
+            other => panic!("expected the patch to be rejected, got: {other:?}"),
+        }
+        // Never reached diffy::apply, so the real file on disk must be untouched.
+        let on_disk = tokio::fs::read_to_string("Cargo.toml").await.unwrap();
+        assert!(on_disk.contains("edition = \"2024\""));
+    }
+
+    // A diff that DOES touch the flagged line must pass this guard through to the normal
+    // diffy::apply path — proven here by using a real line number but fabricated content, which
+    // fails for the pre-existing "content mismatch" reason instead, never this new one. Confirms
+    // no false positive on a genuinely correct target line.
+    #[tokio::test]
+    async fn apply_patch_does_not_reject_a_diff_that_touches_the_flagged_line() {
+        let mut ctx = Context::new("goal".to_string());
+        ctx.push_turn(
+            TurnKind::Retrieval,
+            "CargoClippy",
+            "Cargo.toml:2:1: warning: field `authors` is never read".to_string(),
+        );
+        let diff = "--- a/Cargo.toml\n+++ b/Cargo.toml\n@@ -1,4 +1,3 @@\n [package]\n-totally made up line two\n description = \"ollama/chroma command-line AI chat tool\"\n edition = \"2024\"\n";
+        let result = Validation::apply_patch(diff, &mut ctx).await.unwrap();
+        let Validation::Failure(_) = result else {
+            panic!("expected the fabricated content to still fail apply, got: {result:?}");
+        };
+        let rejection = ctx
+            .turns
+            .iter()
+            .rev()
+            .find(|t| t.kind == TurnKind::Rejection)
+            .expect("a failed apply should push a rejection");
+        assert!(
+            !rejection.content.contains("cargo_clippy result flagged"),
+            "the flagged-line guard must not fire when the diff does target that line, got: {}",
+            rejection.content
+        );
+        assert!(rejection.content.contains("Patch apply failed"));
     }
 }

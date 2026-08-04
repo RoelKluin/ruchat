@@ -68,6 +68,19 @@ Contributors found via real trace evidence (`qwen2.5-coder:14b`) and fixed, 2026
     defense-in-depth tolerance independent of the hallucination path (tools.rs). Also noted:
     round-1-4's Architect wrote `FILES: None` despite CHOICE correctly naming the target file -
     the same already-logged pattern from trace 484, not fixed here.
+13. [x] Not live-verified. Root-caused from trace 497 (another `fix_one_clippy_lint` run, same
+    shape as #12 but a different bug): Architect's plan correctly named the clippy-flagged field
+    (`options`, line 82), but the Worker's diff removed a different field (`cfg`, line 85) in the
+    same struct three rounds running - `diffy::apply` accepted it fine (still syntactically
+    valid), so it only surfaced as a confusing Tester compile error each time, burning the whole
+    iteration budget. New deterministic guard in `Validation::apply_patch`: cross-checks the
+    diff's actually-removed line numbers against any `file:line` this run's own CargoClippy result
+    flagged for that file, before ever calling `diffy::apply` - rejects with a specific
+    "wrong line" message instead of spending a Tester round-trip to find out. No-op for any run
+    that never called CargoClippy. protocol.rs (`diagnostic_lines_for`, `removed_line_numbers`).
+    Also observed, not fixed: traces 494-497 all ended at round 5 with no archival into
+    successes/ or failures/ - unconfirmed whether this is a real finalize_trace gap or just the
+    maintainer Ctrl-C'ing a run that was visibly stuck; needs a live repro before treating as a bug.
 
 Two patterns seen live (traces 484/485), not fixed - look like a model-capability limit, not a
 further orchestration bug: Architect suggesting a raw shell command instead of `FILES:` (484);
@@ -85,7 +98,7 @@ Logged, not acted on: maintainer's "add a reason field to every tool_call" idea 
 ROADMAP.md's chain-of-thought Phase 3 item, deferred pending the agentic-evals harness having
 enough scenarios to judge it.
 
-Net: meaningfully improved, not resolved. #1, #2, #5 are live-confirmed; #3/4/6/7/9/10/11/12 are
+Net: meaningfully improved, not resolved. #1, #2, #5 are live-confirmed; #3/4/6/7/9/10/11/12/13 are
 code-fixed and unit-tested but not yet live-confirmed. The two capability-suspected patterns are
 still open. Whether a real run can land a committed change is still unanswered - keep this
 section until one does.
