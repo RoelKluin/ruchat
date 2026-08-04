@@ -1,3 +1,5 @@
+pub(crate) mod hist;
+
 use crate::agent::llm_client::{VectorCollection, VectorStore};
 use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs, UpdateMetadataArrayArgs};
 use crate::ollama::OllamaArgs;
@@ -70,6 +72,28 @@ impl EmbedArgs {
 
     pub(crate) fn set_id_prefix(&mut self, prefix: String) {
         self.id = Some(prefix);
+    }
+
+    /// Builds an `EmbedArgs` from already-resolved sub-configs rather than CLI parsing — for
+    /// callers like `hist::HistIngestArgs` that flatten their own copies of `OllamaArgs`/
+    /// `ChromaClientConfigArgs`/`ChromaCollectionConfigArgs` (so `--path`/`--max-count` don't
+    /// collide with `EmbedArgs`'s own flags) but still want to reuse `embed_raw_items`'s
+    /// chunking/ID-hashing/dedup logic instead of re-implementing it. Chroma-only (matching
+    /// `HistIngestArgs`'s own config surface) — `vector_provider` defaults to Chroma.
+    pub(crate) fn new_for_ingestion(
+        ollama_args: OllamaArgs,
+        client_config: ChromaClientConfigArgs,
+        collection_config: ChromaCollectionConfigArgs,
+    ) -> Self {
+        Self {
+            id: None,
+            ollama_args,
+            client_config,
+            sqlite_vec_client_config: SqliteVecClientConfigArgs::default(),
+            vector_provider: VectorProvider::default(),
+            collection_config,
+            metadata: UpdateMetadataArrayArgs::default(),
+        }
     }
 
     /// The collection this `EmbedArgs` writes to (and so, the collection a caller must query

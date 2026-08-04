@@ -12,6 +12,7 @@ use crate::chroma::retrieve::RetrieveArgs;
 use crate::chroma::search::SearchArgs;
 use crate::cli::config::ConfigArgs;
 use crate::core::embed::EmbedPromptArgs;
+use crate::core::embed::hist::HistIngestArgs;
 use crate::core::index::IndexArgs;
 use crate::ollama::OllamaArgs;
 use crate::ollama::ServerArgs;
@@ -108,6 +109,7 @@ impl Args {
             Commands::ChromaDelete(args) => args.delete(&cfg).await,
             Commands::Manager(args) => Manager::execute_command(args, &cfg).await,
             Commands::Index(args) => args.run(&cfg).await,
+            Commands::ChromaImport(args) => args.ingest(&cfg).await,
             Commands::Completions(args) => {
                 let mut cmd = Args::command();
                 let name = cmd.get_name().to_string();
@@ -170,6 +172,9 @@ pub(crate) enum Commands {
     /// Recursively index a source directory into Chroma using ctags symbol
     /// boundaries (requires `universal-ctags` on PATH).
     Index(IndexArgs),
+    /// Ingest git commit history (messages + diff hunks) into Chroma for RAG —
+    /// each commit message and each diff hunk becomes its own embedded chunk.
+    ChromaImport(HistIngestArgs),
     /// Generate shell completions (e.g. `ruchat completions bash > ruchat.bash`).
     Completions(CompletionsArgs),
     /// Generate a man page to stdout (e.g. `ruchat manpage > ruchat.1`).

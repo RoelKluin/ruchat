@@ -27,6 +27,7 @@ pub(crate) struct HistIngestArgs {
     collection_config: ChromaCollectionConfigArgs,
 }
 
+#[derive(Debug)]
 struct ParsedCommit {
     author: String,
     date: String,
@@ -126,7 +127,7 @@ impl HistIngestArgs {
             );
             msg_meta.insert("date".into(), UpdateMetadataValue::Str(commit.date.clone()));
             msg_meta.insert("type".into(), UpdateMetadataValue::Str("message".into()));
-            items.push((commit.message, Some(msg_meta)));
+            items.push((commit.message, msg_meta));
 
             for hunk in parse_diff_hunks(&commit.diff) {
                 let mut meta = UpdateMetadata::default();
@@ -166,5 +167,64 @@ impl HistIngestArgs {
         embed_args
             .embed_raw_items(items, UpsertMode::Upsert, cfg)
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Matches `git::git_show`'s real format string exactly:
+    // `--format=%an%x1f%ad%n%B%x1e` followed by the patch. Revived 2026-08-04 — this module had
+    // zero tests before (it wasn't even compiled in), so these are the first regression coverage
+    // for parsing logic that was previously only ever exercised, if at all, before it bit-rotted.
+    #[test]
+    fn parse_show_output_splits_author_date_message_and_diff() {
+        let raw = "Roel Kluin\u{1f}Tue Aug 4 06:29:01 2026 +0200\n\
+            Fix a thing\n\n\
+            Longer explanation.\u{1e}diff --git a/foo.rs b/foo.rs\n\
+            @@ -1,2 +1,3 @@\n+new line\n";
+        let commit = parse_show_output(raw).unwrap();
+        assert_eq!(commit.author, "Roel Kluin");
+        assert_eq!(commit.date, "Tue Aug 4 06:29:01 2026 +0200");
+        assert_eq!(commit.message, "Fix a thing\n\nLonger explanation.");
+        assert!(commit.diff.starts_with("diff --git a/foo.rs"));
+    }
+
+    #[test]
+    fn parse_show_output_errors_clearly_on_missing_sentinel() {
+        let raw = "Roel Kluin\u{1f}Tue Aug 4 2026\nno record separator here";
+        let err = parse_show_output(raw).unwrap_err();
+        assert!(format!("{err}").contains("missing sentinel"));
+    }
+
+    #[test]
+    fn parse_diff_hunks_splits_a_two_file_diff_with_correct_line_ranges() {
+        let diff = "diff --git a/a.rs b/a.rs\n\
+            index 111..222 100644\n\
+            --- a/a.rs\n\
+            +++ b/a.rs\n\
+            @@ -1,2 +1,3 @@\n\
+             fn a() {}\n\
+            +fn a2() {}\n\
+            diff --git a/b.rs b/b.rs\n\
+            index 333..444 100644\n\
+            --- a/b.rs\n\
+            +++ b/b.rs\n\
+            @@ -5,1 +5,2 @@\n\
+            -fn b() {}\n\
+            +fn b2() {}\n";
+        let hunks = parse_diff_hunks(diff);
+        assert_eq!(hunks.len(), 2);
+        assert_eq!(hunks[0].file, "a.rs");
+        assert_eq!((hunks[0].old_start, hunks[0].old_ct), (1, 2));
+        assert_eq!((hunks[0].new_start, hunks[0].new_ct), (1, 3));
+        assert_eq!(hunks[1].file, "b.rs");
+        assert_eq!((hunks[1].old_start, hunks[1].new_start), (5, 5));
+    }
+
+    #[test]
+    fn parse_diff_hunks_returns_empty_for_a_non_diff_string() {
+        assert!(parse_diff_hunks("not a diff at all").is_empty());
     }
 }

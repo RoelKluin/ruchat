@@ -192,6 +192,40 @@ pub(crate) async fn git_log(path: Option<&str>, max_count: Option<u32>) -> Resul
     run_git_command_capture(args).await
 }
 
+/// Just the commit hashes `git log` would list, one per line — used by `hist::HistIngestArgs`'s
+/// ingestion loop to drive per-commit `git_show` calls. Separate from `git_log` (the
+/// human-readable `--oneline` form) since that output isn't reliably parseable back into hashes
+/// alone.
+pub(crate) async fn git_log_hashes(
+    path: Option<&str>,
+    max_count: Option<u32>,
+) -> Result<Vec<String>> {
+    let count_flag = format!("-n{}", max_count.unwrap_or(20));
+    let mut args: Vec<&str> = vec!["log", "--format=%H", count_flag.as_str()];
+    if let Some(p) = path {
+        args.push("--");
+        args.push(p);
+    }
+    let output = run_git_command_capture(args).await?;
+    Ok(output
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect())
+}
+
+/// Formatted single-commit dump for `hist::HistIngestArgs`'s ingestion path: author + date
+/// (unit-separator-joined) on one line, then the raw commit message body, a record-separator
+/// sentinel, then the unified diff — matches `hist::parse_show_output`'s expected shape exactly.
+/// `hash` is always a real git-produced SHA from `git_log_hashes`'s own output here, never
+/// Worker/user-controlled free text, so (unlike `ripgrep`'s pattern argument) there's no
+/// flag-injection surface to guard against — a real SHA can't start with `-`. Deliberately no
+/// `--` separator before it either: unlike a path argument, `--` would make git treat the hash
+/// as a pathspec instead of a revision, which would be wrong here.
+pub(crate) async fn git_show(hash: &str) -> Result<String> {
+    run_git_command_capture(vec!["show", "-p", "--format=%an%x1f%ad%n%B%x1e", hash]).await
+}
+
 /// Read-only `git blame --line-porcelain` for a single file.
 pub(crate) async fn git_blame(path: &str) -> Result<String> {
     run_git_command_capture(vec!["blame", "--line-porcelain", "--", path]).await
