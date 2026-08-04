@@ -17,7 +17,7 @@ use serde_json::Value;
 /// this struct is flattened into the same `AskArgs` as `OllamaArgs`'s `ModelArgs`, which already
 /// owns plain `model`/`temperature`/`top_p` ids — reusing those names here would be a clap arg-id
 /// collision, not just a flag-name one.
-#[derive(Parser, Debug, Clone, Default, PartialEq, Deserialize)]
+#[derive(Parser, Clone, Default, PartialEq, Deserialize)]
 pub(crate) struct AnthropicArgs {
     /// Anthropic API key — prefer the ANTHROPIC_API_KEY env var over this flag (a value passed
     /// here is visible in shell history/process listings). Separate from a Claude Pro
@@ -49,6 +49,22 @@ pub(crate) struct AnthropicArgs {
 
     #[arg(long, help_heading = "Anthropic (Claude) Configuration")]
     anthropic_top_p: Option<f32>,
+}
+
+/// Manual, not derived: `api_key` is a secret that can be set via this struct (the CLI flag or
+/// `cfg`-file path) — mirrors `AnthropicClient`'s own manual `Debug` impl, which redacts the
+/// same field once it reaches that stage. A future `{:?}` on this struct (e.g. debug-logging
+/// the parsed `AskArgs`) must not dump it verbatim.
+impl std::fmt::Debug for AnthropicArgs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AnthropicArgs")
+            .field("api_key", &self.api_key.as_ref().map(|_| "<redacted>"))
+            .field("anthropic_model", &self.anthropic_model)
+            .field("anthropic_max_tokens", &self.anthropic_max_tokens)
+            .field("anthropic_temperature", &self.anthropic_temperature)
+            .field("anthropic_top_p", &self.anthropic_top_p)
+            .finish()
+    }
 }
 
 impl AnthropicArgs {
