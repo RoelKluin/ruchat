@@ -723,7 +723,6 @@ impl Orchestrator {
         let mut scope_round = 0;
         let mut last_scope_output: Option<String> = None;
         let mut last_architect_output: Option<String> = None;
-        let mut last_worker_output: Option<String> = None;
         // Set only by `Stage::Commit` succeeding — both `Stage::Escalate` and `Stage::Retry`'s
         // iteration-budget-exhausted branch reach `Stage::Done` without ever going through
         // Commit, and both are "the agents did not reach a successful, committed result" even
@@ -773,28 +772,40 @@ impl Orchestrator {
                         Stage::Escalate("max iterations reached without acceptance".into())
                     } else {
                         retry_transient!(self.architect.query_stream(&self.chat, ctx, &tx))?;
+                        // A repeated plan is NOT treated as fatal. It used to trigger an
+                        // immediate `Stage::Escalate` on the very first repeat — measured against
+                        // real runs (see TODO.md's pinned reliability item), that was killing the
+                        // overwhelming majority of them after just 1-2 of a configured 5-round
+                        // `max_iterations` budget, well before it was exhausted: a repeated plan
+                        // doesn't mean no progress is possible, since the Worker/Test/Validate
+                        // stages can still behave differently this round (e.g. producing a
+                        // corrected diff informed by a rejection now in context that wasn't
+                        // there last round). `ctx.round > max_iterations` above already bounds a
+                        // genuine infinite stall without a separate fast-fail — same posture the
+                        // Scoper's own identical-output handling already uses (forces
+                        // progression instead of escalating).
                         if let Some(prev) = &last_architect_output
                             && prev == &ctx.output
                         {
                             ctx.push_turn(
-                                TurnKind::Rejection,
+                                TurnKind::System,
                                 "Orchestrator",
-                                "Architect repeated identical plan with no new information — likely stalled, escalating".into(),
+                                "Note: this plan is identical to the previous round's. If the \
+                                rejection reason above suggests a different approach, use it \
+                                now — otherwise proceeding with the same plan is fine as long \
+                                as the implementation actually changes this round."
+                                    .into(),
                             );
-                            Stage::Escalate(
-                                "Architect stalled: repeated identical output across rounds".into(),
-                            )
-                        } else {
-                            last_architect_output = Some(ctx.output.clone());
-                            // Without this, context_view() never finds a Plan
-                            // turn in a real run (only debug_stage_machine
-                            // pushed one) — the Worker, Critics, and the
-                            // Architect's own next round all read an empty
-                            // "PLAN:" section and effectively improvise from
-                            // scratch each round instead of building on it.
-                            ctx.push_turn(TurnKind::Plan, "Architect", ctx.output.clone());
-                            Stage::Retrieve
                         }
+                        last_architect_output = Some(ctx.output.clone());
+                        // Without this, context_view() never finds a Plan
+                        // turn in a real run (only debug_stage_machine
+                        // pushed one) — the Worker, Critics, and the
+                        // Architect's own next round all read an empty
+                        // "PLAN:" section and effectively improvise from
+                        // scratch each round instead of building on it.
+                        ctx.push_turn(TurnKind::Plan, "Architect", ctx.output.clone());
+                        Stage::Retrieve
                     }
                 }
                 Stage::Retrieve => {
@@ -868,21 +879,15 @@ impl Orchestrator {
                                 );
                             }
                         }
+                        // No separate identical-output hard-escalate here (there used to be
+                        // one): if the Worker calls a read-only tool again despite the reminder
+                        // above, `execute_and_verify`'s `other =>` arm (agent.rs) already gives
+                        // it a specific, actionable rejection and a fresh `Stage::Retry` round —
+                        // strictly better than killing the run outright, since it actually uses
+                        // the configured `max_iterations` budget instead of abandoning most of
+                        // it. See the matching change to the Architect's repeat-check above and
+                        // TODO.md's pinned reliability item for the measured evidence.
                         retry_transient!(self.worker.query_stream(&self.chat, ctx, &tx))?;
-                        if let Some(prev) = &last_worker_output
-                            && prev == &ctx.output
-                        {
-                            ctx.push_turn(
-                                TurnKind::Rejection,
-                                "Orchestrator",
-                                "Worker repeated identical plan with no new information — likely stalled, escalating".into(),
-                            );
-                            stage = Stage::Escalate(
-                                "Worker stalled: repeated identical output across rounds".into(),
-                            );
-                            continue;
-                        }
-                        last_worker_output = Some(ctx.output.clone());
                     }
                     ctx.push_turn(TurnKind::Implementation, "Worker", ctx.output.clone());
                     self.run_implement_patch_loop(ctx, &tx).await?
