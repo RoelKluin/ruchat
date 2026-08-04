@@ -81,6 +81,15 @@ impl DebugBreakpoints {
     }
 }
 
+/// Whether a `--approve` commit-gate answer counts as approval — deliberately strict (an exact
+/// "y"/"yes", case-insensitive-ish via explicit variants, trimmed) rather than "anything not
+/// starting with n": a HITL approval gate that defaults to yes on ambiguous or accidental input
+/// (a stray keystroke, a blank line from a fumbled Enter) would defeat the entire point of the
+/// gate. Everything else, including an empty line, counts as rejection.
+fn is_approval_yes(answer: &str) -> bool {
+    matches!(answer.trim(), "y" | "Y" | "yes" | "Yes")
+}
+
 pub(crate) struct Orchestrator {
     // Core pipeline
     scoper: Option<Agent>,
@@ -248,6 +257,7 @@ impl Orchestrator {
         debug_sequence: Option<String>,
         breakpoints: DebugBreakpoints,
         resume: bool,
+        approve_commit: bool,
     ) -> impl Stream<Item = OrchestratorResult> {
         let (tx, rx) = mpsc::channel(100);
         let cancel = CancellationToken::new();
@@ -278,7 +288,7 @@ impl Orchestrator {
             let result = if let Some(path) = debug_sequence {
                 self.debug_stage_machine(goal, path, tx.clone(), task_cancel, breakpoints).await
             } else {
-                self.run_stage_machine(goal, tx.clone(), task_cancel, resume).await
+                self.run_stage_machine(goal, tx.clone(), task_cancel, resume, approve_commit).await
             };
             if let Err(e) = result
                 && !matches!(e, RuChatError::Cancelled)
@@ -619,6 +629,7 @@ impl Orchestrator {
         tx: mpsc::Sender<OrchestratorResult>,
         cancel: CancellationToken,
         resume: bool,
+        approve_commit: bool,
     ) -> Result<()> {
         let max_iterations = self
             .orchestrator_config
@@ -887,21 +898,61 @@ impl Orchestrator {
                 }
                 Stage::Accept => Stage::Commit,
                 Stage::Commit => {
-                    // Optional dedicated model for commit-message generation
-                    // (`commit_message_model`); falls back to the Worker's model — always
-                    // configured, since Worker is a required agent — rather than a made-up
-                    // default, so the message-writer uses whatever the user already trusted
-                    // enough to implement the change.
-                    let commit_model = self
-                        .orchestrator_config
-                        .get("commit_message_model")
-                        .and_then(|v| v.as_str())
-                        .or_else(|| self.worker.get_str("model").ok())
-                        .unwrap_or("qwen2.5-coder:14b")
-                        .to_string();
-                    commit_feature_branch(ctx, self.chat.as_ref(), &commit_model).await?;
-                    success = true;
-                    Stage::Done
+                    // Optional interactive human-in-the-loop approval gate — off by default
+                    // (`--approve`). ruchat's only approval mechanism otherwise is automated
+                    // Critics (an LLM-driven gate) plus post-hoc review of the committed branch;
+                    // this closes the real gap AutoGen's UserProxy/LangGraph's interrupts cover
+                    // (identified via `comparisons/*.md`) without adding open-ended
+                    // interactivity elsewhere — just this one, well-known pause point. Rejecting
+                    // just returns `Stage::Escalate` like any other escalation in this match —
+                    // the top-level `Stage::Escalate` arm above already handles clearing the
+                    // checkpoint, tracing, and breaking, so there's nothing special to do here.
+                    let approved = if approve_commit {
+                        let plan = ctx
+                            .turns
+                            .iter()
+                            .rev()
+                            .find(|t| t.kind == TurnKind::Plan)
+                            .map(|t| t.content.clone())
+                            .unwrap_or_else(|| "(no plan turn found)".to_string());
+                        let diff = git::git_diff(None, false)
+                            .await
+                            .unwrap_or_else(|e| format!("(failed to compute diff: {e})"));
+                        ctx.trace(
+                            &tx,
+                            format!(
+                                "[APPROVAL REQUIRED] About to commit. Latest plan:\n{plan}\n\n\
+                                 Pending diff:\n{diff}\n\nType 'y' to commit, anything else to \
+                                 stop without committing."
+                            ),
+                        )
+                        .await;
+                        let mut io = crate::io::Io::new();
+                        let answer = io.read_line().await.unwrap_or_default();
+                        is_approval_yes(&answer)
+                    } else {
+                        true
+                    };
+
+                    if !approved {
+                        Stage::Escalate("commit rejected by human approval gate".into())
+                    } else {
+                        // Optional dedicated model for commit-message generation
+                        // (`commit_message_model`); falls back to the Worker's model — always
+                        // configured, since Worker is a required agent — rather than a made-up
+                        // default, so the message-writer uses whatever the user already trusted
+                        // enough to implement the change.
+                        let commit_model = self
+                            .orchestrator_config
+                            .get("commit_message_model")
+                            .and_then(|v| v.as_str())
+                            .or_else(|| self.worker.get_str("model").ok())
+                            .unwrap_or("qwen2.5-coder:14b")
+                            .to_string();
+                        commit_feature_branch(ctx, self.chat.as_ref(), &commit_model).await?;
+                        success = true;
+                        Stage::Done
+                    }
                 }
                 Stage::Scope => {
                     if self.scoper.is_none() || scope_round >= max_scope_iterations {
@@ -1599,6 +1650,7 @@ mod tests {
             Some(path),
             DebugBreakpoints::default(),
             false,
+            false,
         );
         tokio_stream::StreamExt::collect::<Vec<Result<StreamItem>>>(stream)
             .await
@@ -1861,6 +1913,27 @@ mod tests {
         assert!(bp.should_pause_after("Validator"));
         assert!(!bp.should_pause_after("Architect"));
         assert!(!bp.should_pause_after("Librarian"));
+    }
+
+    // Regression canary for the HITL approval gate (maintainer: "keep on working on roadmap
+    // entries, overnight"). `is_approval_yes` is the one piece of this feature with real
+    // branching logic that doesn't need a live terminal — the actual pause (plan/diff shown via
+    // `ctx.trace`, then a blocking stdin read via the same `Io` type breakpoints already use)
+    // was instead verified live: `--approve` against a real agentic run, confirming the plan
+    // and a real `git diff` render before the prompt, that typing 'y' proceeds to a real commit,
+    // and that any other answer stops the run via `Stage::Escalate` without committing.
+    #[test]
+    fn is_approval_yes_accepts_only_an_exact_y_or_yes() {
+        for accepted in ["y", "Y", "yes", "Yes", " y ", "y\n"] {
+            assert!(is_approval_yes(accepted), "expected {accepted:?} to be approval");
+        }
+    }
+
+    #[test]
+    fn is_approval_yes_rejects_everything_else_including_blank() {
+        for rejected in ["n", "N", "no", "", "  ", "YES", "sure", "yep"] {
+            assert!(!is_approval_yes(rejected), "expected {rejected:?} to be rejection");
+        }
     }
 
     #[tokio::test]

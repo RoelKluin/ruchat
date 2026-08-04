@@ -106,6 +106,13 @@ pub(crate) struct AskArgs {
     #[arg(long, conflicts_with_all = ["debug_sequence", "prompt"], help_heading = "Agent Configuration")]
     resume: bool,
 
+    /// Interactive human-in-the-loop approval gate: pause before committing, print the latest
+    /// plan and the pending (uncommitted) diff, and wait for an explicit 'y' on stdin before
+    /// proceeding — anything else stops the run without committing. Off by default; ruchat's
+    /// only approval mechanism otherwise is automated Critics plus post-hoc branch review.
+    #[arg(long, help_heading = "Agent Configuration")]
+    approve: bool,
+
     #[command(flatten)]
     prompt: PromptArgs,
 
@@ -294,6 +301,7 @@ impl AskArgs {
                 debug_sequence: self.debug_sequence.clone(),
                 breakpoints: DebugBreakpoints::new(self.step, self.breakpoint.clone()),
                 resume: self.resume,
+                approve_commit: self.approve,
             }
         } else if self.resume {
             // OneShot has no Context/Stage machine at all — nothing a checkpoint could resume.

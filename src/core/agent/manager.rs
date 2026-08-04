@@ -90,6 +90,7 @@ impl Manager {
                     debug_sequence: None,
                     breakpoints: Default::default(),
                     resume: false,
+                    approve_commit: false,
                 };
                 let mut cio = Io::new();
                 render_pipeline_stream(pipeline.run(), &mut cio).await?;
