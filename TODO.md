@@ -14,7 +14,7 @@ Last updated: 2026-08-04
 
 ### 3. Agent Orchestration
 - [ ] Make agent pipeline fully configurable via JSON (the `Stage` sequence in `orchestrator.rs` is still fixed in code, not data — see `ROADMAP.md` Phase 3)
-- [ ] Improve Librarian → Worker document injection further (per-document summarization before Worker, multi-collection queries — reranking/relevance scoring is done, see `providers/vector/chroma/rerank.rs`)
+- [x] Stale, corrected 2026-08-04: this whole item (per-document summarization, multi-collection queries, reranking) already shipped — see `ROADMAP.md`'s "Improved RAG" Phase 2 entry (`doc_summary.rs`, `Query`'s `collection` now a list, `chroma/rerank.rs`).
 
 ### 5. Security & CI (found 2026-08-04, specialist review round — see below)
 - [x] **CRITICAL, fixed same-day**: `ripgrep` Worker tool had no repo-root containment check (a tool call could read arbitrary files like `/etc/passwd` — verified live) and no `--` flag terminator before the untrusted `pattern`/`path` args, so a pattern like `--pre=/bin/sh` would be parsed as ripgrep's own `--pre` flag (runs an arbitrary program against scanned file contents) — combined with `apply_patch` already being able to write arbitrary tracked-file content, a real code-execution chain through a tool meant to be safe by construction. See Done section for the fix writeup.
