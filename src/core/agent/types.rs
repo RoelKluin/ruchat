@@ -119,6 +119,12 @@ impl Context {
     /// gets its own file instead of every run overwriting the same path. Call once, right
     /// after `Context::new`, before the first `trace()` call.
     pub(crate) async fn init_trace_index(&mut self) {
+        // See `trace()`'s doc comment for why test builds skip real `ruchat_traces/` I/O
+        // entirely — scanning the directory here would be harmless (read-only) on its own, but
+        // there's no point doing it when `trace()` itself is never going to write anything.
+        if cfg!(test) {
+            return;
+        }
         let mut max_seen = 0u64;
         for dir in [TRACE_DIR, TRACE_SUCCESS_DIR, TRACE_FAILURE_DIR] {
             let Ok(mut entries) = tokio::fs::read_dir(dir).await else {
@@ -209,6 +215,19 @@ impl Context {
         if !msg.is_empty() {
             let _ = tx.send(Ok(StreamItem::Event(AgentEvent::Trace(msg)))).await;
         }
+        // `cfg!(test)`, not a real condition on the run itself: fixture-driven tests
+        // (`run_fixture`/`debug_stage_machine`) exercise the real stage machine, including this
+        // call, against `agent_debug/*.json` sequences — with nothing to distinguish "a real
+        // CLI invocation" from "a unit test" at this layer, every `cargo test --lib` run used to
+        // write hundreds of real files into the repo's own `ruchat_traces/` (one per turn per
+        // fixture test), permanently orphaned since tests never reach the archival step below
+        // that would otherwise clean them up. Found 2026-08-03 while investigating why that
+        // directory had 460+ loose files with `Goal: test goal` content — not from real runs at
+        // all. Tests that need to assert on trace *content* should call `trace_body()` directly
+        // instead of reading it back off disk.
+        if cfg!(test) {
+            return;
+        }
         let _ = tokio::fs::create_dir_all(TRACE_DIR).await;
         let _ = tokio::fs::write(self.live_trace_path(), self.trace_body()).await;
     }
@@ -237,6 +256,10 @@ impl Context {
     /// unsuccessful run (escalated, or the iteration budget exhausted without ever reaching
     /// `Stage::Commit`).
     pub(crate) async fn finalize_failure_trace(&self, summary: &str) {
+        // See `trace()`'s doc comment.
+        if cfg!(test) {
+            return;
+        }
         let _ = tokio::fs::create_dir_all(TRACE_FAILURE_DIR).await;
         let content = format!(
             "# Why this run did not succeed\n\n{summary}\n\n---\n\n{}",
@@ -252,6 +275,10 @@ impl Context {
     /// be useful later, and keeping `successes/` to one short file per run makes it easy to
     /// skim. Removes the live in-progress file. Called once, after `Stage::Commit` succeeds.
     pub(crate) async fn finalize_success_trace(&self, summary: &str) {
+        // See `trace()`'s doc comment.
+        if cfg!(test) {
+            return;
+        }
         let _ = tokio::fs::create_dir_all(TRACE_SUCCESS_DIR).await;
         let content = format!("# Why this run succeeded\n\n{summary}\n");
         let dest = Path::new(TRACE_SUCCESS_DIR).join(self.trace_filename());
