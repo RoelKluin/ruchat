@@ -973,7 +973,23 @@ impl Orchestrator {
                 Stage::Retry => {
                     if ctx.round >= max_iterations {
                         if ctx.turns.iter().any(|t| t.kind == TurnKind::Implementation) {
-                            ctx.trace(&tx, "Iteration budget exhausted — surfacing best-known implementation, NOT committed, unresolved feedback remains.".into()).await;
+                            // Real bug found 2026-08-04 (maintainer's own working tree): this arm
+                            // used to skip `revert_pending_patches` entirely — only the normal
+                            // still-has-budget retry loop below called it. That left the final
+                            // round's applied-but-never-validated patch sitting on disk,
+                            // uncommitted, indefinitely: not reverted (this arm), not committed
+                            // (deliberately, see below), just silently mutated and forgotten. A
+                            // real, reproduced instance: an invalid `allow_unused = true` clap
+                            // builder call (doesn't exist in clap's API) got left in
+                            // `src/cli/config.rs`, breaking the build for every subsequent run —
+                            // including unrelated later `ruchat pipe` invocations, which then
+                            // reported confusing pre-existing compile errors with no indication
+                            // they weren't caused by anything in the current run. Same posture as
+                            // the still-has-budget branch below: a patch that was never validated
+                            // must not be left in place. The trace file (not the working tree)
+                            // is where a failed attempt's diff should be reviewed from.
+                            ctx.revert_pending_patches(&tx).await;
+                            ctx.trace(&tx, "Iteration budget exhausted — NOT committed, unresolved feedback remains; working tree reverted to its pre-run state (see the trace file for what was attempted).".into()).await;
                             Stage::Done // deliberately not Commit — don't auto-commit an unvalidated patch
                         } else {
                             Stage::Escalate("repeated rejections, iteration budget exhausted, no implementation produced".into())

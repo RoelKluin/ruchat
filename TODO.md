@@ -262,6 +262,36 @@ live-run evidence attached, not just remove the bullet.
         win rather than a behavioral one. A pure extract-to-module refactor (no logic change) was recommended
         instead. Deliberately not started — the maintainer asked to keep it queued and focus on the
         model-capability question first.
+    - **Eighth contributor, and a genuinely separate class of bug from the other seven — an unvalidated patch left
+      permanently applied on disk, uncommitted, when a run exhausts its iteration budget (2026-08-04, found while
+      investigating a stray uncommitted `src/cli/config.rs` change the maintainer noticed and initially suspected
+      might be mine).** Root-caused precisely: `ruchat_trace_486.md` shows the Worker applying `allow_unused = true`
+      to a clap `Arg` builder as a "fix" for a clippy warning — invalid, clap has no such method, `cargo check`
+      would have rejected it — and the run ended (iteration budget exhausted) without ever reverting it.
+      `ruchat_trace_487.md` and `488.md` (the maintainer's next two attempts) both show `cargo_clippy`/`cargo_check`
+      reporting that exact same `no method named 'allow_unused'` compile error from their very first round —
+      meaning the broken change from run 486 was silently still there, breaking the build for every subsequent
+      unrelated run, with nothing indicating it wasn't caused by the current run.
+      - **Root cause**: `Stage::Retry`'s iteration-exhausted branch (`src/core/orchestrator.rs`) — when the budget
+        runs out but *some* Implementation happened, it correctly goes to `Stage::Done` instead of auto-committing
+        an unvalidated patch (deliberate, and correct), but never called `ctx.revert_pending_patches`, unlike the
+        normal still-has-budget retry loop right below it, which already does. So the final round's applied-but-
+        never-validated patch was neither committed (correct) nor reverted (the gap) — just left mutated on disk
+        indefinitely, with only an ephemeral trace-log line as any record of why.
+      - **Fixed (2026-08-04)**: that branch now calls `revert_pending_patches` too, before transitioning to
+        `Stage::Done` — same safety posture the still-has-budget branch already uses ("a patch that was never
+        validated must not be left in place"), just applied consistently to both exit paths instead of one. The
+        trace message was also reworded to say the working tree was reverted, pointing to the trace file (not the
+        working tree) as where to review what was actually attempted. Not independently unit-tested beyond the
+        already-existing `revert_pending_patches_restores_every_recorded_file_and_clears_the_list` test — this fix
+        is a one-line call-site ordering correction inside `Stage`-level control flow, the same not-unit-testable-
+        without-live-infra category as the rest of this section; the revert *mechanism* itself was already fully
+        covered. 304 lib tests pass, clippy clean, fmt clean. **Not yet live-verified**, and — unlike the other
+        fixes in this section — this one is fundamentally hard to verify live on demand, since it only triggers
+        when a run exhausts its budget with an unvalidated patch still applied; the maintainer's next few runs
+        naturally exercising that path is the realistic verification path, not a deliberately engineered repro.
+      - `src/cli/config.rs`'s broken `allow_unused = true` was reverted (maintainer confirmed, 2026-08-04) — not a
+        code fix, just cleanup of the artifact this bug produced.
     - **Net assessment: meaningfully improved, not resolved.** The single most severe issue (runs dying almost
       instantly, well short of their configured budget) is fixed and live-confirmed; the double-read-only-tool-call
       and Architect-tool-call-hallucination contributors are fixed and live-confirmed (the second one via the
