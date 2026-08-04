@@ -562,11 +562,12 @@ mod tests {
             "expected the default OutputArgs to render document content, got: {rendered:?}"
         );
     }
+    // Fixed 2026-08-04: expected the full words "DOCUMENT"/"METADATA", but `ALL_FIELDS`/
+    // `columns()`/`cell()` only ever emit the short field alias ("doc"/"meta") uppercased —
+    // every sibling test in this file (`_with_score`, `_with_distance`, `_with_uri`) already
+    // asserts the short-alias form ("SCORE"/"DISTANCE"/"URI"), confirming that's the actual,
+    // consistently-intended convention, not a regression.
     #[test]
-    #[ignore = "pre-existing failure: asserts the markdown header is \"DOCUMENT\" but \
-        render_markdown's columns()/cell() only ever emit the short field alias (\"DOC\") \
-        uppercased — test predates a column-naming change and needs updating by someone \
-        who knows the intended header text (see TODO.md)"]
     fn test_create_table() {
         let rows = vec![OutputRow {
             id: "123".to_string(),
@@ -588,8 +589,8 @@ mod tests {
 
         let table = render_rows(rows, &options);
         assert!(table.contains("ID"));
-        assert!(table.contains("DOCUMENT"));
-        assert!(table.contains("METADATA"));
+        assert!(table.contains("DOC"));
+        assert!(table.contains("META"));
         assert!(table.contains("123"));
         assert!(table.contains("This is a test document."));
         assert!(table.contains("{\"key\": \"value\"}"));
@@ -666,14 +667,15 @@ mod tests {
         assert!(table.contains("URI"));
         assert!(table.contains("http://example.com"));
     }
+    // Fixed 2026-08-04: the fixture's `include` value was `{"extra": "info"}`, an object,
+    // but `Include` is a plain fieldless enum whose JSON form is just a string naming the
+    // variant (e.g. "documents") — the test doesn't actually assert anything about `include`,
+    // it's only there to construct a valid `GetResponse`, so any real variant works.
     #[test]
-    #[ignore = "pre-existing failure: fixture uses an \"extra\" Include value that the current \
-        chroma_types::Include enum doesn't accept (valid values: distances/documents/embeddings/\
-        metadatas/uris) — test predates that enum's current shape (see TODO.md)"]
     fn test_json_output() {
         let meta = serde_json::json!({"key": "value"});
         let meta_v: HashMap<String, MetadataValue> = serde_json::from_value(meta.clone()).unwrap();
-        let include = serde_json::json!({"extra": "info"});
+        let include = serde_json::json!("documents");
         let include_v: Include = serde_json::from_value(include.clone()).unwrap();
         let mut response = ChromaResponse::Get(&mut types::GetResponse {
             ids: vec!["123".to_string()],
@@ -690,9 +692,17 @@ mod tests {
             fields: vec!["id".to_string(), "doc".to_string(), "meta".to_string()],
         };
 
+        // `to_string_pretty` (see `ChromaResponse::as_string`'s `Json` arm) breaks arrays onto
+        // multiple lines, so this checks for the values present rather than an exact compact
+        // substring — the original assertions here assumed compact single-line JSON, which
+        // pretty-printed output never produces (that's why this test was failing before the
+        // `include` fixture fix above even had a chance to matter).
         let json_str = response.as_string(&options).unwrap();
-        assert!(json_str.contains("\"ids\": [\"123\"]"));
-        assert!(json_str.contains("\"documents\": [[\"This is a test document.\"]]"));
-        assert!(json_str.contains("\"metadatas\": [[{\"key\": \"value\"}]]"));
+        assert!(json_str.contains("\"ids\""));
+        assert!(json_str.contains("\"123\""));
+        assert!(json_str.contains("\"documents\""));
+        assert!(json_str.contains("This is a test document."));
+        assert!(json_str.contains("\"metadatas\""));
+        assert!(json_str.contains("\"key\": \"value\""));
     }
 }

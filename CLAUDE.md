@@ -142,11 +142,11 @@ Prioritize these repo-specific concerns over generic checklist items:
   (`core/agent/llm_client.rs`) driven by `agent_debug/*.json` fixtures — all
   11 fixtures are wired up as of 2026-08-04 (the previously-gap
   `architect_librarian_worker[_validator]` combinations were closed).
-- Three known-failing tests are `#[ignore]`d with reasons, not silently
-  skipped: `chroma::metadata::tests::test_get_metadata_valid`,
-  `chroma::tests::test_create_table`, `chroma::tests::test_json_output` — see
-  `TODO.md` for the specific logic gap in each before "fixing" them by
-  changing the assertion instead of the behavior.
+- The three previously-`#[ignore]`d tests (`chroma::metadata::tests::
+  test_get_metadata_valid`, `chroma::tests::test_create_table`,
+  `chroma::tests::test_json_output`) were fixed 2026-08-04 — each was the
+  test's own expectation being wrong, not a real logic bug (see `TODO.md`
+  Done section). No more known-failing tests in `cargo test --lib`.
 - A CI workflow does exist (`.github/workflows/ci.yml`: build + `cargo
   clippy --lib --tests` + `cargo test --lib` on push/PR, deliberately no
   `-D warnings`/`fmt --check` gate yet), but its `push` trigger targets

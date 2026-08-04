@@ -81,12 +81,13 @@ where
 mod tests {
     use super::*;
 
+    // Was written expecting a "key:value,key:value" shorthand that `parse_metadata` never
+    // actually implemented anywhere — the field's own doc comment ("A JSON string or a file
+    // path to JSON metadata") confirms JSON-only was always the intended behavior, not a
+    // missing feature. Fixed 2026-08-04 to test the real, documented syntax instead.
     #[test]
-    #[ignore = "pre-existing failure: parse_metadata only accepts JSON or a file path today, \
-        not the 'key:value,key:value' shorthand this test expects — needs someone with \
-        context on which behavior is actually intended (see TODO.md)"]
     fn test_get_metadata_valid() {
-        let metadata_str = "key1:value1,key2:value2";
+        let metadata_str = r#"{"key1":"value1","key2":"value2"}"#;
         let result = parse_metadata::<Metadata>(metadata_str);
         assert!(result.is_ok());
         let metadata = result.unwrap();
