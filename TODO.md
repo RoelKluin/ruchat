@@ -229,6 +229,39 @@ live-run evidence attached, not just remove the bullet.
           there. Worth a note for whoever picks this up next: before writing more orchestration-level mitigations
           for this specific pattern, it's worth testing whether a larger/different model handles this scenario
           better, since qwen2.5-coder:14b may simply be under-provisioned for reliably switching modes mid-round.
+    - **Before concluding the two patterns above are purely a model-capability limit (maintainer request 2026-08-04:
+      investigate that question before writing it off), checked whether this codebase was contributing to the
+      problem itself first — and found a real, self-inflicted one.** None of the repro scripts
+      (`scripts/refactoring_examples.sh`) configure a `--summarizer-model`, so `Stage::Retry`'s history-compression
+      trigger never fires for any of these runs — `HISTORY`/`DOCUMENTS` grow completely unbounded, round over round.
+      Compounding that: `auto_ground_planned_file` (added earlier this session) re-injects a fresh ~4000-char
+      grounding dump *every* round with no deduplication — a 5-round run repeatedly targeting the same file (the
+      common case, matching every trace analyzed) was accumulating up to 5 near-identical copies of the same file
+      content, all still sitting in context. That's a real, measurable, self-inflicted contributor to exactly the
+      kind of context bloat known to degrade instruction-following in local models — independent of whether
+      qwen2.5-coder:14b is otherwise "capable enough."
+      - **Fixed in code and unit-tested (2026-08-04).** `auto_ground_planned_file` now removes any earlier
+        `AutoGroundedFile` turn before pushing the fresh one, so there's always exactly one grounding entry in
+        context, not one per round — keeps the recency benefit, drops the duplication cost. New test simulates 3
+        rounds re-grounding the same file and confirms exactly one turn survives, and that it's the freshest one.
+        304 lib tests pass, clippy clean, fmt clean. **Not yet live-verified.**
+      - **This doesn't fully answer the model-capability question — it rules out one concrete, self-inflicted
+        confound before accepting that conclusion.** The two patterns in `484.md`/`485.md` may still turn out to be
+        a real capability limit even with this bloat removed; a live re-run is needed to tell. If they persist, the
+        maintainer's own suggestion — trying `qwen2.5-coder:32b` (already pulled locally, per `chat.toml`'s
+        default) via `--team-model qwen2.5-coder:32b` in place of `14b` — is the next concrete, low-effort thing to
+        try before assuming it's unfixable at the orchestration layer.
+      - **Queued, not started (maintainer 2026-08-04):** extract the diff-repair functions (`protocol.rs`:
+        `normalize_diff_hunk_lines`, `fix_hunk_header_counts`, `count_hunk_body_lines`, `ensure_diff_has_file_header`)
+        and the stall-mitigation functions (`orchestrator.rs`: `is_read_only_worker_tool`,
+        `round_has_actionable_diagnostics`, `strip_architect_tool_call_hallucination`, `auto_ground_planned_file`)
+        into their own dedicated modules — both files have grown considerably from this session's accumulated small
+        fixes. A nom-based parser rewrite was proposed and considered instead; assessed as high-risk/low-value since
+        `diffy` already *is* a unified-diff parser — a nom rewrite would mean duplicating its parsing job with a
+        more tolerant grammar, a substantial rewrite of code that's now live-verified working, for an organizational
+        win rather than a behavioral one. A pure extract-to-module refactor (no logic change) was recommended
+        instead. Deliberately not started — the maintainer asked to keep it queued and focus on the
+        model-capability question first.
     - **Net assessment: meaningfully improved, not resolved.** The single most severe issue (runs dying almost
       instantly, well short of their configured budget) is fixed and live-confirmed; the double-read-only-tool-call
       and Architect-tool-call-hallucination contributors are fixed and live-confirmed (the second one via the

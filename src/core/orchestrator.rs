@@ -1697,11 +1697,18 @@ const MAX_AUTO_GROUNDED_FILE_CHARS: usize = 4_000;
 /// uses) — with zero or multiple planned files there's no single safe target to show.
 /// Deliberately re-injected every round, not just once: the same recency reasoning behind
 /// everything else in this section — local models attend far better to content near the end of
-/// their context than to something shown several rounds ago. Best-effort like every other
-/// diagnostic-nicety path in this codebase (`Checkpoint::save`): a missing/unreadable file (about
-/// to be created, or a real I/O error) is silently skipped rather than surfaced as an error,
-/// since this is a proactive nicety, not a required step — and it never costs `retrieve_budget`,
-/// since it's orchestrator-driven, not a Worker-initiated lookup.
+/// their context than to something shown several rounds ago. Any *earlier* grounding turn is
+/// removed before the fresh one is pushed, rather than left in place alongside it — without this,
+/// a multi-round run repeatedly targeting the same file (the common case) would accumulate one
+/// near-duplicate ~4000-char dump per round with nothing to ever compress them (these test runs
+/// have no Summarizer configured), a real, self-inflicted contributor to context bloat found
+/// while investigating why later rounds of a run seemed to ignore instructions that were
+/// technically already in context — see TODO.md's pinned reliability item. Keeping exactly one,
+/// always freshly re-inserted, gets the recency benefit without the duplication cost. Best-effort
+/// like every other diagnostic-nicety path in this codebase (`Checkpoint::save`): a
+/// missing/unreadable file (about to be created, or a real I/O error) is silently skipped rather
+/// than surfaced as an error, since this is a proactive nicety, not a required step — and it
+/// never costs `retrieve_budget`, since it's orchestrator-driven, not a Worker-initiated lookup.
 async fn auto_ground_planned_file(ctx: &mut Context) {
     let planned = ctx.planned_files();
     let [target] = planned.as_slice() else {
@@ -1710,6 +1717,7 @@ async fn auto_ground_planned_file(ctx: &mut Context) {
     let Ok(content) = tokio::fs::read_to_string(target).await else {
         return;
     };
+    ctx.turns.retain(|t| t.source != "AutoGroundedFile");
     let numbered: String = content
         .lines()
         .enumerate()
@@ -2393,6 +2401,49 @@ mod tests {
         );
         auto_ground_planned_file(&mut ctx).await;
         assert!(!ctx.turns.iter().any(|t| t.source == "AutoGroundedFile"));
+    }
+
+    // Regression: found while investigating whether later-round failures were really a model-
+    // capability limit or something this codebase was contributing itself (see TODO.md's pinned
+    // reliability item) — with no Summarizer configured (true of the real repro scripts) and
+    // this function re-injecting a fresh grounding dump every round, a multi-round run repeatedly
+    // targeting the same file used to accumulate one near-duplicate ~4000-char copy per round,
+    // all still sitting in DOCUMENTS with nothing to ever compress them. Exactly one
+    // AutoGroundedFile turn must exist at a time, no matter how many rounds re-ground the same
+    // (or a different) file.
+    #[tokio::test]
+    async fn auto_ground_planned_file_replaces_the_previous_grounding_instead_of_accumulating() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("target.rs");
+        std::fs::write(&file, "fn a() {}\n").unwrap();
+
+        let mut ctx = Context::new("goal".to_string());
+        ctx.push_turn(
+            TurnKind::Plan,
+            "Architect",
+            format!("PLAN: fix it\nFILES: {}", file.display()),
+        );
+
+        // Simulate three rounds each re-grounding the same file.
+        for round in 1..=3u64 {
+            ctx.round = round;
+            auto_ground_planned_file(&mut ctx).await;
+        }
+
+        let grounding_turns: Vec<_> = ctx
+            .turns
+            .iter()
+            .filter(|t| t.source == "AutoGroundedFile")
+            .collect();
+        assert_eq!(
+            grounding_turns.len(),
+            1,
+            "expected exactly one grounding turn after 3 rounds, got: {grounding_turns:?}"
+        );
+        assert_eq!(
+            grounding_turns[0].round, 3,
+            "the surviving turn should be the freshest one"
+        );
     }
 
     // Regression canary for debug-mode breakpoint support (maintainer: "keep on working on
