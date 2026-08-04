@@ -379,6 +379,50 @@ fn attach_reference_counts(
     }
 }
 
+/// Local, run-scoped marker recording when `ruchat index` last completed successfully for a
+/// given collection — lets a later run skip ctags/chunking/embedding entirely for any file
+/// untouched since then, instead of re-processing the whole tree every time. Same idea as
+/// `orchestrator::search::tags_are_stale`'s single-mtime comparison, just applied per source
+/// file across a directory instead of to one aggregate `tags` file. Kept outside the indexed
+/// tree itself (gitignored, matching `ruchat_checkpoint.json`/`ruchat_traces/`'s precedent for
+/// local run-scoped artifacts) so indexing doesn't need write access to, or pollute, the target
+/// directory — and keyed by collection name, not by `path`, since re-pointing the same source
+/// tree at a different collection is a real "start fresh" case, not a no-op.
+const INDEX_STATE_DIR: &str = ".ruchat_index_state";
+
+fn index_marker_path(collection: &str) -> PathBuf {
+    let safe: String = collection
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let name = if safe.is_empty() {
+        "default".to_string()
+    } else {
+        safe
+    };
+    Path::new(INDEX_STATE_DIR).join(format!("{name}.marker"))
+}
+
+/// True if `path` needs (re-)indexing: no prior successful run is recorded (`marker_mtime` is
+/// `None`), the file has been modified since that run, or the file can't be stat'd at all —
+/// same "assume stale, do the work" bias `tags_are_stale` already uses for its own missing/
+/// unreadable cases, so a transient stat failure never silently skips a file that needs indexing.
+async fn file_is_stale(path: &Path, marker_mtime: Option<std::time::SystemTime>) -> bool {
+    let Some(marker_time) = marker_mtime else {
+        return true;
+    };
+    match tokio::fs::metadata(path).await.and_then(|m| m.modified()) {
+        Ok(mtime) => mtime > marker_time,
+        Err(_) => true,
+    }
+}
+
 #[derive(Parser, Debug, Clone, PartialEq)]
 pub(crate) struct IndexArgs {
     /// Root directory to recursively index.
@@ -403,6 +447,12 @@ pub(crate) struct IndexArgs {
 
     #[arg(long, default_value = "upsert")]
     mode: UpsertMode,
+
+    /// Re-index every matching file regardless of the last successful run's marker — use after
+    /// changing --ext, switching embedding models, or any time a full fresh index is actually
+    /// wanted instead of the default incremental (only-changed-files) behavior.
+    #[arg(long, default_value_t = false)]
+    force: bool,
 }
 
 impl IndexArgs {
@@ -423,6 +473,33 @@ impl IndexArgs {
                 "no files with extensions {exts:?} found under {:?}",
                 self.path
             )));
+        }
+
+        let marker_path = index_marker_path(self.embed_args.collection_name());
+        let marker_mtime = if self.force {
+            None
+        } else {
+            tokio::fs::metadata(&marker_path)
+                .await
+                .and_then(|m| m.modified())
+                .ok()
+        };
+
+        let files = if marker_mtime.is_some() {
+            let mut stale = Vec::new();
+            for f in files {
+                if file_is_stale(&f, marker_mtime).await {
+                    stale.push(f);
+                }
+            }
+            stale
+        } else {
+            files
+        };
+
+        if files.is_empty() {
+            tracing::info!("ruchat index: nothing changed since the last run, nothing to do");
+            return Ok(());
         }
 
         // Reading + ctags-tagging each file is independent, CPU-bound work — run up to
@@ -511,6 +588,19 @@ impl IndexArgs {
             })
             .await?;
 
+        // Only reached on success — a failed run must not advance the "last successful run"
+        // cursor, or a later run would wrongly skip files that never actually got indexed.
+        // Best-effort, like `Checkpoint::save`: a marker-write failure is a diagnostic nicety
+        // failing, not a reason to fail an otherwise-successful index run.
+        if let Some(parent) = marker_path.parent() {
+            if let Err(e) = tokio::fs::create_dir_all(parent).await {
+                tracing::warn!(error = %e, "failed to create index marker directory");
+            }
+        }
+        if let Err(e) = tokio::fs::File::create(&marker_path).await {
+            tracing::warn!(error = %e, "failed to write index freshness marker");
+        }
+
         Ok(())
     }
 }
@@ -518,6 +608,63 @@ impl IndexArgs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn index_marker_path_sanitizes_unsafe_collection_name_characters() {
+        let p = index_marker_path("repo/src:weird name");
+        let name = p.file_name().unwrap().to_string_lossy();
+        assert!(
+            !name.contains('/'),
+            "path separator leaked into a filename: {name}"
+        );
+        assert!(!name.contains(':'), "colon leaked into a filename: {name}");
+        assert!(!name.contains(' '), "space leaked into a filename: {name}");
+    }
+
+    #[test]
+    fn index_marker_path_falls_back_to_default_for_an_empty_collection_name() {
+        let p = index_marker_path("");
+        assert_eq!(p.file_name().unwrap().to_string_lossy(), "default.marker");
+    }
+
+    #[tokio::test]
+    async fn file_is_stale_when_no_prior_run_is_recorded() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("a.rs");
+        std::fs::write(&f, "fn a() {}").unwrap();
+        assert!(file_is_stale(&f, None).await);
+    }
+
+    #[tokio::test]
+    async fn file_is_stale_when_modified_after_the_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("a.rs");
+        std::fs::write(&f, "fn a() {}").unwrap();
+        let marker_time = std::fs::metadata(&f).unwrap().modified().unwrap();
+        // Ensure a real, observable mtime gap — same-millisecond writes on fast filesystems can
+        // otherwise land on an identical mtime and make this test flaky (same precedent as
+        // `tags_are_stale`'s own tests).
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        std::fs::write(&f, "fn a() { changed(); }").unwrap();
+        assert!(file_is_stale(&f, Some(marker_time)).await);
+    }
+
+    #[tokio::test]
+    async fn file_is_not_stale_when_untouched_since_the_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("a.rs");
+        std::fs::write(&f, "fn a() {}").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let marker_time = std::time::SystemTime::now();
+        assert!(!file_is_stale(&f, Some(marker_time)).await);
+    }
+
+    #[tokio::test]
+    async fn file_is_stale_when_the_file_no_longer_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let gone = dir.path().join("never_existed.rs");
+        assert!(file_is_stale(&gone, Some(std::time::SystemTime::now())).await);
+    }
 
     // Regression: `IndexArgs::run` used to always call `walk_files` — a raw recursive
     // directory walk with only a small hardcoded skip-list (.git/target/node_modules/.venv/

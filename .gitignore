@@ -7,3 +7,4 @@ tags.*
 tarpaulin-report.html
 ruchat_traces/
 ruchat_checkpoint.json
+.ruchat_index_state/
