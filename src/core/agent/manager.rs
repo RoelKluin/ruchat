@@ -89,6 +89,7 @@ impl Manager {
                     goal: team.goal.clone(),
                     debug_sequence: None,
                     breakpoints: Default::default(),
+                    resume: false,
                 };
                 let mut cio = Io::new();
                 render_pipeline_stream(pipeline.run(), &mut cio).await?;

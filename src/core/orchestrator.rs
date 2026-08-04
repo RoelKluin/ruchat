@@ -3,6 +3,7 @@ pub(crate) mod fs;
 pub(crate) mod search;
 pub(crate) mod scope;
 pub(crate) mod cargo;
+pub(crate) mod checkpoint;
 pub(crate) mod doc_summary;
 pub(crate) mod run_summary;
 pub(super) mod task;
@@ -30,7 +31,9 @@ use crate::retry_transient;
 use std::sync::Arc;
 use crate::agent::llm_client::{LlmClient, VectorStore};
 
-#[derive(Debug, Clone, PartialEq)]
+// Serialize/Deserialize: `Stage` is one of the fields `checkpoint.rs` persists across a
+// resumable run — see that module for the full "Resumable/crash-resilient runs" mechanism.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 enum Stage {
     Scope,
     Plan,
@@ -244,6 +247,7 @@ impl Orchestrator {
         goal: String,
         debug_sequence: Option<String>,
         breakpoints: DebugBreakpoints,
+        resume: bool,
     ) -> impl Stream<Item = OrchestratorResult> {
         let (tx, rx) = mpsc::channel(100);
         let cancel = CancellationToken::new();
@@ -274,7 +278,7 @@ impl Orchestrator {
             let result = if let Some(path) = debug_sequence {
                 self.debug_stage_machine(goal, path, tx.clone(), task_cancel, breakpoints).await
             } else {
-                self.run_stage_machine(goal, tx.clone(), task_cancel).await
+                self.run_stage_machine(goal, tx.clone(), task_cancel, resume).await
             };
             if let Err(e) = result
                 && !matches!(e, RuChatError::Cancelled)
@@ -614,6 +618,7 @@ impl Orchestrator {
         goal: String,
         tx: mpsc::Sender<OrchestratorResult>,
         cancel: CancellationToken,
+        resume: bool,
     ) -> Result<()> {
         let max_iterations = self
             .orchestrator_config
@@ -625,9 +630,22 @@ impl Orchestrator {
             .get("scope_iterations")
             .and_then(|v| v.as_u64())
             .unwrap_or(7);
-        let mut ctx = Context::new(goal);
+        // See `checkpoint.rs` for the full "Resumable/crash-resilient runs" mechanism (ROADMAP.md
+        // Phase 3). A fresh run starts from `Context::new`/`Stage::Scope`, same as always; `--
+        // resume` reloads the last-completed stage's checkpoint instead — `goal` above is
+        // ignored in that case, since resuming continues the *same* task, not a new one.
+        let (mut ctx, mut stage) = if resume {
+            checkpoint::Checkpoint::load(std::path::Path::new(checkpoint::CHECKPOINT_PATH)).await?.into_context_and_stage()
+        } else {
+            (Context::new(goal), Stage::Scope)
+        };
         let ctx = &mut ctx;
-        ctx.init_trace_index().await;
+        if !resume {
+            // A resumed `Context` already carries the `trace_index` its checkpoint captured —
+            // allocating a fresh one here would start a new trace file and lose the pre-crash
+            // history the old one had.
+            ctx.init_trace_index().await;
+        }
 
         if let Some(librarian) = self.librarian.as_ref() {
             ctx.read_config_file(
@@ -641,7 +659,6 @@ impl Orchestrator {
 
         let mut retrieve_budget: u32 = 2; // conservative cap on Worker-initiated retrievals per run
         let mut scope_round = 0;
-        let mut stage = Stage::Scope;
         let mut last_scope_output: Option<String> = None;
         let mut last_architect_output: Option<String> = None;
         let mut last_worker_output: Option<String> = None;
@@ -662,10 +679,14 @@ impl Orchestrator {
             }
             stage = match stage {
                 Stage::Done => {
+                    // A deliberate, recorded outcome — not a crash — so there's nothing left to
+                    // `--resume`; see `checkpoint.rs::Checkpoint::clear`'s doc comment.
+                    checkpoint::Checkpoint::clear(std::path::Path::new(checkpoint::CHECKPOINT_PATH)).await;
                     let _ = tx.send(Ok(StreamItem::Event(AgentEvent::Done))).await;
                     break;
                 }
                 Stage::Escalate(reason) => {
+                    checkpoint::Checkpoint::clear(std::path::Path::new(checkpoint::CHECKPOINT_PATH)).await;
                     ctx.trace(&tx, format!("ESCALATED: {reason}")).await;
                     break;
                 }
@@ -909,6 +930,10 @@ impl Orchestrator {
                     }
                 }
             };
+            // `Stage::Done`/`Stage::Escalate` both `break` above, before reaching here — this
+            // only ever runs for a genuine, non-terminal transition, which is exactly "after
+            // each stage transition" per the checkpoint's own scoping.
+            checkpoint::Checkpoint::save(ctx, &stage, std::path::Path::new(checkpoint::CHECKPOINT_PATH)).await;
         }
         ctx.trace(&tx, String::new()).await;
         self.finalize_trace(ctx, &tx, success).await;
@@ -1573,6 +1598,7 @@ mod tests {
             "test goal".to_string(),
             Some(path),
             DebugBreakpoints::default(),
+            false,
         );
         tokio_stream::StreamExt::collect::<Vec<Result<StreamItem>>>(stream)
             .await

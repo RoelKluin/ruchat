@@ -1,6 +1,7 @@
 use crate::agent::tools::{self, ToolName};
 use crate::agent::{AgentEvent, StreamItem};
 use crate::Result;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use tokio::sync::mpsc;
@@ -54,7 +55,11 @@ pub(crate) struct Issue {
     pub(crate) text: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+// Serialize/Deserialize (in addition to the derives every other type here already has): needed
+// so a whole `Context` can round-trip through `core/orchestrator/checkpoint.rs`'s resumable-run
+// checkpoint file — see that module for why (ROADMAP.md Phase 3 "Resumable/crash-resilient
+// runs"). Plain data, no invariants a naive round-trip could violate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum TurnKind {
     Plan,           // Architect output
     Implementation, // Worker output
@@ -64,7 +69,7 @@ pub(crate) enum TurnKind {
     System,         // system-level confirmations (e.g. MEMORIZE ack) - visible in history_view
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Turn {
     pub(crate) round: u64,
     pub(crate) kind: TurnKind,
@@ -77,6 +82,7 @@ pub(crate) struct Turn {
 /// attempt instead of compounding an unreviewed mutation. Cleared once the
 /// round is either reverted (`Stage::Retry` looping back to `Plan`) or the
 /// patch survives to `Stage::Accept`/`Stage::Done`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct PendingPatch {
     pub(crate) path: String,
     pub(crate) original: String,

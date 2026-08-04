@@ -100,6 +100,12 @@ pub(crate) struct AskArgs {
     )]
     breakpoint: Vec<String>,
 
+    /// Resume the last interrupted agentic run from its checkpoint (ruchat_checkpoint.json)
+    /// instead of starting a new one — the prompt argument is ignored; the resumed run
+    /// continues toward its original goal. Errors clearly if no checkpoint exists.
+    #[arg(long, conflicts_with_all = ["debug_sequence", "prompt"], help_heading = "Agent Configuration")]
+    resume: bool,
+
     #[command(flatten)]
     prompt: PromptArgs,
 
@@ -231,21 +237,30 @@ impl AskArgs {
     /// A `Result` indicating success or failure.
     pub(crate) async fn ask(&self,cfg: &Value) -> Result<()> {
         let mut cio = Io::new();
-        let prompt = match self.prompt.get_prompt() {
-            Ok(p) => p,
-            Err(RuChatError::NoPromptProvided) => {
-                let mut input = String::new();
-                while let Ok(line) = cio.read_line().await {
-                    if line == "---" {
-                        cio.write_error_line("End marker received, finishing input...")
-                            .await?;
-                        break;
+        // `--resume` ignores the prompt entirely (the checkpoint's own goal is what continues)
+        // — skip prompt resolution altogether rather than blocking on interactive stdin for a
+        // value that will never be used. `clap`'s `conflicts_with_all` on `resume` already
+        // rejects `--resume` combined with an explicit prompt/`--explicit-prompt`, so this is
+        // purely about not reading stdin, not a redundant validation.
+        let prompt = if self.resume {
+            String::new()
+        } else {
+            match self.prompt.get_prompt() {
+                Ok(p) => p,
+                Err(RuChatError::NoPromptProvided) => {
+                    let mut input = String::new();
+                    while let Ok(line) = cio.read_line().await {
+                        if line == "---" {
+                            cio.write_error_line("End marker received, finishing input...")
+                                .await?;
+                            break;
+                        }
+                        input += line.as_str();
                     }
-                    input += line.as_str();
+                    input
                 }
-                input
+                Err(e) => return Err(e),
             }
-            Err(e) => return Err(e),
         };
 
         // `embed` (RAG/memorize/recall) always stays on Ollama — Anthropic has no embeddings
@@ -278,7 +293,19 @@ impl AskArgs {
                 goal: prompt,
                 debug_sequence: self.debug_sequence.clone(),
                 breakpoints: DebugBreakpoints::new(self.step, self.breakpoint.clone()),
+                resume: self.resume,
             }
+        } else if self.resume {
+            // OneShot has no Context/Stage machine at all — nothing a checkpoint could resume.
+            // `--resume` needs the same `--team-model`/`--agentic` (or config-file equivalent)
+            // the original interrupted run used, to reconstruct the same Architect/Worker roles
+            // the checkpoint's turn history was talking to.
+            return Err(RuChatError::Is(
+                "--resume requires --team-model or --agentic (or a config file with Architect/\
+                 Worker) — the checkpoint only recovers conversation state, not which roles/\
+                 models to reconstruct."
+                    .into(),
+            ));
         } else {
             AgentPipeline::OneShot {
                 ollama: chat,
