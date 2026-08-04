@@ -230,18 +230,22 @@ async fn check_with_git_apply(diff_text: &str) -> String {
     }
 }
 
-/// Repairs the single most common diff mistake coder-tuned local models make:
-/// dropping the mandatory leading space on an unchanged (context) line inside
-/// a hunk. Unified diff requires every hunk-body line to start with ' '
-/// (context), '+' (added), '-' (removed), or '\' (no-newline marker) —
-/// `diffy::Patch::from_str` rejects anything else outright ("unexpected line
-/// in hunk body"), which is easy for a model to trigger since the leading
-/// space is invisible whitespace. Any hunk-body line missing one of those
-/// prefixes is treated as an implicit context line and given one; this does
-/// not change what the diff says to add/remove, only makes an
-/// otherwise-valid diff parseable. A genuinely wrong diff (bad content,
-/// mismatched context, wrong file) still fails at parse or apply time same
-/// as before.
+/// Repairs the two most common diff mistakes coder-tuned local models make: (1) dropping the
+/// mandatory leading space on an unchanged (context) line inside a hunk, and (2) inserting a
+/// genuinely blank separator line *between* two hunks of the same file — real unified diffs never
+/// have one; the next hunk's `@@ ... @@` header always immediately follows the previous hunk's
+/// last body line. Unified diff requires every hunk-body line to start with ' ' (context), '+'
+/// (added), '-' (removed), or '\' (no-newline marker) — `diffy::Patch::from_str` rejects anything
+/// else outright, a fully blank line included, which it can't distinguish from the patch having
+/// ended (surfacing a cryptic "orphaned hunk header after trailing content" once it then hits the
+/// next hunk's `@@` line — a real, live-verified failure, see TODO.md's pinned reliability item).
+/// Both cases are repaired the same way: any hunk-body line missing one of the four valid
+/// prefixes — blank or not — is treated as an implicit (possibly empty) context line and given a
+/// leading space. This does not change what the diff says to add/remove, only makes an
+/// otherwise-valid diff parseable; if the file's real content doesn't actually have a blank line
+/// at that position, `diffy::apply` still fails with its normal, actionable context-mismatch
+/// message afterward — never a silent wrong edit. A genuinely wrong diff (bad content, mismatched
+/// context, wrong file) still fails at parse or apply time same as before.
 fn normalize_diff_hunk_lines(diff: &str) -> String {
     let mut out = String::with_capacity(diff.len());
     let mut in_hunk = false;
@@ -251,7 +255,7 @@ fn normalize_diff_hunk_lines(diff: &str) -> String {
             in_hunk = false;
         } else if trimmed.starts_with("@@") {
             in_hunk = true;
-        } else if in_hunk && !trimmed.is_empty() && !trimmed.starts_with([' ', '+', '-', '\\']) {
+        } else if in_hunk && !trimmed.starts_with([' ', '+', '-', '\\']) {
             out.push(' ');
         }
         out.push_str(line);
@@ -666,6 +670,32 @@ mod tests {
         // with one of the hunk-body prefixes either.
         let diff = "--- a/src/foo.rs\n+++ b/src/foo.rs\n@@ -1,1 +1,1 @@\n-old\n+new\n";
         assert_eq!(normalize_diff_hunk_lines(diff), diff);
+    }
+
+    // Regression: a real, live-verified failure (see TODO.md's pinned reliability item,
+    // ruchat_traces/ruchat_trace_483.md round 2) — qwen2.5-coder:14b wrote a multi-hunk diff for
+    // one file but put a genuinely blank line *between* the hunks (real unified diffs never do
+    // this — the next hunk's `@@` header always immediately follows the previous hunk's last
+    // body line). `diffy::Patch::from_str` used to reject this outright ("orphaned hunk header
+    // after trailing content"), a cryptic parse error giving the Worker nothing to act on. The
+    // blank line is now treated as an implicit empty context line, same as any other
+    // missing-prefix hunk-body line.
+    #[test]
+    fn normalize_repairs_a_blank_separator_line_between_two_hunks() {
+        let diff = "--- a/src/foo.rs\n+++ b/src/foo.rs\n\
+            @@ -1,3 +1,2 @@\n fn a() {}\n-fn b() {}\n fn c() {}\n\
+            \n\
+            @@ -10,3 +9,2 @@\n fn x() {}\n-fn y() {}\n fn z() {}\n";
+        // Confirms the actual, previously-broken behavior: diffy chokes on the bare blank line
+        // and treats the following `@@` as unexpected trailing content, exactly like the real
+        // trace's "orphaned hunk header after trailing content" error.
+        assert!(diffy::Patch::from_str(diff).is_err());
+        // Mirrors the real pipeline (`Validation::apply_patch`): normalize, then recompute hunk
+        // header counts (the blank line becoming a real body line shifts them), then parse.
+        let normalized = normalize_diff_hunk_lines(diff);
+        let fixed = fix_hunk_header_counts(&normalized);
+        diffy::Patch::from_str(&fixed)
+            .expect("a blank line between hunks should no longer break parsing");
     }
 
     #[test]

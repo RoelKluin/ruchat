@@ -192,12 +192,52 @@ live-run evidence attached, not just remove the bullet.
         output) — genuinely exercises the function end-to-end, not just a fixture-shaped proxy for it, since this
         one doesn't touch `Stage::Test`/live Ollama/Chroma at all. 302 lib tests pass, clippy clean, fmt clean.
         **Not yet live-verified.**
+    - **Seventh contributor, confirmed by the maintainer's next three re-runs (2026-08-04,
+      `ruchat_traces/ruchat_trace_483.md`/`484.md`/`485.md`, after rebuilding with the auto-grounding fix): the
+      grounding fix worked — `483.md` shows the Worker's diff finally matching all four real struct fields exactly —
+      but a NEW, distinct parse failure appeared: the Worker formatted a multi-hunk diff with a genuinely blank line
+      *between* the hunks, which real unified diffs never have (the next hunk's `@@` header always immediately
+      follows the previous hunk's last body line).** `diffy::Patch::from_str` rejected this outright ("orphaned hunk
+      header after trailing content"), the same cryptic error the very first fix in this section addressed for a
+      different cause (concatenated multi-file diffs). Root cause: `normalize_diff_hunk_lines`
+      (`src/core/agent/protocol.rs`) already repairs a missing leading space on non-blank hunk-body lines, but
+      explicitly excluded blank lines from that repair (`!trimmed.is_empty()`), so a bare blank line stayed
+      unrecognized and broke the parse.
+      - **Fixed in code and unit-tested (2026-08-04).** Removed the blank-line exclusion — any hunk-body line
+        missing one of the four valid prefixes, blank or not, now gets treated as an implicit (possibly empty)
+        context line. Safe even when wrong: if the real file doesn't actually have a blank line there,
+        `diffy::apply` still fails afterward with its normal, actionable context-mismatch message, never a silent
+        wrong edit. New regression test reproduces the exact real failure (confirms the unfixed diff hits
+        `ParsePatchError::OrphanedHunkHeader`, then confirms it parses after the fix, mirroring the real
+        normalize→fix-header-counts→parse pipeline). 303 lib tests pass, clippy clean, fmt clean. **Not yet
+        live-verified.**
+      - **Two further patterns observed in the same three re-runs, not fixed this session — assessed as likely a
+        model-capability limit rather than a further fixable orchestration/prompt bug, not simply left unexamined:**
+        - `ruchat_trace_484.md`: the Architect wrote `FILES: None` (literal text, not a real path) and told the
+          Worker to run a raw shell command in a `\`\`\`sh` fence — a different hallucination shape than the
+          `\`\`\`tool_call` one already fixed, so `strip_architect_tool_call_hallucination` didn't catch it. The
+          Worker correctly got rejected every round (`NO_TOOL_CALL_REJECTION`, softly, using the full budget — the
+          escalate fix held up), but the Architect never varied its suggestion despite the "identical plan" nudge
+          firing at rounds 3 and 4.
+        - `ruchat_trace_485.md`: the Worker called `cargo_clippy` in every single one of 5 rounds — including after
+          `retrieve_budget` was fully exhausted and after `AutoGroundedFile` showed it real target-file content
+          twice — and never once attempted `apply_patch`. `agent_role/worker.md` already explicitly instructs
+          "Once you've made that call and its result appears above, you are DONE looking — your next response must
+          be apply_patch or memorize, never another read-only tool, even the same one again" — about as direct as a
+          prompt instruction can be. The model just didn't follow it, for an entire run. Unlike the six fixes
+          above, this isn't a wiring gap or a missing repair rule — the instruction and the data are both already
+          there. Worth a note for whoever picks this up next: before writing more orchestration-level mitigations
+          for this specific pattern, it's worth testing whether a larger/different model handles this scenario
+          better, since qwen2.5-coder:14b may simply be under-provisioned for reliably switching modes mid-round.
     - **Net assessment: meaningfully improved, not resolved.** The single most severe issue (runs dying almost
       instantly, well short of their configured budget) is fixed and live-confirmed; the double-read-only-tool-call
       and Architect-tool-call-hallucination contributors are fixed and live-confirmed (the second one via the
-      maintainer's own next two re-runs); the missing-header, hollow-memorize, and Worker-never-reads-the-real-file
-      contributors are fixed in code and unit-tested but not yet live-confirmed. The overall "does a real agentic
-      run actually land a committed change" question is still open — keep this section until a live run actually
+      maintainer's own next two re-runs); the missing-header, hollow-memorize, Worker-never-reads-the-real-file, and
+      blank-line-between-hunks contributors are fixed in code and unit-tested but not yet live-confirmed. Two
+      further observed patterns (Architect suggesting a raw shell command instead of `FILES:`, Worker never
+      switching off `cargo_clippy` for an entire run) look like a model-capability limit rather than a further
+      fixable bug — see above. The overall "does a real agentic run actually land a committed change" question is
+      still open — keep this section until a live run actually
       succeeds end-to-end, not just uses its full budget.
 
 ## High Priority
