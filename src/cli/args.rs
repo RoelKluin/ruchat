@@ -47,13 +47,46 @@ pub(crate) struct CompletionsArgs {
     pub shell: Shell,
 }
 
+/// `std::env::args()` joined for `--verbose`'s command-line echo, with known secret-bearing
+/// flags' values redacted — `--chroma-token`/`--anthropic-api-key` can legitimately be passed
+/// this way (both docs recommend the env var instead, but the flag exists), and printing them
+/// verbatim to stdout is a real leak vector into captured logs/redirected output, distinct from
+/// (and worse than) shell-history exposure. Handles both `--flag value` and `--flag=value`.
+fn redacted_command_line() -> String {
+    redact_args(std::env::args())
+}
+
+fn redact_args(args: impl Iterator<Item = String>) -> String {
+    const SECRET_FLAGS: &[&str] = &["--chroma-token", "--anthropic-api-key"];
+    let args: Vec<String> = args.collect();
+    let mut out = Vec::with_capacity(args.len());
+    let mut redact_next = false;
+    for arg in &args {
+        if redact_next {
+            out.push("[REDACTED]".to_string());
+            redact_next = false;
+            continue;
+        }
+        match arg.split_once('=') {
+            Some((flag, _)) if SECRET_FLAGS.contains(&flag) => {
+                out.push(format!("{flag}=[REDACTED]"));
+            }
+            _ if SECRET_FLAGS.contains(&arg.as_str()) => {
+                out.push(arg.clone());
+                redact_next = true;
+            }
+            _ => out.push(arg.clone()),
+        }
+    }
+    out.join(" ")
+}
+
 impl Args {
     pub(crate) async fn handle_request(self) -> Result<()> {
         let cfg = load_merged_config(&self.config).await?;
         let default = Commands::Pipe(AskArgs::default());
         if self.verbose {
-            let command_line = std::env::args().collect::<Vec<String>>().join(" ");
-            println!("Command line: {}", command_line);
+            println!("Command line: {}", redacted_command_line());
         }
         match self.command.unwrap_or(default) {
             Commands::Pipe(args) => args.ask(&cfg).await,
@@ -147,6 +180,19 @@ pub(crate) enum Commands {
 mod tests {
     use super::*;
     use clap::Parser;
+
+    #[test]
+    fn redact_args_hides_secret_flag_values_both_forms() {
+        let args = ["ruchat", "ask", "--chroma-token", "secret1", "--anthropic-api-key=secret2", "hi"]
+            .into_iter()
+            .map(String::from);
+        let out = redact_args(args);
+        assert!(!out.contains("secret1"));
+        assert!(!out.contains("secret2"));
+        assert!(out.contains("--chroma-token [REDACTED]"));
+        assert!(out.contains("--anthropic-api-key=[REDACTED]"));
+        assert!(out.contains("hi"), "non-secret args must survive: {out}");
+    }
 
     #[test]
     fn test_args_parsing() {
