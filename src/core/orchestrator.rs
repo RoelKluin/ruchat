@@ -823,6 +823,7 @@ impl Orchestrator {
                     if ctx.round == 1 && self.librarian.is_some() {
                         self.run_librarian_retrieval(ctx, &tx).await?;
                     }
+                    auto_ground_planned_file(ctx).await;
                     Stage::Implement
                 }
                 Stage::Implement => {
@@ -1680,6 +1681,66 @@ fn strip_architect_tool_call_hallucination(plan: &str) -> String {
         .to_string()
 }
 
+/// Cap on how much of a planned target file's real content gets auto-injected per round — same
+/// size as `MAX_SHOWN_ORIGINAL_CHARS`'s post-rejection grounding dump (`agent/protocol.rs`), just
+/// proactive instead of reactive.
+const MAX_AUTO_GROUNDED_FILE_CHARS: usize = 4_000;
+
+/// Proactively shows the plan's target file's real, line-numbered content to the Worker before it
+/// ever writes a diff, instead of only doing this reactively after a failed `apply_patch` (see
+/// `Validation::apply_patch`'s existing grounding-on-mismatch rejection). Real live-verified runs
+/// (see TODO.md's pinned reliability item) repeatedly showed the Worker writing a diff against a
+/// file's *guessed* content — sometimes without ever calling `read_file` on it at all, sometimes
+/// after calling it once but the content apparently not being attended to by a later round of a
+/// multi-round run — fabricating fields or comments that don't exist in the real file. Only acts
+/// when the plan names exactly one file (same "unambiguous" bar `ensure_diff_has_file_header`
+/// uses) — with zero or multiple planned files there's no single safe target to show.
+/// Deliberately re-injected every round, not just once: the same recency reasoning behind
+/// everything else in this section — local models attend far better to content near the end of
+/// their context than to something shown several rounds ago. Best-effort like every other
+/// diagnostic-nicety path in this codebase (`Checkpoint::save`): a missing/unreadable file (about
+/// to be created, or a real I/O error) is silently skipped rather than surfaced as an error,
+/// since this is a proactive nicety, not a required step — and it never costs `retrieve_budget`,
+/// since it's orchestrator-driven, not a Worker-initiated lookup.
+async fn auto_ground_planned_file(ctx: &mut Context) {
+    let planned = ctx.planned_files();
+    let [target] = planned.as_slice() else {
+        return;
+    };
+    let Ok(content) = tokio::fs::read_to_string(target).await else {
+        return;
+    };
+    let numbered: String = content
+        .lines()
+        .enumerate()
+        .map(|(i, line)| format!("{}:{line}", i + 1))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let shown: String = numbered
+        .chars()
+        .take(MAX_AUTO_GROUNDED_FILE_CHARS)
+        .collect();
+    let truncated_note = if numbered.chars().count() > MAX_AUTO_GROUNDED_FILE_CHARS {
+        format!(
+            "\n... (truncated, {} bytes total — request a narrower range with read_file if you \
+            need more)",
+            content.len()
+        )
+    } else {
+        String::new()
+    };
+    ctx.push_turn(
+        TurnKind::Retrieval,
+        "AutoGroundedFile",
+        format!(
+            "The plan's FILES: line names '{target}' — here is its real current content, with \
+            line numbers (N:content), so your diff's context lines and its @@ -a,b +c,d @@ hunk \
+            header match it exactly. Do not guess or assume content not shown here:\n\n\
+            {shown}{truncated_note}"
+        ),
+    );
+}
+
 /// Treats an explicit empty string the same as an omitted optional field.
 /// Models reliably emit `"path": ""` instead of leaving an optional arg out
 /// entirely, and downstream commands (e.g. `git log -- ""`) reject an empty
@@ -2259,6 +2320,79 @@ mod tests {
         let plan = "**PLAN:**\nFix the lint.\n\n```tool_call\n{\"tool\": \"apply_patch\"}\n```";
         let stripped = strip_architect_tool_call_hallucination(plan);
         assert_eq!(stripped, "**PLAN:**\nFix the lint.");
+    }
+
+    // Regression: two live-verified runs (see TODO.md's pinned reliability item) showed the
+    // Worker writing a diff against a file it never actually read — in one case fabricating a
+    // struct field (`pub client: LlmClient,`) that doesn't exist anywhere in the real file.
+    // Absolute paths used throughout (not a real repo-relative path + `set_current_dir`) — this
+    // codebase has a documented, previously-real flakiness lesson about `set_current_dir` being
+    // process-global, not per-test-isolated (see `checkpoint.rs`'s tests) — `planned_files`'s own
+    // `a/`/`./`-stripping only touches those specific prefixes, so an absolute tempdir path
+    // passes through untouched and needs no CWD change at all.
+    #[tokio::test]
+    async fn auto_ground_planned_file_shows_real_line_numbered_content_when_unambiguous() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("target.rs");
+        std::fs::write(&file, "fn a() {}\nfn b() {}\n").unwrap();
+
+        let mut ctx = Context::new("goal".to_string());
+        ctx.push_turn(
+            TurnKind::Plan,
+            "Architect",
+            format!("PLAN: fix it\nFILES: {}", file.display()),
+        );
+
+        auto_ground_planned_file(&mut ctx).await;
+
+        let turn = ctx
+            .turns
+            .iter()
+            .find(|t| t.source == "AutoGroundedFile")
+            .expect("should have pushed a grounding turn");
+        assert!(turn.kind == TurnKind::Retrieval);
+        assert!(
+            turn.content.contains("1:fn a() {}"),
+            "got: {}",
+            turn.content
+        );
+        assert!(
+            turn.content.contains("2:fn b() {}"),
+            "got: {}",
+            turn.content
+        );
+    }
+
+    #[tokio::test]
+    async fn auto_ground_planned_file_does_nothing_with_zero_planned_files() {
+        let mut ctx = Context::new("goal".to_string());
+        ctx.push_turn(TurnKind::Plan, "Architect", "PLAN: fix it".to_string());
+        auto_ground_planned_file(&mut ctx).await;
+        assert!(!ctx.turns.iter().any(|t| t.source == "AutoGroundedFile"));
+    }
+
+    #[tokio::test]
+    async fn auto_ground_planned_file_does_nothing_with_multiple_planned_files_ambiguous() {
+        let mut ctx = Context::new("goal".to_string());
+        ctx.push_turn(
+            TurnKind::Plan,
+            "Architect",
+            "PLAN: fix it\nFILES: a.rs, b.rs".to_string(),
+        );
+        auto_ground_planned_file(&mut ctx).await;
+        assert!(!ctx.turns.iter().any(|t| t.source == "AutoGroundedFile"));
+    }
+
+    #[tokio::test]
+    async fn auto_ground_planned_file_silently_skips_a_missing_file() {
+        let mut ctx = Context::new("goal".to_string());
+        ctx.push_turn(
+            TurnKind::Plan,
+            "Architect",
+            "PLAN: fix it\nFILES: /nonexistent/path/that/does/not/exist_ruchat_test.rs".to_string(),
+        );
+        auto_ground_planned_file(&mut ctx).await;
+        assert!(!ctx.turns.iter().any(|t| t.source == "AutoGroundedFile"));
     }
 
     // Regression canary for debug-mode breakpoint support (maintainer: "keep on working on

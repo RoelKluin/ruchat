@@ -165,12 +165,40 @@ live-run evidence attached, not just remove the bullet.
       experiment... once the agentic-evals harness has enough scenarios to tell whether it actually improves plan
       quality on local models rather than just adding tokens" — not something to implement speculatively without
       that evidence. Logged here rather than built blind; revisit alongside that item.
+    - **Sixth contributor, confirmed by the maintainer's next two re-runs (2026-08-04,
+      `ruchat_traces/ruchat_trace_480.md` and `ruchat_trace_481.md`, after rebuilding with the tool-call-
+      hallucination fix): the Architect-hallucination fix worked (both traces show clean plans, no more embedded
+      fake tool_calls) and the double-read-only-tool-call nudge worked (fired correctly for `read_file` too, not
+      just `cargo_clippy`) — but the run still didn't succeed, because the Worker keeps writing diffs against files
+      it never actually read.** `ruchat_trace_481.md` round 2: the Worker went straight from a `cargo_clippy` call
+      to `apply_patch` on `src/core/agent.rs` — no `read_file` call in between — and fabricated a struct field
+      (`pub client: LlmClient,`) that doesn't exist anywhere in the real file. `ruchat_trace_480.md`: the Worker did
+      call `read_file` on the target in round 1, but by round 5 (after 4 rounds of intervening rejections/reminders)
+      still produced a diff assuming a comment that wasn't there — the real content, once shown, apparently wasn't
+      being attended to several rounds later. Both point at the same deferred gap already flagged earlier in this
+      file's Done section: "auto-injecting relevant content on the *first* attempt, before any failure... needs a
+      reliable source of *what* to show, which the Architect's plan doesn't consistently provide" — except it DOES
+      reliably provide one now, via the `FILES:` line the scope-check machinery already relies on.
+      - **Fixed in code and unit-tested (this IS integration-testable, unlike the other fixes this session — no
+        live infra needed), live verification still outstanding (2026-08-04).** New `auto_ground_planned_file`
+        (`src/core/orchestrator.rs`), called from `Stage::Retrieve` every round: when the plan names exactly one
+        file (same unambiguous bar `ensure_diff_has_file_header` uses), proactively reads it and pushes its real,
+        line-numbered content as a `Retrieval` turn — before the Worker's first query of the round, not just
+        reactively after a failed patch. Re-injected every round, not just once, on the same recency reasoning as
+        the rest of this section: local models attend far better to content near the end of their context than to
+        something shown several rounds ago. Costs nothing from `retrieve_budget` — it's orchestrator-driven, not a
+        Worker-initiated lookup. Best-effort: a missing/unreadable file (about to be created, or a real I/O error)
+        is silently skipped. 4 new tests, including the real positive case (a real tempfile, real line-numbered
+        output) — genuinely exercises the function end-to-end, not just a fixture-shaped proxy for it, since this
+        one doesn't touch `Stage::Test`/live Ollama/Chroma at all. 302 lib tests pass, clippy clean, fmt clean.
+        **Not yet live-verified.**
     - **Net assessment: meaningfully improved, not resolved.** The single most severe issue (runs dying almost
       instantly, well short of their configured budget) is fixed and live-confirmed; the double-read-only-tool-call
-      contributor is fixed and live-confirmed; the missing-header, hollow-memorize, and Architect-tool-call-
-      hallucination contributors are fixed in code and unit-tested but not yet live-confirmed. The overall "does a
-      real agentic run actually land a committed change" question is still open — keep this section until a live
-      run actually succeeds end-to-end, not just uses its full budget.
+      and Architect-tool-call-hallucination contributors are fixed and live-confirmed (the second one via the
+      maintainer's own next two re-runs); the missing-header, hollow-memorize, and Worker-never-reads-the-real-file
+      contributors are fixed in code and unit-tested but not yet live-confirmed. The overall "does a real agentic
+      run actually land a committed change" question is still open — keep this section until a live run actually
+      succeeds end-to-end, not just uses its full budget.
 
 ## High Priority
 
