@@ -119,22 +119,25 @@ Prioritize these repo-specific concerns over generic checklist items:
   `Critic0`) still matches — a naming mismatch here has caused a real,
   previously-shipped bug (multi-critic dispatch silently no-op'd).
 - Known pre-existing issues that are *not* new findings if reintroduced
-  unchanged (baselines re-verified 2026-08-04, corrected from stale earlier
-  numbers): `cargo clippy --lib --tests` reports **86** warnings total, of
+  unchanged (baseline re-verified 2026-08-04, corrected from a stale earlier
+  number): `cargo clippy --lib --tests` reports **86** warnings total, of
   which only **~13** are genuine dead code — the other 63 are all
   `clippy::result_large_err`, tracing to one oversized `RuChatError::
   ChannelError` variant that trips the lint on every fallible function crate-
   wide (pre-existing, not new-code drift; see `TODO.md`). Repo-wide `cargo
-  fmt --check` drift is **193 files** (no `rustfmt.toml`; default formatting,
-  not a style disagreement) — see `TODO.md`.
+  fmt --check` drift, previously ~76/193 files, was fully cleared 2026-08-04
+  via a dedicated `cargo fmt` pass (see `TODO.md` Done section) — `cargo fmt
+  --check` is a clean gate again; a new PR reintroducing drift IS a real
+  finding now, not something to wave off as "pre-existing."
 
 ## Testing Strategy (for `testing-strategy`)
 
 - Run `cargo test --lib` (unit tests only; no `tests/` integration suite by
   design — see above). Run `cargo clippy --lib --tests` for lint.
-- `cargo fmt --check` is **not** a clean gate today (pre-existing drift) —
-  don't propose it as a CI blocker without first proposing the repo-wide
-  `cargo fmt` pass called out in `TODO.md`.
+- `cargo fmt --check` is a clean gate as of 2026-08-04 (see above) — safe to
+  propose adding it to CI now, though the CI branch-name bug (`main` vs.
+  `master`, see `TODO.md`'s Security & CI section) should be fixed first or
+  it won't actually run where it matters.
 - Stage-machine coverage uses `FakeLlmClient`/`FakeVectorStore`/`FakeEmbeddingsClient`
   (`core/agent/llm_client.rs`) driven by `agent_debug/*.json` fixtures — all
   11 fixtures are wired up as of 2026-08-04 (the previously-gap
