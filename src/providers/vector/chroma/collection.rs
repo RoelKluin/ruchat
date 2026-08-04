@@ -11,17 +11,26 @@ pub(crate) struct ChromaCollectionConfigArgs {
 }
 
 impl ChromaCollectionConfigArgs {
-    /// Create a collection in the chroma database
+    /// Create a collection in the chroma database if it doesn't already exist — same empty-name
+    /// fallback as `get_collection` (an empty `--collection` falls back to `default`, erroring
+    /// only if `default` is also empty), for the same reason: `EmbedArgs`'s clap-derived
+    /// `default_value = ""` means a real CLI invocation can reach here with an empty name even
+    /// though `Default for ChromaCollectionConfigArgs` itself returns `"default"`.
     pub(crate) async fn get_or_create_collection(
         &self,
         client: &ChromaHttpClient,
+        default: &str,
         schema: Option<Schema>,
         metadata: Option<Metadata>,
     ) -> Result<ChromaCollection> {
-        if self.collection.is_empty() {
-            return Err(RuChatError::NoCollectionSpecified);
-        }
-        let name = self.collection.as_str();
+        let name = if self.collection.is_empty() {
+            if default.is_empty() {
+                return Err(RuChatError::NoCollectionSpecified);
+            }
+            default
+        } else {
+            self.collection.as_str()
+        };
         let collection: ChromaCollection = retry_transient!(async {
             client
                 .get_or_create_collection(name, schema.clone(), metadata.clone())

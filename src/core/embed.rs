@@ -109,17 +109,18 @@ impl EmbedArgs {
     /// Resolves the collection this `EmbedArgs` writes to, as a `Box<dyn VectorCollection>` —
     /// the one place `vector_provider` is branched on for the write path, so
     /// `embed_with_metadata_items`/`embed_raw_items`/`embed_chunks` stay backend-agnostic below
-    /// this point. Chroma needs an explicit get-or-create-free `get_collection` (unchanged
-    /// behavior); SQLite-vec has no separate "collection must already exist" concept — tables
-    /// are created lazily on first write (see `SqliteVecCollection::ensure_schema`), so opening
-    /// one here never fails just because it's new.
+    /// this point. Both backends auto-create on first write: Chroma via `get_or_create_collection`
+    /// (fixed 2026-08-04 — previously used the create-free `get_collection`, so `ruchat embed`/
+    /// `ruchat index` into a brand-new collection name failed unless `chroma-init`/`chroma-create`
+    /// had already been run separately); SQLite-vec has no separate "must already exist" concept
+    /// at all — tables are created lazily on first write (`SqliteVecCollection::ensure_schema`).
     async fn resolve_collection(&self, cfg: &Value) -> Result<Box<dyn VectorCollection>> {
         match self.vector_provider {
             VectorProvider::Chroma => {
                 let client = self.client_config.create_client(cfg).await?;
                 let collection = self
                     .collection_config
-                    .get_collection(&client, "default")
+                    .get_or_create_collection(&client, "default", None, None)
                     .await?;
                 Ok(Box::new(collection))
             }
