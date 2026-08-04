@@ -115,6 +115,32 @@ Worker calling cargo_clippy every round for a full 5-round run despite worker.md
 instruction not to (485). Next step if these persist after a live re-run: try
 `qwen2.5-coder:32b` (already pulled) before writing more mitigations for 14b specifically.
 
+15. [x] Not live-verified. Found 2026-08-05 by inspecting the 8 archived `ai/feature-*` commits
+    from the maintainer's own runs: **5 of 8 changed no source at all** - only
+    `featured_changes.md`, ruchat's changelog, which `commit_add_targets` stages
+    unconditionally. So a run that applied zero patches still reached Commit and produced a
+    branch + commit describing work that never happened (incl. `c0e37d4 "Fix clippy warning:
+    redundant type annotation"`, which fixed nothing). `Stage::Commit` now escalates instead
+    when `ctx.pending_patches` is empty. This also silently corrupted any success measurement -
+    see the gate-runner fix below. Answers the maintainer's open question about where the bogus
+    extra commit came from: ruchat's own changelog append, not a `feature_changes` memorize.
+
+16. [x] Commits now continue the most recent `ai/feature-*` branch instead of starting a new one
+    per run (maintainer request 2026-08-05 - successive commits on one branch read better than
+    eight one-commit branches). `--feature-branch <name>` overrides and is created on demand.
+    A continued branch is never `branch -D`'d on a late failure, only one this run created -
+    otherwise a failure would destroy earlier runs' commits. git.rs
+    (`resolve_feature_branch`, `branch_exists`, `latest_ai_feature_branch`), 5 read-only tests.
+
+17. [x] Example tasks may now abandon an intractable target and pick another
+    (`PICK_ANOTHER` clause, scripts/refactoring_examples.sh). Maintainer observation: clippy
+    reports one location per warning, but a dead-code fix often needs the initializer/
+    construction site too, and those are neither shown nor adjacent - so "fix the first warning"
+    could hand the model a multi-site edit with no way to decline, and it would re-emit the same
+    single-site diff every round. `fix_one_clippy_lint` now asks for a warning fixable in one
+    edit. The reliability gate deliberately does NOT get this clause (`run_ruchat_raw`) - its
+    whole point is that the target never varies.
+
 ### NEXT ACTION (decided 2026-08-04, roadmap review)
 
 Stop writing new mitigations until there is a number that can move. In order:
@@ -130,10 +156,16 @@ Stop writing new mitigations until there is a number that can move. In order:
    model's thoroughness. It is a control, not a challenge: it names the file so that
    target-selection isn't a variable. Naturally repeatable (a success commits to an
    `ai/feature-*` branch and returns to the working branch, leaving llm.rs intact).
-2. [ ] **Measure the real success rate on it.** `bash scripts/refactoring_examples.sh gate 5`
-   (runner added same day: counts new `ai/feature-*` branches, and aborts if a run leaves the
-   tree dirty, since that is contributor #7 recurring). This replaces "~99/100 fail" with a
-   baseline. Gate for Phase 2's milestone: 5 consecutive unaided lands. NEEDS A LIVE RUN.
+2. [ ] **Measure the real success rate on it.** `bash scripts/refactoring_examples.sh gate 5`.
+   Runner corrected 2026-08-05: it counted new `ai/feature-*` branches, which would have scored
+   all 5 changelog-only commits (#15) as lands, and stops incrementing at all now that branches
+   are continued (#16). It now diffs the commit set before/after and requires a new commit
+   touching a file other than `featured_changes.md`. Still aborts if a run leaves the tree
+   dirty (contributor #7 recurring). Replaces "~99/100 fail" with a baseline. Gate for Phase 2's
+   milestone: 5 consecutive unaided lands. NEEDS A LIVE RUN.
+
+   Known real rate so far, from the maintainer's own archived runs: **3 genuine lands out of 8
+   commits** - and those 8 came from many more runs than 8, so the true per-run rate is lower.
 3. [ ] **Then** hold that task constant and run it with `--chat-provider anthropic`. Only with
    the task fixed does Claude-vs-qwen discriminate orchestration from model capability - on a
    2-hunk task it would only show that Claude writes better diffs, which proves nothing.

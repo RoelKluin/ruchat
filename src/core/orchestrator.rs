@@ -1143,6 +1143,16 @@ impl Orchestrator {
 
                     if !approved {
                         Stage::Escalate("commit rejected by human approval gate".into())
+                    } else if ctx.pending_patches.is_empty() {
+                        // Real failure seen in 5 of 8 archived agent commits (2026-08-05): the run
+                        // reached Commit having applied no patch at all, and committed anyway —
+                        // because `commit_add_targets` always stages `featured_changes.md`, so
+                        // there was something to commit even with zero source changes. Those land
+                        // as branches whose only content is a changelog entry describing work that
+                        // never happened, which also makes any success-rate measurement lie.
+                        Stage::Escalate(
+                            "nothing to commit: no file changes were applied this run".into(),
+                        )
                     } else {
                         // Optional dedicated model for commit-message generation
                         // (`commit_message_model`); falls back to the Worker's model — always
@@ -1156,7 +1166,21 @@ impl Orchestrator {
                             .or_else(|| self.worker.get_str("model").ok())
                             .unwrap_or("qwen2.5-coder:14b")
                             .to_string();
-                        commit_feature_branch(ctx, self.chat.as_ref(), &commit_model).await?;
+                        // Optional explicit branch name (`--feature-branch`). Absent, the commit
+                        // continues the most recent `ai/feature-*` branch — see
+                        // `git::resolve_feature_branch`.
+                        let requested_branch = self
+                            .orchestrator_config
+                            .get("feature_branch")
+                            .and_then(|v| v.as_str())
+                            .map(str::to_string);
+                        commit_feature_branch(
+                            ctx,
+                            self.chat.as_ref(),
+                            &commit_model,
+                            requested_branch.as_deref(),
+                        )
+                        .await?;
                         success = true;
                         Stage::Done
                     }

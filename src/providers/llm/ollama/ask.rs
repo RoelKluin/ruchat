@@ -49,6 +49,12 @@ pub(crate) struct AskArgs {
     )]
     team_model: Option<String>,
 
+    /// Branch the accepted change is committed to. Created if it doesn't exist. Without this,
+    /// the commit continues the most recent existing `ai/feature-*` branch, and only starts a
+    /// new `ai/feature-<timestamp>` when there is none.
+    #[arg(long, help_heading = "Agent Configuration")]
+    feature_branch: Option<String>,
+
     /// Enable RAG by specifying a Chroma (or SQLite-vec, with --vector-provider sqlite-vec)
     /// collection name
     #[arg(long, help_heading = "RAG Configuration")]
@@ -207,6 +213,12 @@ impl AskArgs {
             }
             // Ensure the librarian uses the correct collection in the prompt
             config["task_hint"] = serde_json::json!(format!("Query the {} collection", col));
+        }
+
+        // Read back by `Stage::Commit` (`git::resolve_feature_branch`). Only set when asked for,
+        // so its absence keeps the continue-the-latest-branch default.
+        if let Some(ref branch) = self.feature_branch {
+            config["feature_branch"] = serde_json::json!(branch);
         }
 
         // Librarian needs a CHAT model (`model`, defaulted below like every

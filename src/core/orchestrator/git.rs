@@ -6,13 +6,68 @@ use ollama_rs::generation::chat::ChatMessage;
 use std::time::Duration;
 use tokio_stream::StreamExt;
 
+/// True if `name` already exists as a local branch.
+async fn branch_exists(name: &str) -> bool {
+    run_git_command(vec![
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        &format!("refs/heads/{name}"),
+    ])
+    .await
+    .is_ok()
+}
+
+/// The most recently committed-to `ai/feature-*` branch, if any. Sorted by committer date rather
+/// than by the timestamp embedded in the name, so a branch that was reused (and so has newer
+/// commits than its name suggests) still sorts first.
+async fn latest_ai_feature_branch() -> Option<String> {
+    let out = run_git_command_capture(vec![
+        "for-each-ref",
+        "--sort=-committerdate",
+        "--format=%(refname:short)",
+        "refs/heads/ai/feature-*",
+    ])
+    .await
+    .ok()?;
+    out.lines()
+        .next()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+/// Picks the branch this run's commit lands on, and reports whether it had to be created.
+///
+/// Default is to *continue* the most recent `ai/feature-*` branch rather than start a new one
+/// each run (maintainer preference, 2026-08-05): a sequence of agent runs against the same goal
+/// reads far better as successive commits on one branch than as eight one-commit branches, which
+/// is what the previous always-create behavior produced. An explicit `requested` name overrides
+/// that and is created on demand if it doesn't exist yet.
+///
+/// The bool matters for failure handling: a branch we created can be safely deleted on error, but
+/// one we merely continued must never be — it carries earlier runs' commits.
+async fn resolve_feature_branch(requested: Option<&str>) -> (String, bool) {
+    if let Some(name) = requested {
+        let created = !branch_exists(name).await;
+        return (name.to_string(), created);
+    }
+    if let Some(existing) = latest_ai_feature_branch().await {
+        return (existing, false);
+    }
+    (
+        format!("ai/feature-{}", chrono::Utc::now().timestamp()),
+        true,
+    )
+}
+
 pub(crate) async fn commit_feature_branch(
     ctx: &Context,
     ollama: &dyn LlmClient,
     model: &str,
+    requested_branch: Option<&str>,
 ) -> Result<()> {
-    let timestamp = chrono::Utc::now().timestamp();
-    let branch_name = format!("ai/feature-{}", timestamp);
+    let (branch_name, created_branch) = resolve_feature_branch(requested_branch).await;
 
     // 1. Get current branch name to return to it later
     let current_branch_output = tokio::process::Command::new("git")
@@ -25,7 +80,11 @@ pub(crate) async fn commit_feature_branch(
 
     // 2. Execution with rollback
     let result = async {
-        run_git_command(vec!["checkout", "-b", &branch_name]).await?;
+        if created_branch {
+            run_git_command(vec!["checkout", "-b", &branch_name]).await?;
+        } else {
+            run_git_command(vec!["checkout", &branch_name]).await?;
+        }
 
         // Append to featured_changes.md
         let mut file = tokio::fs::OpenOptions::new()
@@ -70,8 +129,11 @@ pub(crate) async fn commit_feature_branch(
     let _ = run_git_command(vec!["checkout", &original_branch]).await;
 
     if let Err(e) = result {
-        // If we failed after creating the branch, maybe delete the failed branch
-        let _ = run_git_command(vec!["branch", "-D", &branch_name]).await;
+        // Only clean up a branch this run created. A continued branch carries earlier runs'
+        // commits, so deleting it on a late failure would destroy work this run never made.
+        if created_branch {
+            let _ = run_git_command(vec!["branch", "-D", &branch_name]).await;
+        }
         return Err(e);
     }
 
@@ -401,6 +463,65 @@ mod tests {
         assert_eq!(lines.next().unwrap(), "Short summary");
         for l in lines {
             assert!(l.chars().count() <= MAX_COMMIT_LINE_LEN);
+        }
+    }
+
+    // The branch-resolution tests below run real `git`, but strictly read-only (`rev-parse`,
+    // `for-each-ref`) — they never create, switch or delete a branch, so they can't disturb the
+    // working tree or the ai/feature-* branches an agent run produced.
+
+    #[tokio::test]
+    async fn branch_exists_distinguishes_a_real_branch_from_a_missing_one() {
+        assert!(branch_exists("master").await);
+        assert!(!branch_exists("definitely-not-a-real-branch-9f3a2b").await);
+    }
+
+    #[tokio::test]
+    async fn latest_ai_feature_branch_only_ever_names_an_ai_feature_branch() {
+        // Tolerant by design: a fresh clone legitimately has no agent branches at all, so the
+        // assertion is on the shape of the answer, not on one existing.
+        if let Some(name) = latest_ai_feature_branch().await {
+            assert!(
+                name.starts_with("ai/feature-"),
+                "should only ever pick an agent branch, got: {name}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn an_explicit_branch_name_is_used_and_reported_as_newly_created() {
+        let (name, created) =
+            resolve_feature_branch(Some("definitely-not-a-real-branch-9f3a2b")).await;
+        assert_eq!(name, "definitely-not-a-real-branch-9f3a2b");
+        assert!(created, "a name that doesn't exist yet must be created");
+    }
+
+    #[tokio::test]
+    async fn an_explicit_name_that_already_exists_is_continued_not_recreated() {
+        // `created == false` is what stops the error path from running `branch -D` on it — the
+        // difference between continuing a branch and destroying earlier runs' commits.
+        let (name, created) = resolve_feature_branch(Some("master")).await;
+        assert_eq!(name, "master");
+        assert!(
+            !created,
+            "an existing branch must be continued, never recreated"
+        );
+    }
+
+    #[tokio::test]
+    async fn without_an_explicit_name_an_existing_agent_branch_is_continued() {
+        let (name, created) = resolve_feature_branch(None).await;
+        match latest_ai_feature_branch().await {
+            // Default behavior: continue the most recent agent branch rather than start another.
+            Some(existing) => {
+                assert_eq!(name, existing);
+                assert!(!created);
+            }
+            // No agent branch yet — only then is a fresh timestamped one minted.
+            None => {
+                assert!(name.starts_with("ai/feature-"));
+                assert!(created);
+            }
         }
     }
 }

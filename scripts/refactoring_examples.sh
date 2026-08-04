@@ -57,12 +57,27 @@ COMMON_FLAGS=(
   --iterations 5
 )
 
-run_ruchat() {
+run_ruchat_raw() {
   # $1 = space-separated extra flags (e.g. critics), $2 = goal text
   local extra_flags="$1"
   local goal="$2"
   # shellcheck disable=SC2086
   "$RUCHAT_BIN" pipe "${COMMON_FLAGS[@]}" $extra_flags "$goal"
+}
+
+# Appended to every *example* goal (added 2026-08-05). Each example names a kind of change, not a
+# specific one, so which instance gets fixed was always the model's choice — but nothing said it
+# could revise that choice after finding the first candidate intractable. Real runs showed the
+# cost: handed a target whose fix spanned two places, the model re-sent the same one-place diff
+# every round until the budget ran out, because "pick the first one" left no way to back out.
+# Not applied to the reliability gate, which must stay a fixed control.
+PICK_ANOTHER="If the specific instance you first pick turns out to need changes in more than \
+one place, or your edit is rejected twice for the same reason, abandon it and pick a different \
+instance of the same kind of change rather than resubmitting. Only report that no change is \
+possible if you have genuinely run out of candidates."
+
+run_ruchat() {
+  run_ruchat_raw "$1" "$2 $PICK_ANOTHER"
 }
 
 # --- Examples --------------------------------------------------------------
@@ -126,11 +141,27 @@ fix_one_clippy_lint() {
   # Needs the `cargo_clippy` typed tool (agent/tools.rs::ToolName::CargoClippy,
   # orchestrator::cargo::cargo_clippy) — added 2026-08-03, previously listed in
   # refactoring_examples_todo.sh as blocked.
+  #
+  # Deliberately NOT "fix the first warning" any more (changed 2026-08-05). Clippy reports one
+  # location per warning, but the fix is not always confined to it: a dead-code warning on a
+  # field or variable points at the declaration while the *other* references to it — an
+  # initializer, a struct construction — also have to go, and those are neither shown in the
+  # warning nor adjacent to it. Pinning the model to the first warning meant a run could be
+  # handed a multi-site edit with no way to decline, and it would then re-emit the same
+  # single-site diff every round until the budget ran out. Letting it skip to a warning it can
+  # actually finish trades a fixed target for a completable one.
   run_ruchat "--critic Idiomatic-Rust" \
     "You are a rust specialist. You work on the ruchat git repository. Task: \
-use the cargo_clippy tool to see the crate's current clippy warnings, pick \
-the first one reported in src/, and fix just that one lint. If clippy \
-reports nothing, say so instead of inventing a change."
+use the cargo_clippy tool to see the crate's current clippy warnings, then pick \
+ONE warning reported in src/ that you can fix completely in a single edit to a \
+single file, and fix just that one. Prefer the first such warning, but you are \
+free to skip any warning whose fix would require touching more than one place \
+— for example a dead-code warning where the item is also constructed, \
+initialized or referenced elsewhere, since removing only the declaration will \
+not compile. If an attempt is rejected, do not resubmit the same diff: either \
+extend it to cover every place that must change, or abandon that warning and \
+pick a different one. If clippy reports nothing, say so instead of inventing a \
+change."
 }
 
 remove_redundant_clone() {
@@ -231,7 +262,9 @@ those 3 to match cargo fmt's default style, with no behavior change."
 # working branch still contains the trait for the next run. No manual reset.
 
 gate_remove_dead_trait() {
-  run_ruchat "--critic Idiomatic-Rust" \
+  # run_ruchat_raw, not run_ruchat: the gate must NOT get the "pick a different instance" clause
+  # every example gets. Its whole purpose is that the target never varies between runs.
+  run_ruchat_raw "--critic Idiomatic-Rust" \
     "You are a rust specialist. You work on the ruchat git repository. Task: \
 the trait \`LlmProvider\` in src/providers/llm.rs is dead code — nothing \
 implements it and nothing calls it. Delete that trait. The \`use \
@@ -239,9 +272,31 @@ crate::Result;\` line just above it exists only to support that trait, so you \
 may delete that line in the same change too. Do not modify any other file."
 }
 
-# Runs the gate N times (default 5) and reports how many landed a commit.
-# Success is detected by a new `ai/feature-*` branch appearing, which is what
-# `orchestrator/git.rs::commit_feature_branch` creates on a successful commit.
+# Runs the gate N times (default 5) and reports how many landed a REAL commit.
+#
+# Success is deliberately NOT "a new ai/feature-* branch appeared". Two reasons that measure is
+# wrong, both found 2026-08-05 by inspecting the 8 archived agent commits:
+#   - 5 of those 8 commits touched only `featured_changes.md`, ruchat's own changelog, which
+#     `commit_add_targets` stages unconditionally — so a run that applied no patch at all still
+#     produced a branch and a commit. Counting branches would have scored those as lands.
+#   - Commits now continue the latest ai/feature-* branch by default rather than creating a new
+#     one per run, so branch count stops incrementing at all.
+# Instead: record the branch tip before and after, and require a new commit that touches at least
+# one file other than featured_changes.md.
+# Every commit sitting on an ai/feature-* branch but not on the current branch, sorted so `comm`
+# can diff two snapshots of this set.
+_agent_commits() {
+  git rev-list --branches='ai/feature-*' --not master 2>/dev/null | sort -u
+}
+
+# True when commit $1 changes at least one file that isn't ruchat's own changelog. This is what
+# separates a real land from a run that applied no patch but still committed featured_changes.md.
+_commit_touches_source() {
+  git show --format= --name-only "$1" \
+    | grep -v '^featured_changes\.md$' \
+    | grep -q '[^[:space:]]'
+}
+
 gate_measure() {
   local runs="${1:-5}"
   if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
@@ -250,17 +305,27 @@ gate_measure() {
     echo "that a dirty tree afterward is unambiguously this run's doing." >&2
     exit 1
   fi
-  local landed=0 i before after
+  local landed=0 i before after new h
   for i in $(seq 1 "$runs"); do
-    before=$(git branch --list 'ai/feature-*' | wc -l)
+    before=$(_agent_commits)
     echo "=== gate run $i/$runs ==="
     gate_remove_dead_trait || echo "(run $i exited non-zero)"
-    after=$(git branch --list 'ai/feature-*' | wc -l)
-    if [ "$after" -gt "$before" ]; then
-      landed=$((landed + 1))
-      echo "--- run $i: LANDED a commit"
-    else
+    after=$(_agent_commits)
+    new=$(comm -13 <(echo "$before") <(echo "$after"))
+
+    if [ -z "$new" ]; then
       echo "--- run $i: no commit"
+    else
+      local real=0
+      for h in $new; do
+        if _commit_touches_source "$h"; then
+          real=1
+          echo "--- run $i: LANDED $(git log -1 --format=%h\ %s "$h")"
+        else
+          echo "--- run $i: changelog-only commit $(git log -1 --format=%h "$h") — NOT a land"
+        fi
+      done
+      [ "$real" -eq 1 ] && landed=$((landed + 1))
     fi
     if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
       echo "!!! run $i left the tree dirty — a rejected patch was not reverted." >&2
