@@ -5,7 +5,8 @@ use crate::cli::prompt::PromptArgs;
 use crate::io::Io;
 use crate::ollama::OllamaArgs;
 use crate::orchestrator::{DebugBreakpoints, Orchestrator};
-use crate::{Result, RuChatError};
+use crate::sqlite_vec::SqliteVecClientConfigArgs;
+use crate::{Result, RuChatError, VectorProvider};
 use clap::{Parser, ValueEnum};
 use serde_json::Value;
 use std::sync::Arc;
@@ -48,9 +49,19 @@ pub(crate) struct AskArgs {
     )]
     team_model: Option<String>,
 
-    /// Enable RAG by specifying a Chroma collection name
+    /// Enable RAG by specifying a Chroma (or SQLite-vec, with --vector-provider sqlite-vec)
+    /// collection name
     #[arg(long, help_heading = "RAG Configuration")]
     collection: Option<String>,
+
+    /// Which vector-store backend the Librarian (enabled via --collection) reads from — Chroma
+    /// (default) or a local SQLite-vec file (--sqlite-vec-path). Embed/index have their own
+    /// identical flag; this is the same choice for an agentic run's RAG retrieval.
+    #[arg(long, value_enum, default_value_t = VectorProvider::Chroma, help_heading = "RAG Configuration")]
+    vector_provider: VectorProvider,
+
+    #[command(flatten)]
+    sqlite_vec_client_config: SqliteVecClientConfigArgs,
 
     /// Model for the Librarian agent's query embeddings (default: all-minilm:l6-v2)
     #[arg(long, help_heading = "RAG Configuration")]
@@ -154,7 +165,6 @@ impl AskArgs {
         // Inject Librarian if collection is provided via flag
         if let Some(col) = self.collection {
             config["Librarian"] = serde_json::json!({
-                "chroma_client": "{\"chroma_server\": \"http://localhost:8000\"}", // Default server
                 "status_msg": "Searching knowledge base...",
                 // `recall_prior_memories`'s ad-hoc pre-run recall doesn't go through the
                 // Librarian's own LLM-driven query (which picks a collection name itself,
@@ -164,6 +174,19 @@ impl AskArgs {
                 // which has nothing to do with what `--collection` here actually configured.
                 "memory_collection": col,
             });
+            // Backend selection mirrors `EmbedArgs::resolve_collection`'s branch — see
+            // `Orchestrator::new`'s Librarian construction, which reads these same two keys.
+            match self.vector_provider {
+                VectorProvider::Chroma => {
+                    config["Librarian"]["chroma_client"] =
+                        serde_json::json!("{\"chroma_server\": \"http://localhost:8000\"}");
+                }
+                VectorProvider::SqliteVec => {
+                    config["Librarian"]["vector_provider"] = serde_json::json!("sqlite-vec");
+                    config["Librarian"]["sqlite_vec_client"] =
+                        serde_json::json!(self.sqlite_vec_client_config.to_json_string());
+                }
+            }
             // Ensure the librarian uses the correct collection in the prompt
             config["task_hint"] = serde_json::json!(format!("Query the {} collection", col));
         }
@@ -403,6 +426,49 @@ mod tests {
         assert_eq!(config["Architect"]["model"], "codellama");
         assert_eq!(config["Worker"]["model"], "codellama");
     }
+
+    #[test]
+    fn collection_with_sqlite_vec_provider_injects_the_sqlite_vec_librarian_keys_not_chroma() {
+        let mut sqlite_vec_client_config = SqliteVecClientConfigArgs::default();
+        sqlite_vec_client_config
+            .update_from_json(&json!({"sqlite_vec_path": "/tmp/whatever.sqlite3"}))
+            .unwrap();
+        let args = AskArgs {
+            collection: Some("notes".to_string()),
+            vector_provider: VectorProvider::SqliteVec,
+            sqlite_vec_client_config,
+            ..Default::default()
+        };
+
+        let config = args.into_config("default-model").unwrap();
+
+        assert_eq!(config["Librarian"]["vector_provider"], "sqlite-vec");
+        assert!(
+            config["Librarian"]["sqlite_vec_client"]
+                .as_str()
+                .unwrap()
+                .contains("/tmp/whatever.sqlite3")
+        );
+        assert!(
+            config["Librarian"].get("chroma_client").is_none(),
+            "sqlite-vec provider must not also inject the chroma_client key"
+        );
+        assert_eq!(config["Librarian"]["memory_collection"], "notes");
+    }
+
+    #[test]
+    fn collection_with_default_provider_still_injects_chroma_client() {
+        let args = AskArgs {
+            collection: Some("notes".to_string()),
+            ..Default::default()
+        };
+
+        let config = args.into_config("default-model").unwrap();
+
+        assert!(config["Librarian"]["chroma_client"].is_string());
+        assert!(config["Librarian"].get("vector_provider").is_none());
+    }
+
     #[tokio::test]
     #[ignore = "requires a live Ollama server on localhost:11434 — runs a full 3-round Orchestrator against real qwen2.5 models"]
     async fn test_agentic() {

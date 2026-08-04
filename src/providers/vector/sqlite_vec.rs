@@ -26,6 +26,15 @@ impl SqliteVecClientConfigArgs {
         Ok(())
     }
 
+    /// Renders this config as the JSON-string-valued form `Orchestrator::new`'s Librarian
+    /// construction expects for its `"sqlite_vec_client"` key (`remove_str` + `.parse::
+    /// <Value>()`, same shape `"chroma_client"` already uses) — lets `ask.rs`'s `--collection`
+    /// shortcut inject a SQLite-vec Librarian config the same way it already injects a Chroma
+    /// one, without exposing `sqlite_vec_path` as a public field just for this.
+    pub(crate) fn to_json_string(&self) -> String {
+        serde_json::json!({ "sqlite_vec_path": self.sqlite_vec_path }).to_string()
+    }
+
     /// Opens (creating if absent) the SQLite file at `sqlite_vec_path`, registering the
     /// sqlite-vec extension on the connection. Blocking file/extension-load work is moved
     /// onto a blocking thread — this is called from async call sites (`EmbedArgs`,
