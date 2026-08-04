@@ -17,6 +17,7 @@ working in this repository.
 - Maintainer: Roelof J.C. Kluin (`roel.kluin@gmail.com`).
 - License: MIT. Version: see `Cargo.toml` (`0.1.2`, pre-1.0 — breaking changes
   are expected and not yet semver-gated).
+- See Delegation policy at bottom — always check before writing boilerplate or running builds
 
 ## Tech Stack
 
@@ -228,3 +229,11 @@ across files:
 - `ROADMAP.md` — phased, dated plan and positioning vs. LangGraph/CrewAI/AutoGen.
 - `TODO.md` — the live, checkbox-style task list (including a "Done" section —
   update it rather than leaving completed items unmarked).
+
+## Delegation policy
+
+- Boilerplate, trait impls, test scaffolding, first-pass review → use the rust-local-* subagents.
+- Long build/test/clippy output → route through build-log-summarizer, never paste raw.
+- Codebase context → query the chromadb MCP tool for relevant snippets instead of re-reading whole files.
+- Reserve your own (Sonnet) reasoning for: borrow-checker/lifetime issues, architecture, concurrency bugs, anything in the agent-loop core.
+- Escalate to Opus only after Sonnet has made a real attempt and hit a wall — not as a first resort.
