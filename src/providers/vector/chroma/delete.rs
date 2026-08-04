@@ -9,11 +9,13 @@ use serde_json::Value;
 
 #[derive(Parser, Debug, Clone, PartialEq)]
 pub(crate) struct ChromaDeleteArgs {
-    /// The name of the collection from which to delete documents.
+    /// The name of the collection to delete from (or delete entirely — see --force).
     #[arg(short, long)]
     collection: String,
 
-    /// If set, bypasses confirmation prompts before deletion.
+    /// With --ids or --where: bypasses confirmation prompts before deleting those specific
+    /// records. Alone (no --ids, no --where): deletes the ENTIRE collection, not just its
+    /// contents — irreversible.
     #[arg(short, long)]
     force: bool,
 
