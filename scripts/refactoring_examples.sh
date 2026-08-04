@@ -206,6 +206,74 @@ pick 3 files under src/ with cargo fmt formatting drift and reformat just \
 those 3 to match cargo fmt's default style, with no behavior change."
 }
 
+# --- Reliability gate --------------------------------------------------------
+#
+# The measurement task for TODO.md section 0's Phase 2 milestone gate. Unlike
+# every example above, this one is a *control*, not a challenge: it names the
+# exact file and change so that target-selection is not a variable. What it
+# measures is only whether the loop can plan -> write a valid diff -> apply ->
+# pass the Tester -> commit. That is the question section 0 has never been able
+# to answer, because every previous attempt used `fix_one_clippy_lint`, whose
+# correct fix needs two hunks (`options` is declared at src/core/agent.rs:82 and
+# constructed at :116) — so a failure there could always be either the pipeline
+# or the model's inability to decompose a multi-site edit.
+#
+# Verified one-hunk 2026-08-04, both ways, by applying each by hand and running
+# `cargo check --lib`:
+#   - delete the trait only (3 lines)      -> compiles; leaves an unused-import warning
+#   - delete the `use` + trait (5 lines)   -> compiles clean
+# Both are a single contiguous hunk, so a correct run lands either way. That
+# forgiving success criterion is deliberate: this measures the loop, not the
+# model's thoroughness.
+#
+# Naturally repeatable: a successful run commits to a new `ai/feature-<ts>`
+# branch and returns to the original branch, so `src/providers/llm.rs` on the
+# working branch still contains the trait for the next run. No manual reset.
+
+gate_remove_dead_trait() {
+  run_ruchat "--critic Idiomatic-Rust" \
+    "You are a rust specialist. You work on the ruchat git repository. Task: \
+the trait \`LlmProvider\` in src/providers/llm.rs is dead code — nothing \
+implements it and nothing calls it. Delete that trait. The \`use \
+crate::Result;\` line just above it exists only to support that trait, so you \
+may delete that line in the same change too. Do not modify any other file."
+}
+
+# Runs the gate N times (default 5) and reports how many landed a commit.
+# Success is detected by a new `ai/feature-*` branch appearing, which is what
+# `orchestrator/git.rs::commit_feature_branch` creates on a successful commit.
+gate_measure() {
+  local runs="${1:-5}"
+  if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+    echo "refusing to measure: working tree has uncommitted tracked changes." >&2
+    echo "A run that fails mid-way can leave a patch applied; start clean so" >&2
+    echo "that a dirty tree afterward is unambiguously this run's doing." >&2
+    exit 1
+  fi
+  local landed=0 i before after
+  for i in $(seq 1 "$runs"); do
+    before=$(git branch --list 'ai/feature-*' | wc -l)
+    echo "=== gate run $i/$runs ==="
+    gate_remove_dead_trait || echo "(run $i exited non-zero)"
+    after=$(git branch --list 'ai/feature-*' | wc -l)
+    if [ "$after" -gt "$before" ]; then
+      landed=$((landed + 1))
+      echo "--- run $i: LANDED a commit"
+    else
+      echo "--- run $i: no commit"
+    fi
+    if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+      echo "!!! run $i left the tree dirty — a rejected patch was not reverted." >&2
+      echo "!!! That is itself a section-0 bug (cf. contributor #7). Stopping." >&2
+      git status --short >&2
+      exit 1
+    fi
+  done
+  echo
+  echo "gate result: $landed/$runs landed a commit"
+  echo "Phase 2 milestone gate needs 5 consecutive lands (see TODO.md section 0)."
+}
+
 # --- Dispatch ----------------------------------------------------------------
 
 list() {
@@ -226,8 +294,15 @@ Available examples (each is one small, single-file, low-compile-risk task):
   rename_helper_and_call_sites  - rename a function and its call sites (up to 3 files)
   format_a_few_drifted_files    - cargo-fmt 3 files with formatting drift
 
+Reliability gate (a control task, not an example — see TODO.md section 0):
+
+  gate_remove_dead_trait        - delete the dead LlmProvider trait (verified 1 hunk)
+
 Run one with:
   bash scripts/refactoring_examples.sh run <name>
+
+Measure the success rate over N runs (default 5):
+  bash scripts/refactoring_examples.sh gate [N]
 EOF
 }
 
@@ -244,8 +319,9 @@ main() {
       fi
       "$name"
       ;;
+    gate) gate_measure "${2:-5}" ;;
     *)
-      echo "Usage: $0 {list|run <name>}" >&2
+      echo "Usage: $0 {list|run <name>|gate [N]}" >&2
       exit 1
       ;;
   esac

@@ -119,12 +119,21 @@ instruction not to (485). Next step if these persist after a live re-run: try
 
 Stop writing new mitigations until there is a number that can move. In order:
 
-1. [ ] **Retarget the gate task to a one-hunk change.** `fix_one_clippy_lint` needs a 2-hunk
-   edit (declaration at agent.rs:82 + construction at agent.rs:116), so it conflates "pipeline
-   works" with "model can decompose a multi-site edit" - it cannot answer either question.
-   Pick a task whose correct fix is genuinely one hunk (e.g. remove an unused `use`).
-2. [ ] **Measure the real success rate on it.** N runs, count commits landed. This replaces
-   "~99/100 fail" with a baseline. Gate for Phase 2's milestone: 5 consecutive unaided lands.
+1. [x] **Gate task retargeted, 2026-08-04.** `fix_one_clippy_lint` needs a 2-hunk edit
+   (declaration at agent.rs:82 + construction at agent.rs:116), so it conflates "pipeline works"
+   with "model can decompose a multi-site edit" - it cannot answer either question.
+   New gate: `gate_remove_dead_trait` in scripts/refactoring_examples.sh - delete the dead
+   `LlmProvider` trait in src/providers/llm.rs (nothing implements or calls it). Verified
+   one-hunk by hand both ways before adopting it: trait alone (3 lines) compiles, leaving an
+   unused-import warning; `use` + trait (5 lines) compiles clean. Both are one contiguous hunk,
+   so either lands - a deliberately forgiving criterion, since this measures the loop, not the
+   model's thoroughness. It is a control, not a challenge: it names the file so that
+   target-selection isn't a variable. Naturally repeatable (a success commits to an
+   `ai/feature-*` branch and returns to the working branch, leaving llm.rs intact).
+2. [ ] **Measure the real success rate on it.** `bash scripts/refactoring_examples.sh gate 5`
+   (runner added same day: counts new `ai/feature-*` branches, and aborts if a run leaves the
+   tree dirty, since that is contributor #7 recurring). This replaces "~99/100 fail" with a
+   baseline. Gate for Phase 2's milestone: 5 consecutive unaided lands. NEEDS A LIVE RUN.
 3. [ ] **Then** hold that task constant and run it with `--chat-provider anthropic`. Only with
    the task fixed does Claude-vs-qwen discriminate orchestration from model capability - on a
    2-hunk task it would only show that Claude writes better diffs, which proves nothing.
