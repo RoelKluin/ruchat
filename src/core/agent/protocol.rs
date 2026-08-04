@@ -165,6 +165,71 @@ const MAX_PATCH_DIFF_BYTES: usize = 8_000;
 /// single rejection turn.
 const MAX_SHOWN_ORIGINAL_CHARS: usize = 4_000;
 
+/// Cap on how much of `git apply --check`'s own stderr gets folded into a rejection — its
+/// output is normally a few lines per failed hunk, this is defensive headroom, not a size this
+/// is expected to actually hit.
+const MAX_GIT_APPLY_DIAGNOSIS_CHARS: usize = 2_000;
+
+/// Second opinion on a `diffy::apply` failure, via `git apply --check` — dry-run only, never
+/// touches the working tree either way. `diffy`'s own source describes itself as following GNU
+/// patch's algorithm "minus fuzzy-matching context lines," so it's strictly stricter than either
+/// external tool; git's own patch engine can often name the exact hunk and what it searched for
+/// vs. what's actually there, a more specific diagnosis than diffy's own error. Also handles the
+/// case where git reports the diff WOULD apply cleanly — informative on its own (the mismatch is
+/// this tool's own strictness, not necessarily a wrong diff), even though nothing changes here in
+/// that case yet (see `TODO.md` for the bigger, not-yet-done option of using `git apply` as the
+/// actual apply engine, not just a diagnostic).
+///
+/// Best-effort like every other diagnostic-nicety path in this codebase (`Checkpoint::save`,
+/// `finalize_trace`): if `git` itself can't be spawned or times out, this is silently omitted —
+/// the primary diffy-based rejection message must never be blocked on a secondary opinion.
+async fn check_with_git_apply(diff_text: &str) -> String {
+    let mut child = match Command::new("git")
+        .args(["apply", "--check", "-v"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(_) => return String::new(),
+    };
+    // Written and dropped before `wait_with_output()` so git sees EOF on stdin instead of
+    // hanging — same pattern `orchestrator::search::regenerate_tags` already uses for ctags.
+    {
+        let Some(mut stdin) = child.stdin.take() else {
+            return String::new();
+        };
+        if tokio::io::AsyncWriteExt::write_all(&mut stdin, diff_text.as_bytes())
+            .await
+            .is_err()
+        {
+            return String::new();
+        }
+    }
+    let Ok(Ok(output)) =
+        tokio::time::timeout(Duration::from_secs(10), child.wait_with_output()).await
+    else {
+        return String::new();
+    };
+    if output.status.success() {
+        return "(`git apply --check` reports this diff would actually apply cleanly against \
+            the file — the mismatch above is specific to this tool's own patch engine, which \
+            is stricter than git's, not necessarily a wrong diff.)\n\n"
+            .to_string();
+    }
+    let stderr: String = String::from_utf8_lossy(&output.stderr)
+        .trim()
+        .chars()
+        .take(MAX_GIT_APPLY_DIAGNOSIS_CHARS)
+        .collect();
+    if stderr.is_empty() {
+        String::new()
+    } else {
+        format!("`git apply --check`'s own diagnosis: {stderr}\n\n")
+    }
+}
+
 /// Repairs the single most common diff mistake coder-tuned local models make:
 /// dropping the mandatory leading space on an unchanged (context) line inside
 /// a hunk. Unified diff requires every hunk-body line to start with ' '
@@ -393,12 +458,13 @@ impl Validation {
                 } else {
                     String::new()
                 };
+                let git_diagnosis = check_with_git_apply(diff_text).await;
                 let content = format!(
-                    "Patch apply failed on {target}: {e}\n\nThis means the diff's context \
-                    lines don't match {target}'s actual current content. Here is the file's \
-                    real current content, with line numbers (N:content) — write your next \
-                    diff's context lines AND its @@ -a,b +c,d @@ hunk header's starting line \
-                    number to match this exactly, don't guess:\n\n{shown}{truncated_note}"
+                    "Patch apply failed on {target}: {e}\n\n{git_diagnosis}This means the \
+                    diff's context lines don't match {target}'s actual current content. Here \
+                    is the file's real current content, with line numbers (N:content) — write \
+                    your next diff's context lines AND its @@ -a,b +c,d @@ hunk header's \
+                    starting line number to match this exactly, don't guess:\n\n{shown}{truncated_note}"
                 );
                 ctx.push_turn(TurnKind::Rejection, "Validator", content);
                 Ok(Validation::Failure(e.to_string()))
@@ -755,6 +821,51 @@ mod tests {
         assert!(
             rejection.content.contains("1:[package]"),
             "expected a line-numbered first line, got: {}",
+            rejection.content
+        );
+    }
+
+    #[tokio::test]
+    async fn check_with_git_apply_surfaces_gits_own_diagnosis_for_a_mismatched_diff() {
+        let diff = "--- a/Cargo.toml\n+++ b/Cargo.toml\n@@ -1,3 +1,3 @@\n totally made up line one\n totally made up line two\n-totally made up line three\n+totally made up line three, changed\n";
+        let diagnosis = check_with_git_apply(diff).await;
+        assert!(
+            diagnosis.contains("patch failed") || diagnosis.contains("while searching for"),
+            "expected git's own failure diagnosis, got: {diagnosis:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn check_with_git_apply_reports_when_a_diff_would_actually_apply_cleanly() {
+        // Real content, 3-line hunk (context/change/context) against Cargo.toml's actual first
+        // lines — a diff `git apply --check` genuinely accepts, independent of whether diffy
+        // also would (that's exercised separately via `Validation::apply_patch` itself).
+        let diff = "--- a/Cargo.toml\n+++ b/Cargo.toml\n@@ -1,3 +1,3 @@\n [package]\n-authors = [\"Roelof J.C. Kluin\"]\n+authors = [\"Someone Else\"]\n description = \"ollama/chroma command-line AI chat tool\"\n";
+        let diagnosis = check_with_git_apply(diff).await;
+        assert!(
+            diagnosis.contains("would actually apply cleanly"),
+            "expected the clean-apply message, got: {diagnosis:?}"
+        );
+    }
+
+    // Regression: confirms the second opinion is actually wired into the real rejection path,
+    // not just correct in isolation.
+    #[tokio::test]
+    async fn apply_patch_rejection_includes_gits_own_diagnosis() {
+        let mut ctx = Context::new("goal".to_string());
+        let diff = "--- a/Cargo.toml\n+++ b/Cargo.toml\n@@ -1,3 +1,3 @@\n totally made up line one\n totally made up line two\n-totally made up line three\n+totally made up line three, changed\n";
+        let result = Validation::apply_patch(diff, &mut ctx).await.unwrap();
+        let Validation::Failure(_) = result else {
+            panic!("expected the patch to fail to apply, got: {result:?}");
+        };
+        let rejection = ctx
+            .turns
+            .iter()
+            .find(|t| t.kind == TurnKind::Rejection)
+            .expect("a failed apply should push a rejection");
+        assert!(
+            rejection.content.contains("git apply --check"),
+            "expected the rejection to include git's second opinion, got: {}",
             rejection.content
         );
     }
