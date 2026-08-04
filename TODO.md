@@ -129,12 +129,48 @@ live-run evidence attached, not just remove the bullet.
         themselves. Also note: this fix does NOT retroactively fix the hollow `ai/feature-1785834661` branch already
         created — that's a leftover artifact from the verification run, left for the maintainer to inspect/delete,
         not touched here.
+    - **Fifth contributor found via the maintainer's own re-run after the header fix
+      (2026-08-04, `ruchat_traces/ruchat_trace_478.md`): `apply_patch` finally got attempted, but the diff was wrong
+      every round, and the Architect never adapted.** The maintainer asked two sharp questions that the trace
+      answers precisely: (1) is the failure reason actually reaching the Architect? Yes — `HISTORY`
+      (`Role::build_chat_messages`, `role.rs`) includes the full previous-round Rejection turn, including the real
+      file content dump, and `architect.md`'s own prompt already has explicit instructions to treat that as ground
+      truth and change course. The data is there; the model (qwen2.5-coder:14b) just isn't reliably using it — a
+      model-adherence gap, not a missing-wiring bug. (2) Are the diff's line numbers wrong? Worse than that: the
+      Worker's diff assumed a doc comment (`/// Configuration options for the agent.`) directly above the target
+      field that never existed in the real file at all — fabricated content, not just a bad line number. And
+      critically: the Worker wasn't even constructing this diff itself. `architect.md` explicitly forbids the
+      Architect from ever emitting a `tool_call` (plan-only, no tools) — but round 3 and round 5's Architect output
+      embedded a full, hallucinated `apply_patch` tool_call anyway, and the Worker copied that exact same
+      fabricated diff **verbatim, byte-for-byte, unchanged**, in rounds 2, 3, and 5. It never read the real file
+      content shown in each round's rejection; it was parroting the Architect's fabrication instead.
+      - **Fixed in code and unit-tested, live verification still outstanding.** New
+        `strip_architect_tool_call_hallucination` (`src/core/orchestrator.rs`) truncates the Architect's output at
+        the first `\`\`\`tool_call` fence (plus a dangling `IMPLEMENTATION:` label immediately before it, if
+        present) before it's ever stored as a Plan turn — applied in `Stage::Plan` right after the Architect's
+        query. With no ready-made diff left to copy, the Worker has to construct its own from DOCUMENTS/real
+        content instead of parroting a hallucination. Does not fix the deeper model-adherence gap (nothing
+        deterministic can force a 14B local model to actually read HISTORY carefully) — this specifically breaks
+        the "hallucinated diff propagates unchanged for multiple rounds" chain, a distinct, addressable piece of it.
+        3 new tests for the pure stripping function (including a fixture shaped exactly like the real trace, with
+        an unrelated earlier fenced block that must survive). Not integration-tested through `Stage::Plan` itself —
+        same live-infra-required category as the other `Stage`-level changes this session. 298 lib tests pass,
+        clippy clean, fmt clean. **Not yet live-verified.**
+    - **Maintainer suggestion (2026-08-04, not yet acted on): add a `reason` field to every tool_call** so the
+      Architect/other agents can see *why* a tool was called, not just which one. Reasonable idea, but assessed as
+      unlikely to have prevented the hallucination bug just found specifically — a model that fabricates a diff can
+      equally fabricate a plausible-sounding reason for it, and it wouldn't have stopped the Architect from illegally
+      emitting a tool_call in the first place. Closer to the already-tracked "explicit chain-of-thought / step-
+      reasoning prompting" item further down (`ROADMAP.md` Phase 3), which is explicitly scoped as "worth a scoped
+      experiment... once the agentic-evals harness has enough scenarios to tell whether it actually improves plan
+      quality on local models rather than just adding tokens" — not something to implement speculatively without
+      that evidence. Logged here rather than built blind; revisit alongside that item.
     - **Net assessment: meaningfully improved, not resolved.** The single most severe issue (runs dying almost
       instantly, well short of their configured budget) is fixed and live-confirmed; the double-read-only-tool-call
-      contributor is fixed and live-confirmed; the missing-header and hollow-memorize contributors are fixed in code
-      and unit-tested but not yet live-confirmed. The overall "does a real agentic run actually land a committed
-      change" question is still open — keep this section
-      until a live run actually succeeds end-to-end, not just uses its full budget.
+      contributor is fixed and live-confirmed; the missing-header, hollow-memorize, and Architect-tool-call-
+      hallucination contributors are fixed in code and unit-tested but not yet live-confirmed. The overall "does a
+      real agentic run actually land a committed change" question is still open — keep this section until a live
+      run actually succeeds end-to-end, not just uses its full budget.
 
 ## High Priority
 

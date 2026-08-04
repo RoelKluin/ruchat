@@ -772,6 +772,17 @@ impl Orchestrator {
                         Stage::Escalate("max iterations reached without acceptance".into())
                     } else {
                         retry_transient!(self.architect.query_stream(&self.chat, ctx, &tx))?;
+                        // `architect.md` explicitly forbids the Architect from ever emitting a
+                        // `tool_call` — it's plan-only, no tools — but a live-verified run (see
+                        // TODO.md's pinned reliability item) showed it doing so anyway, embedding
+                        // a full, hallucinated `apply_patch` diff (a phantom comment line that
+                        // didn't exist in the real file) right inside its "plan." The Worker then
+                        // copied that exact broken diff verbatim, unchanged, across 3 separate
+                        // rounds — it wasn't reasoning about the real file content at all, just
+                        // parroting the Architect's fabrication. Stripped deterministically here,
+                        // before the plan is ever stored: with nothing ready-made to copy, the
+                        // Worker has to construct its own diff from DOCUMENTS/real content.
+                        ctx.output = strip_architect_tool_call_hallucination(&ctx.output);
                         // A repeated plan is NOT treated as fatal. It used to trigger an
                         // immediate `Stage::Escalate` on the very first repeat — measured against
                         // real runs (see TODO.md's pinned reliability item), that was killing the
@@ -1650,6 +1661,25 @@ fn round_has_actionable_diagnostics(ctx: &Context) -> bool {
     })
 }
 
+/// `agent_role/architect.md` explicitly forbids the Architect from ever emitting a `tool_call` —
+/// it's plan-only, no tools, only the Worker calls tools — but real runs show the local model
+/// doing it anyway, embedding a full (often hallucinated) `apply_patch` diff inside what's
+/// nominally its plan. Truncates at the first `\`\`\`tool_call` fence and drops everything from
+/// there on — nothing after a hallucinated tool call in a "plan" is trustworthy plan content
+/// either — plus a trailing bare `IMPLEMENTATION:` label immediately before it, if present, so no
+/// dangling empty heading is left behind. Leaves the plan untouched if it never emitted one.
+fn strip_architect_tool_call_hallucination(plan: &str) -> String {
+    let Some(idx) = plan.find("```tool_call") else {
+        return plan.to_string();
+    };
+    let truncated = plan[..idx].trim_end();
+    truncated
+        .strip_suffix("IMPLEMENTATION:")
+        .map(str::trim_end)
+        .unwrap_or(truncated)
+        .to_string()
+}
+
 /// Treats an explicit empty string the same as an omitted optional field.
 /// Models reliably emit `"path": ""` instead of leaving an optional arg out
 /// entirely, and downstream commands (e.g. `git log -- ""`) reject an empty
@@ -2186,6 +2216,49 @@ mod tests {
     fn round_has_actionable_diagnostics_false_with_no_diagnostic_turn_at_all() {
         let ctx = Context::new("goal".to_string());
         assert!(!round_has_actionable_diagnostics(&ctx));
+    }
+
+    // Regression: a live-verified run (see TODO.md's pinned reliability item) showed the
+    // Architect — plan-only, explicitly forbidden by its own prompt from ever emitting a
+    // tool_call — hallucinating a full apply_patch diff inside its plan anyway, which the Worker
+    // then copied verbatim, unchanged, across 3 separate rounds. Fixture shaped exactly like the
+    // real trace: PLAN/CHOICE/FILES text, an earlier unrelated fenced block (the clippy warning
+    // quoted back), then an "IMPLEMENTATION:" label and a ```tool_call fence.
+    #[test]
+    fn strip_architect_tool_call_hallucination_removes_a_hallucinated_implementation_block() {
+        let plan = "**PLAN:**\nFix the lint.\n\n**FILES:**\n- src/core/agent.rs\n\n\
+            The first warning reported is:\n```\nsrc/core/agent.rs:36:5: warning: field \
+            `options` is never read\n```\n\nRemove the unused field.\n\nIMPLEMENTATION:\n\
+            ```tool_call\n{\n  \"tool\": \"apply_patch\",\n  \"diff\": \"...\"\n}\n```";
+        let stripped = strip_architect_tool_call_hallucination(plan);
+        assert!(
+            !stripped.contains("tool_call"),
+            "hallucinated tool_call should be removed, got: {stripped:?}"
+        );
+        assert!(
+            !stripped.contains("IMPLEMENTATION:"),
+            "the dangling label should be removed too, got: {stripped:?}"
+        );
+        assert!(
+            stripped.contains("Remove the unused field."),
+            "legitimate plan text before the hallucination should survive, got: {stripped:?}"
+        );
+        // The earlier, unrelated fenced block (quoting the clippy warning back) is real plan
+        // content, not part of the hallucination — must not be touched.
+        assert!(stripped.contains("field `options` is never read"));
+    }
+
+    #[test]
+    fn strip_architect_tool_call_hallucination_leaves_a_real_plan_untouched() {
+        let plan = "**PLAN:**\nFix the lint.\n\n**FILES:**\n- src/core/agent.rs";
+        assert_eq!(strip_architect_tool_call_hallucination(plan), plan);
+    }
+
+    #[test]
+    fn strip_architect_tool_call_hallucination_truncates_even_without_a_label_before_it() {
+        let plan = "**PLAN:**\nFix the lint.\n\n```tool_call\n{\"tool\": \"apply_patch\"}\n```";
+        let stripped = strip_architect_tool_call_hallucination(plan);
+        assert_eq!(stripped, "**PLAN:**\nFix the lint.");
     }
 
     // Regression canary for debug-mode breakpoint support (maintainer: "keep on working on
