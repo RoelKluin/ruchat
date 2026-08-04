@@ -169,6 +169,7 @@ pub(super) fn realign_pure_deletion_hunks(diff: &str, original: &str) -> Option<
     let lines: Vec<&str> = diff.split_inclusive('\n').collect();
     let mut out = String::with_capacity(diff.len());
     let mut changed = false;
+    let mut next_allowed_start = 0usize;
     let mut i = 0;
     while i < lines.len() {
         let trimmed = lines[i].trim_end_matches('\n');
@@ -191,7 +192,15 @@ pub(super) fn realign_pure_deletion_hunks(diff: &str, original: &str) -> Option<
             .map(|l| l.trim_end_matches('\n'))
             .collect();
         match rebuild_deletion_hunk(&body, &file_lines) {
-            Some(rebuilt) => {
+            Some((rebuilt, start)) => {
+                // A relocated hunk can land before an earlier (or unrepaired) one's start.
+                // `diffy` requires ascending, non-overlapping hunks, so a diff that lost that
+                // ordering would just fail to parse and throw the repair away — bail instead and
+                // let the normal rejection path, which shows the real file, handle it.
+                if start < next_allowed_start {
+                    return None;
+                }
+                next_allowed_start = start + REALIGN_CONTEXT_LINES;
                 out.push_str(&rebuilt);
                 changed = true;
             }
@@ -206,13 +215,25 @@ pub(super) fn realign_pure_deletion_hunks(diff: &str, original: &str) -> Option<
     changed.then_some(out)
 }
 
-/// Rebuilds one hunk body against the real file, or `None` if it isn't an unambiguously
-/// relocatable pure deletion. See `realign_pure_deletion_hunks` for the rules.
-fn rebuild_deletion_hunk(body: &[&str], file_lines: &[&str]) -> Option<String> {
+/// Rebuilds one hunk body against the real file, returning the rebuilt hunk text and the 0-based
+/// file line it now starts at, or `None` if this isn't an unambiguously relocatable pure
+/// deletion. See `realign_pure_deletion_hunks` for the rules.
+fn rebuild_deletion_hunk(body: &[&str], file_lines: &[&str]) -> Option<(String, usize)> {
     if body.iter().any(|l| l.starts_with('+')) {
         return None;
     }
-    let removed: Vec<&str> = body
+    // The `-` lines must be adjacent *in the hunk body* too, not just findable adjacently in the
+    // file. Without this, a body like " a / -b / c / -d / e" would search for `b` immediately
+    // followed by `d` — a pair the model never claimed was contiguous — and, if that pair happens
+    // to occur once elsewhere (easy with short repeated lines like `}`), relocate onto it and
+    // delete two lines nothing pointed at. Requiring the diff's own claim to match what gets
+    // searched for keeps this from ever being a silent wrong edit.
+    let first = body.iter().position(|l| l.starts_with('-'))?;
+    let last = body.iter().rposition(|l| l.starts_with('-'))?;
+    if body[first..=last].iter().any(|l| !l.starts_with('-')) {
+        return None;
+    }
+    let removed: Vec<&str> = body[first..=last]
         .iter()
         .filter_map(|l| l.strip_prefix('-'))
         .map(str::trim)
@@ -250,7 +271,7 @@ fn rebuild_deletion_hunk(body: &[&str], file_lines: &[&str]) -> Option<String> {
         rebuilt.push_str(line);
         rebuilt.push('\n');
     }
-    Some(rebuilt)
+    Some((rebuilt, ctx_start))
 }
 
 #[cfg(test)]
@@ -419,6 +440,17 @@ mod tests {
         // and let the normal context-mismatch rejection show the real file instead.
         let file = "a\n    dup();\nb\n    dup();\nc\n";
         let diff = "--- a/f.rs\n+++ b/f.rs\n@@ -1,3 +1,2 @@\n zzz\n-    dup();\n yyy\n";
+        assert!(realign_pure_deletion_hunks(diff, file).is_none());
+    }
+
+    #[test]
+    fn realign_refuses_when_removed_lines_are_split_by_context() {
+        // The body claims `b` and `d` are separated by `c`, so searching for them as an adjacent
+        // pair would be searching for something the diff never asserted — and here that pair does
+        // occur, once, further down. Relocating onto it would silently delete two lines nothing
+        // pointed at, so this must decline instead.
+        let file = "x\nb\nc\nd\ny\nb\nd\nz\n";
+        let diff = "--- a/f.rs\n+++ b/f.rs\n@@ -1,5 +1,3 @@\n a\n-b\n c\n-d\n e\n";
         assert!(realign_pure_deletion_hunks(diff, file).is_none());
     }
 

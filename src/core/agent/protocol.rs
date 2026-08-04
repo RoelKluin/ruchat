@@ -385,10 +385,12 @@ impl Validation {
         // Checked by symbol, never by line number, and only for pure deletions answering a
         // dead-code warning: if clippy said `options` is dead and this diff only removes lines,
         // at least one removed line has to mention `options`. Anything else fails open.
+        // Read from `normalized`, the same text realignment and `diffy::apply` see, so line
+        // prefixes are already classified consistently for both.
         let symbols = clippy_dead_code_symbols_for(ctx, target);
-        let removed = removed_line_texts(diff_text);
+        let removed = removed_line_texts(&normalized);
         let is_pure_deletion = !removed.is_empty()
-            && !diff_text
+            && !normalized
                 .lines()
                 .any(|l| l.starts_with('+') && !l.starts_with("+++"));
         if !symbols.is_empty()

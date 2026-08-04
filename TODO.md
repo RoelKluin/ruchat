@@ -102,6 +102,13 @@ Contributors found via real trace evidence (`qwen2.5-coder:14b`) and fixed, 2026
     by protocol.rs and again as `ApplyPatch` by orchestrator.rs:1577 - pre-existing on all
     rejection paths, pure context bloat.
 
+    Known still-blocking, so #14 alone will NOT make `fix_one_clippy_lint` land: the one-line
+    deletion the Worker keeps writing does not compile on its own. `options` is a struct field
+    that is also constructed at src/core/agent.rs:116, so removing only the declaration gives
+    "struct `Agent` has no field named `options`" - the task needs a 2-hunk deletion. apply_patch
+    now applies the correct diff; Test still rejects it. That plus (b) are the next two blockers
+    ahead of a landed run.
+
 Two patterns seen live (traces 484/485), not fixed - look like a model-capability limit, not a
 further orchestration bug: Architect suggesting a raw shell command instead of `FILES:` (484);
 Worker calling cargo_clippy every round for a full 5-round run despite worker.md's explicit
