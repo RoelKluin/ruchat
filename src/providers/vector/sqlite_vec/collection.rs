@@ -649,6 +649,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn add_with_a_dimension_mismatch_returns_a_legible_error() {
+        let (_dir, client) = open_temp();
+        let collection = client.collection("docs").unwrap();
+        collection
+            .add(vec!["a".into()], vec![vec![1.0, 0.0]], None, None)
+            .await
+            .unwrap();
+        let err = collection
+            .add(vec!["b".into()], vec![vec![1.0, 0.0, 0.0]], None, None)
+            .await
+            .unwrap_err();
+        // Not asserting exact wording (that's `vec0`'s own error text, not ours to pin down) —
+        // just that it surfaces as our own error type, not a panic or a silently-wrong write.
+        assert!(!format!("{err}").is_empty());
+    }
+
+    #[tokio::test]
     async fn update_rejects_an_id_that_does_not_exist() {
         let (_dir, client) = open_temp();
         let collection = client.collection("docs").unwrap();
