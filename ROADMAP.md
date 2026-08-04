@@ -14,6 +14,31 @@ We prioritize **predictability**, **performance**, **token efficiency**, and **t
 
 ---
 
+### How a milestone is judged (added 2026-08-04)
+
+Every milestone below was originally written as a feature checklist, and that is
+how this file came to claim Phase 2's "best-in-class local coding agent"
+milestone while `TODO.md`'s pinned item recorded ~99/100 real runs failing. A
+shipped feature list is not evidence the pipeline works. From here on the two
+are tracked separately:
+
+- **Features complete** — every `[x]` in the phase. Checkbox-derived, cheap to verify.
+- **Milestone met** — a measured, live, end-to-end success rate. Not implied by the above.
+
+**Phase 2's milestone gate**: 5 consecutive `fix_one_clippy_lint`-class live runs
+(`ruchat pipe --team-model ...` against real Ollama) each landing a committed
+change, no human intervention. Current measured rate: ~1/100 (2026-08-04
+baseline: 19/20 archived traces failed). Until that gate is met, Phase 2's
+milestone is **not met**, regardless of how many features are `[x]`.
+
+This gate is also the reason Phase 3's remaining items are sequenced behind it —
+graph flexibility, plugins and new agent use cases are all worth nothing on a
+pipeline that doesn't complete a run. See `TODO.md`'s pinned section 0 for the
+live contributor list and `ROADMAP_QUESTIONAIRE.md` (untracked) for the open
+direction questions this raises.
+
+---
+
 ### Phase 1: Stability & Polish (v0.2.0) — Q2 2026
 
 **Goal**: Production-ready foundation
@@ -29,7 +54,10 @@ We prioritize **predictability**, **performance**, **token efficiency**, and **t
 - [x] CI workflow (`.github/workflows/ci.yml`): build + `cargo clippy --lib --tests` + `cargo test --lib` on push/PR — deliberately no `-D warnings` or `fmt --check` gate yet (pre-existing dead-code warnings and repo-wide fmt drift need cleanup first, see `TODO.md`)
 - [x] Release v0.2.0 with clean `TODO.md` → `DONE` migration — version bumped in `Cargo.toml`/`README.md`, all `[x]`-completed items moved out of `TODO.md`'s priority sections into its `Done` list, `cargo check --lib`/`cargo test --lib`/`cargo clippy --lib --tests`/`cargo build --release` verified clean per the deploy checklist (fixed one flaky test found in the process — `cli::options::tests::test_read_options_file` raced another test over a shared filename)
 
-**Milestone**: Reliable daily driver for local coding agents.
+**Milestone**: Reliable daily driver for local coding agents. **Features
+complete; "reliable daily driver" inherits Phase 2's unmet gate above** — the
+non-agentic subcommands (`ask`, `embed`, `index`, `chroma-*`) are genuinely
+usable daily, the agentic pipeline is not.
 
 ---
 
@@ -54,11 +82,27 @@ We prioritize **predictability**, **performance**, **token efficiency**, and **t
 
 **Milestone**: Best-in-class local coding agent (plan → code → review → commit) that beats Python frameworks in speed and reliability.
 
+**Status: features complete, milestone NOT met.** Every feature bullet above is
+shipped, but the plan → code → review → commit loop does not reliably close on a
+real run (~99/100 fail; see the milestone-gate section above and `TODO.md`
+section 0). "Beats Python frameworks in reliability" is currently an unmeasured
+claim — no comparative benchmark exists either (Phase 4 item). Treat this
+milestone as open.
+
 ---
 
 ### Phase 3: Controlled Extensibility (v0.4.0) — Q4 2026
 
 **Goal**: Add flexibility without sacrificing predictability or local purity
+
+**Sequencing note (2026-08-04)**: the four items already shipped here
+(resumable runs, HITL approval gate, Anthropic chat provider, SQLite-vec vector
+provider) were all orthogonal to the stage machine's own reliability, which is
+why they landed while section 0 of `TODO.md` stayed open. The *remaining*
+unstarted items are not orthogonal — every one of them adds surface area to a
+loop that doesn't yet complete a run. They are gated behind the Phase 2
+milestone gate above. The open direction questions among them are laid out in
+`ROADMAP_QUESTIONAIRE.md` (untracked).
 
 - [x] **Resumable/crash-resilient runs** (checkpointed `Context`) — shipped 2026-08-04. `core/orchestrator/checkpoint.rs`: after every non-terminal stage transition, `Context` (turns, round, pending patches, trace index) plus the newly-entered `Stage` are written to `ruchat_checkpoint.json`; the file is deleted the moment a run reaches `Stage::Done` or `Stage::Escalate` (a deliberate, recorded outcome, not a crash — nothing left to resume). New `ruchat pipe --resume` reloads it and continues from the last completed stage instead of a fresh `Stage::Scope`, ignoring the prompt argument entirely (the checkpoint's own goal continues). Exactly the scope above: one plain JSON file, no distributed coordination, no partial-stage recovery — a stage that only half-ran when the process died is simply re-run in full from its start on resume, same as any other transition. `--resume` still needs the same `--team-model`/`--agentic` the original run used, since the checkpoint recovers conversation state, not which models/roles to reconstruct. Verified live: force-killed (`SIGKILL`) a real run mid-round against real Ollama models, confirmed a well-formed checkpoint survived with the actual conversation so far, resumed it and watched it correctly continue from round 2 to the iteration budget, then confirmed the checkpoint was cleared once it reached `Stage::Done`. See `TODO.md` Done section.
 - [x] **Interactive human-in-the-loop approval gate** — shipped 2026-08-04. Identified via `comparisons/*.md`: AutoGen's UserProxy agents and LangGraph's interrupts both give a human an explicit mid-run pause/approve point; ruchat's only approval mechanism before this was automated Critics (an LLM-driven gate) plus post-hoc review of the committed branch. New `ruchat pipe --approve`: pauses the `Stage::Commit` arm, traces the latest plan and the real pending `git diff`, then blocks on a real terminal y/n via the same `ctx.trace()` + blocking `Io::read_line()` pattern already used (and already live-verified) for `--step`/`--breakpoint`. Anything other than an exact `y`/`Y`/`yes`/`Yes` answer routes through the existing `Stage::Escalate` arm — same checkpoint-clear/trace/break path every other escalation already uses, no special-casing needed. Off by default. See `TODO.md` Done section for the live-verification caveat.
@@ -139,8 +183,38 @@ By v0.4.0, Ruchat should feel like “LangGraph for people who want to stay full
 
 ---
 
-**Current Status (August 2026)**:  
-Phase 1 (v0.2.0) is complete. Phase 2 (v0.3.0) is well underway: structured
+**Current Status (2026-08-04, revised)**
+
+**The one-line version**: Phases 1 and 2 are *feature*-complete and Phase 3 is
+half-shipped, but the agentic pipeline still fails ~99/100 real runs, so no
+milestone past Phase 1's non-agentic subcommands is actually met. Feature work
+is far ahead of working software here, and this file previously did not say so.
+
+**What the current battleground actually is** — `Validation::apply_patch` and
+the Worker's tool discipline, not any roadmap feature. `TODO.md` section 0 now
+lists 14 root-caused contributors; the last three days were spent entirely
+there. Two known blockers remain open as of this revision:
+
+- The Worker writes a one-hunk deletion for a change that needs two. In the
+  recurring `fix_one_clippy_lint` scenario, `options` is both declared
+  (`agent.rs:82`) and constructed (`agent.rs:116`), so removing only the
+  declaration cannot compile. `apply_patch` now applies the diff correctly; the
+  Tester rejects it. This is a task-decomposition/model-capability limit, not an
+  orchestration bug.
+- The Worker re-calls `cargo_clippy` instead of acting on the result it already
+  has, burning round 1 of traces 498/499/500 (and round 3 of 500) before any
+  diff problem matters.
+
+**A caution now recorded from experience**: a mitigation written against trace
+evidence can itself be the next regression. Commit `7998764` added a guard that
+compared a diff's *computed* line offsets against clippy's reported line, and it
+rejected correct edits for two full runs before being caught (traces 499/500,
+reverted in `3a05df1`). Nothing that rejects an edit may be derived from
+model-written `@@` offsets — this repo already has to recompute them. Prefer
+repairing a recoverable diff over rejecting it, and prefer content-anchored
+checks over positional ones.
+
+**Historical detail (unchanged)**: Phase 2 (v0.3.0) is well underway: structured
 tool calling, parallel critics, `apply_patch` hardening (diff-size cap,
 rollback, and now a scope check against the Architect's declared `FILES:`
 plan), the Team/Manager reconciliation, the Scoper role, resource-limited
@@ -163,7 +237,7 @@ matching its own documented clap CLI defaults). A `replace_in_file` tool
 (search-and-replace as an `apply_patch` alternative) was tried and reverted
 the same day — real runs showed no improvement over diff-based edits, so
 `apply_patch` remains the sole write tool (see `TODO.md` Done section).
-**Phase 2 (v0.3.0) is now fully complete**: automatic Chroma collection
+**Phase 2 (v0.3.0) is now feature-complete** (milestone not met — see above): automatic Chroma collection
 management (`ruchat chroma-init`), multi-collection queries, per-document
 summarization, smarter chunking, and debug-mode breakpoint support all
 shipped 2026-08-04, on top of everything above. See `TODO.md` for the
