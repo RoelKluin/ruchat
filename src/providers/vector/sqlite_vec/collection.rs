@@ -23,8 +23,15 @@ fn register_extension_once() {
         // symbol matches `sqlite3_auto_extension`'s expected entry-point type.
         // This is the crate's own documented usage pattern (see its `lib.rs`
         // test), not a workaround invented here.
-        rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute(
-            sqlite_vec::sqlite3_vec_init as *const (),
+        rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute::<
+            *const (),
+            unsafe extern "C" fn(
+                *mut rusqlite::ffi::sqlite3,
+                *mut *mut std::os::raw::c_char,
+                *const rusqlite::ffi::sqlite3_api_routines,
+            ) -> std::os::raw::c_int,
+        >(
+            sqlite_vec::sqlite3_vec_init as *const ()
         )));
     });
 }
@@ -227,7 +234,7 @@ impl VectorCollection for SqliteVecCollection {
                 let meta_json = metadatas
                     .as_ref()
                     .and_then(|m| m.get(i))
-                    .and_then(|m| metadata_to_json(m));
+                    .and_then(metadata_to_json);
                 tx.execute(
                     &format!(
                         "INSERT INTO {meta_table} (id, document, metadata) VALUES (?1, ?2, ?3)"

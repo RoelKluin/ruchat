@@ -210,10 +210,10 @@ mod tests {
     #[test]
     fn test_subcommand_parsing() {
         let args = Args::parse_from(["test", "pipe"]);
-        match args.command {
-            Some(Commands::Pipe(_)) => assert!(true),
-            _ => assert!(false, "Expected Ask subcommand"),
-        }
+        assert!(
+            matches!(args.command, Some(Commands::Pipe(_))),
+            "Expected Pipe subcommand"
+        );
     }
     #[tokio::test]
     async fn test_handle_request_default() {
