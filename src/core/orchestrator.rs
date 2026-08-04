@@ -1679,22 +1679,31 @@ fn round_has_actionable_diagnostics(ctx: &Context) -> bool {
 }
 
 /// `agent_role/architect.md` explicitly forbids the Architect from ever emitting a `tool_call` —
-/// it's plan-only, no tools, only the Worker calls tools — but real runs show the local model
-/// doing it anyway, embedding a full (often hallucinated) `apply_patch` diff inside what's
-/// nominally its plan. Truncates at the first `\`\`\`tool_call` fence and drops everything from
-/// there on — nothing after a hallucinated tool call in a "plan" is trustworthy plan content
-/// either — plus a trailing bare `IMPLEMENTATION:` label immediately before it, if present, so no
-/// dangling empty heading is left behind. Leaves the plan untouched if it never emitted one.
+/// it's plan-only, no tools, only the Worker calls tools — and never asks for an
+/// "IMPLEMENTATION:" section either (only PLAN/CHOICE/FILES) — but real runs show the local
+/// model writing one anyway, embedding a full (often hallucinated) `apply_patch` diff inside
+/// what's nominally its plan. The fence label under that heading varies across real traces
+/// (`\`\`\`tool_call`, `\`\`\`json`, `\`\`\`sh` all seen — see TODO.md's pinned reliability item),
+/// so matching on the fence text alone doesn't generalize — a `\`\`\`json`-fenced hallucination
+/// slipped through the first version of this function entirely. The "IMPLEMENTATION:" heading
+/// itself is the reliable signal instead, since the Architect should never produce that section
+/// under any label at all. Truncates at the first line that trims to exactly "IMPLEMENTATION:"
+/// (case-insensitive, matching `Context::planned_files`'s own "FILES:" convention) and drops
+/// everything from there on. Falls back to truncating at a bare `\`\`\`tool_call` fence with no
+/// preceding label, for the rarer case seen without one. Leaves the plan untouched if neither
+/// appears.
 fn strip_architect_tool_call_hallucination(plan: &str) -> String {
+    let mut offset = 0;
+    for line in plan.split_inclusive('\n') {
+        if line.trim().eq_ignore_ascii_case("IMPLEMENTATION:") {
+            return plan[..offset].trim_end().to_string();
+        }
+        offset += line.len();
+    }
     let Some(idx) = plan.find("```tool_call") else {
         return plan.to_string();
     };
-    let truncated = plan[..idx].trim_end();
-    truncated
-        .strip_suffix("IMPLEMENTATION:")
-        .map(str::trim_end)
-        .unwrap_or(truncated)
-        .to_string()
+    plan[..idx].trim_end().to_string()
 }
 
 /// Cap on how much of a planned target file's real content gets auto-injected per round — same
@@ -2344,6 +2353,24 @@ mod tests {
         let plan = "**PLAN:**\nFix the lint.\n\n```tool_call\n{\"tool\": \"apply_patch\"}\n```";
         let stripped = strip_architect_tool_call_hallucination(plan);
         assert_eq!(stripped, "**PLAN:**\nFix the lint.");
+    }
+
+    // Regression: the exact case that slipped through the first version of this function, live
+    // (see TODO.md's pinned reliability item, ruchat_trace_489.md round 5) — the fence label was
+    // ```json, not ```tool_call, so the old substring search never matched at all and the
+    // hallucinated diff reached the Worker untouched. Confirms the "IMPLEMENTATION:" heading
+    // itself, not any particular fence label, is what actually gets caught now.
+    #[test]
+    fn strip_architect_tool_call_hallucination_catches_a_json_fenced_variant_too() {
+        let plan = "PLAN:\nFix the lint.\n\nCHOICE: some reasoning.\n\nFILES: src/foo.rs\n\n\
+            REASON: some more reasoning.\n\nIMPLEMENTATION:\n\
+            ```json\n{\n  \"tool\": \"apply_patch\",\n  \"diff\": \"...\"\n}\n```";
+        let stripped = strip_architect_tool_call_hallucination(plan);
+        assert!(
+            !stripped.contains("apply_patch") && !stripped.contains("IMPLEMENTATION:"),
+            "the json-fenced hallucination should be removed too, got: {stripped:?}"
+        );
+        assert!(stripped.contains("FILES: src/foo.rs"));
     }
 
     // Regression: two live-verified runs (see TODO.md's pinned reliability item) showed the

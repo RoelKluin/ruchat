@@ -304,6 +304,33 @@ live-run evidence attached, not just remove the bullet.
       summarizer_agent`) confirms the shortcut actually reaches the built config; unlike most of this session's
       fixes, this one required no `Stage`-machine involvement at all, so it's fully, directly unit-tested — no live-
       infra caveat needed. 305 lib tests pass, clippy clean, fmt clean.
+    - **Live-verified same day: the revert-on-exhaustion fix (contributor #8) works — the working tree was
+      confirmed clean after the run below, no leftover unvalidated patch this time.** But the run
+      (`ruchat_traces/ruchat_trace_489.md`, `--summarizer-model` now enabled) still didn't succeed, and it surfaced
+      two more things: the Summarizer never actually triggered (history didn't grow past its dynamic limit in this
+      particular run — plausibly *because* the earlier dedup fix already kept things leaner — so `--summarizer-model`
+      is confirmed wired correctly but this run gave it nothing to do; still worth keeping enabled), and — the real
+      finding — **the Architect's tool-call-hallucination fix (contributor #6) had a real generalization gap**:
+      round 5's Architect wrote the same illegal `IMPLEMENTATION:` + embedded `apply_patch` diff as before, but
+      fenced it as `\`\`\`json` instead of `\`\`\`tool_call` — `strip_architect_tool_call_hallucination`'s original
+      substring search only matched the literal `\`\`\`tool_call` text, so this variant sailed through completely
+      untouched into what the Worker saw.
+      - **Fixed (2026-08-04).** Rewrote the function to key off the `IMPLEMENTATION:` heading itself (which
+        `architect.md` never asks for, under any label) instead of any particular fence syntax — truncates at the
+        first line that trims to exactly `IMPLEMENTATION:` (case-insensitive), regardless of what fence type
+        follows it, with the original bare-fence fallback kept for the rare no-label case. New regression test uses
+        the exact `\`\`\`json` fixture from `ruchat_trace_489.md`; the existing `\`\`\`tool_call` test still passes
+        unchanged. 306 lib tests pass, clippy clean, fmt clean. **Not yet live-verified.**
+      - Separately, and not investigated further this session: round 2 of the same trace shows the Architect's
+        CHOICE inventing a clippy warning ("missing documentation comment for an enum variant... `Is`") that does
+        not appear anywhere in that round's actual, already-retrieved `cargo_clippy` output (which lists 9 real,
+        entirely different warnings) — the Architect isn't just failing to adapt to rejections, it's sometimes not
+        accurately reading its own freshly-retrieved tool output either. Unlike the fence-label gap above, this is a
+        factual/content hallucination, not a structural one — there's no reliable deterministic string-level check
+        for "does this claimed warning actually appear in the tool output" the way `ensure_diff_has_file_header` or
+        this fix could check for a missing syntax element. This is the strongest evidence yet for trying a
+        larger/different model (`qwen2.5-coder:32b`, already pulled) before writing more orchestration-level
+        mitigations for qwen2.5-coder:14b specifically.
     - **Net assessment: meaningfully improved, not resolved.** The single most severe issue (runs dying almost
       instantly, well short of their configured budget) is fixed and live-confirmed; the double-read-only-tool-call
       and Architect-tool-call-hallucination contributors are fixed and live-confirmed (the second one via the
