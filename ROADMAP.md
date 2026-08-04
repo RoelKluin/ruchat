@@ -25,17 +25,29 @@ are tracked separately:
 - **Features complete** — every `[x]` in the phase. Checkbox-derived, cheap to verify.
 - **Milestone met** — a measured, live, end-to-end success rate. Not implied by the above.
 
-**Phase 2's milestone gate**: 5 consecutive `fix_one_clippy_lint`-class live runs
-(`ruchat pipe --team-model ...` against real Ollama) each landing a committed
-change, no human intervention. Current measured rate: ~1/100 (2026-08-04
-baseline: 19/20 archived traces failed). Until that gate is met, Phase 2's
-milestone is **not met**, regardless of how many features are `[x]`.
+**Phase 2's milestone gate**: 5 consecutive live runs (`ruchat pipe
+--team-model ...` against real Ollama) each landing a committed change, no human
+intervention. Current measured rate: ~1/100 (2026-08-04 baseline: 19/20 archived
+traces failed). Until that gate is met, Phase 2's milestone is **not met**,
+regardless of how many features are `[x]`.
 
-This gate is also the reason Phase 3's remaining items are sequenced behind it —
-graph flexibility, plugins and new agent use cases are all worth nothing on a
-pipeline that doesn't complete a run. See `TODO.md`'s pinned section 0 for the
-live contributor list and `ROADMAP_QUESTIONAIRE.md` (untracked) for the open
-direction questions this raises.
+The gate task is deliberately **not** `fix_one_clippy_lint` (decided
+2026-08-04): that scenario's correct fix needs two hunks — `options` is declared
+at `agent.rs:82` and constructed at `agent.rs:116` — so it conflates "the
+pipeline works" with "the model can decompose a multi-site edit." The gate runs
+on a task whose correct fix is genuinely one hunk. Multi-hunk tasks are a
+separate, later bar.
+
+**Reference model** (named explicitly 2026-08-04, previously implicit — which is
+why "reliable" was never falsifiable): `qwen2.5-coder:32b`. `qwen2.5-coder:14b`
+is best-effort, not the bar. A per-task-class tier list is the intended
+end state once the evals harness has enough scenarios to support one.
+
+This gate is also the reason Phase 3's remaining *code-editing* items are
+sequenced behind it — graph flexibility and plugins are worth nothing on a
+pipeline that doesn't complete a run. The advisory/reasoning roles are the
+documented exception; see Phase 3. `TODO.md` section 0 has the live contributor
+list.
 
 ---
 
@@ -111,6 +123,8 @@ milestone gate above. The open direction questions among them are laid out in
 - [ ] Dynamic conditional edges based on approval signals or output patterns
 
   **Flagged 2026-08-04, deliberately parked, not guessed at:** these three items push toward exactly the shape `CLAUDE.md`'s architecture section says ruchat deliberately is *not* — "a stage-machine multi-agent loop, not a generic graph framework... predictable linear flow with explicit approval gates beats LangGraph/CrewAI-style flexibility for this use case." Building any of them as scoped here would mean walking back that positioning, not extending it — a real product-direction call, not an engineering detail. Maintainer confirmed leaving these parked rather than picking a direction unprompted; revisit only with an explicit maintainer ask for one specific piece of graph flexibility, not this list wholesale.
+
+  **Reopened and re-parked 2026-08-04.** The `pipe`-chaining request above was examined as a candidate for the "explicit maintainer ask" this parking note requires. It does not qualify: that request is fully satisfied by documented shell recipes (see the decision recorded on that item), which need no graph machinery at all. These three stay parked. If the recipes later prove insufficient and a declarative multi-stage format is wanted, that *is* this decision — reopen these items rather than building it under another name.
 - [ ] Plugin system for custom local tools (Rust crates or WASM)
 
   **Same flag applies:** dynamic Rust-crate loading is effectively arbitrary code execution, and even a WASM-sandboxed version is a real security-posture decision — in tension with `CLAUDE.md`'s explicit "no generic shell-execution tool... any proposal to add a general shell/exec tool is a regression against this design decision, not a neutral addition." Parked alongside the graph items above for the same reason: needs an explicit maintainer call, not an autonomous guess.
@@ -120,7 +134,13 @@ milestone gate above. The open direction questions among them are laid out in
   - **Follow-up hardening identified 2026-08-04 (5-specialist review round):** the `VectorStore`/`VectorCollection` traits take `chroma::types::*` directly in their signatures rather than crate-owned types, so "pluggable" still means "pluggable, as long as you speak Chroma's wire types" — worth a newtype pass while only two implementors exist; **deferred** (maintainer decision) until a third backend is actually being considered, not urgent with two. The `--chat-provider`/`--vector-provider` flag asymmetry this same review found (real flag on `ask`/`pipe` vs. `embed`/`index`-only) was **fixed** the same day — `ask`/`pipe` now have their own `--vector-provider`/`--sqlite-vec-path`, see `TODO.md` Done section.
 - [ ] **Explicit chain-of-thought / step-reasoning prompting** for Architect/Worker — today's `agent_role/*.md` templates ask for a plan or an action directly, with no structured "think step by step, then answer" scaffold. Worth a scoped experiment (particularly for the Architect's planning step) once the agentic-evals harness (`core/agent/evals.rs`) has enough scenarios to tell whether it actually improves plan quality on local models rather than just adding tokens. Maintainer suggestion 2026-08-04, logged here rather than built speculatively: a `reason` field on every tool_call so other agents (or a human reading the trace) can see *why* a tool was called — same underlying idea (more explicit intermediate reasoning), same "prove it helps before shipping it" caveat; see `TODO.md`'s pinned reliability item for the assessment of why it likely wouldn't have prevented the specific Architect-hallucination bug found that same day.
 
-- [ ] **New agentic use cases (maintainer-requested 2026-08-04)** — three new purposes beyond code-editing, explicitly requested. **Blocked on the reliability item at the top of `TODO.md`**: none of these are worth building on top of a pipeline that doesn't reliably complete a run yet. Captured here as scoped roadmap items, not started.
+- [ ] **New agentic use cases (maintainer-requested 2026-08-04)** — three new purposes beyond code-editing, explicitly requested.
+
+  **Blocking status corrected 2026-08-04.** These were previously all marked "blocked on the reliability item at the top of `TODO.md`". That block was applied uniformly to all six without checking which ones actually touch the failing code path — and the reasoning/advisory roles don't. Every contributor in `TODO.md` section 0 is a diff-writing failure (`apply_patch`, the Worker's tool discipline, the Tester round-trip); an advisory role never calls `apply_patch`, never commits, and never reaches `Stage::Implement`/`Test`. Revised position:
+  - **Reasoning/advisory roles: UNBLOCKED, and now the recommended next feature work.** They exercise Scoper → Librarian → Architect and skip the entire Worker/apply_patch/Tester path where all known failures live. Two reasons this is worth doing *before* the coding loop is fixed rather than after: it is plausibly the shortest route to ruchat completing *some* agentic run reliably end-to-end, and it isolates whether the retrieval/planning half of the stage machine is sound — information the coding loop currently cannot separate out, since a failure there is indistinguishable from a diff-writing failure. It also gives `core/agent/evals.rs` its first non-coding scenarios.
+  - **Prompt-engineering assistant: still blocked**, but on scoping rather than reliability — its sub-purposes each likely want their own RAG collection, which is a content/curation question, not an engineering one.
+
+  Captured here as scoped roadmap items; advisory roles are startable now.
   - **Prompt engineering assistant**, several distinct sub-purposes, each likely wanting its own dedicated RAG collection (a "prompt-engineering knowledge" collection is not one-size-fits-all across these):
     - Aid Claude Code itself — may include an intelligence-gathering step first (e.g. retrieving Claude Code's own docs/skill conventions via RAG before drafting a prompt/skill/CLAUDE.md snippet for it).
     - Instruct another AI to do prompt engineering for a caller-specified purpose — a meta-role: the goal names a target purpose, the agent's job is to *produce a prompt* for that purpose, not to do the purpose's work directly.
@@ -129,7 +149,7 @@ milestone gate above. The open direction questions among them are laid out in
     - Answer a user's question directly, informed by RAG where configured.
     - Work through a genuinely difficult question (multi-step reasoning, not a single-shot answer).
     - Produce a plan for something — general-purpose planning output, not specifically a code-change plan (the existing Architect role is code-change-specific by construction).
-  - **Composable multi-role pipelines via `ruchat pipe` chaining** — since `ruchat pipe` already reads stdin and writes stdout, several distinct single-role (or small-team) `ruchat pipe`/`ruchat ask --agentic` invocations can already be chained today via shell piping (see `examples_thuis_ses.sh` for working examples of this). The ask here is likely for a more structured, less ad-hoc version of that composition — this is the same shape as the already-parked Phase 3 "Subgraph / reusable agent modules" item above, and this request is plausibly the explicit maintainer ask that item's parking note said would be needed to revisit it. Needs an explicit scoping conversation before any code: is shell-pipe composition (already possible, just needs documented recipes/examples) actually sufficient, or is a first-class declarative multi-stage config file wanted? Don't guess; ask before implementing.
+  - [~] **Composable multi-role pipelines via `ruchat pipe` chaining — scoped and decided 2026-08-04.** Since `ruchat pipe` already reads stdin and writes stdout, several distinct single-role (or small-team) `ruchat pipe`/`ruchat ask --agentic` invocations can already be chained today via shell piping (`examples_thuis_ses.sh` has working examples). The open question was whether that is sufficient or whether a first-class declarative multi-stage config file is wanted. **Decision: documented shell recipes, not a config file.** Shell piping already solves composition, costs no new engine surface, and keeps the stage machine a single predictable unit. Remaining work is a documentation pass promoting the existing `examples_thuis_ses.sh` patterns into real recipes, not code. A declarative multi-stage format is revisited only if the recipes prove insufficient in practice — and if it is, it should be recognized as the same decision as the parked graph items below, not a separate one.
 
 **Important Constraint**: All new features must remain fully local and offline-capable by default; anything that isn't (e.g. a cloud provider) must be explicit, opt-in configuration, never silently required.
 
@@ -137,7 +157,17 @@ milestone gate above. The open direction questions among them are laid out in
 
 ---
 
-### Open Design Question: Autonomous Goal-Setting
+### Answered Design Question: Autonomous Goal-Setting
+
+**Decided 2026-08-04: no — the human supplies the goal.** Not "never," but not an
+open question either: it is deferred behind the advisory roles (Phase 3), because
+a goal-proposing agent *is* an advisory role in disguise. If the advisory
+pipeline works well, a narrow opt-in "propose the next goal, human approves
+before it runs" mode becomes a small increment on proven machinery — the
+`--approve` gate already supplies the approval half. If the advisory pipeline
+doesn't work, that mode was never viable. Either way the answer falls out of the
+advisory work rather than needing its own bet, so this stops being carried as a
+standing open question. The original framing is kept below for the reasoning.
 
 Not scoped into any phase above, deliberately — this needs an explicit decision, not a silent yes or no.
 
@@ -160,6 +190,7 @@ Ruchat's whole differentiator (see Comparison-Driven Positioning below) is predi
 - Become the de-facto standard for **local software engineering agents**
 - Maintain a **local-first, predictable-by-default** philosophy, while staying open to opt-in cloud providers where they genuinely help (see Phase 3)
 - Explore safe WASM-based tool sandboxing
+- **Interactive TUI, if ever wanted** — decided 2026-08-04: ruchat is a non-interactive CLI. The crossterm interactive layer was deleted 2026-07-31 and `crossterm` dropped as a dependency 2026-08-04; `--step`/`--breakpoint`/`--approve` already cover interactivity where it actually matters, over plain stdin. `TODO.md`'s five TUI bug items (describing a subsystem that no longer exists, re-triaged twice) were removed rather than carried as open bugs — a rebuild is new work, and git history has the deleted implementation.
 - Support additional local vector/search backends without breaking core simplicity
 - Provide migration path / interoperability layer for users coming from Python frameworks (export/import graphs)
 - **Model fine-tuning / RLHF / reinforcement-driven self-improvement** — currently out of reach and not a priority: ruchat orchestrates existing local models rather than training them, and has none of the training infrastructure (labeled feedback pipelines, training compute/data management) this would need. Revisit only if/when it becomes genuinely feasible for a local-first tool to do this without turning ruchat into a model-training platform — not scoped into any phase above until that's true.

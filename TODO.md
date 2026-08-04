@@ -115,6 +115,28 @@ Worker calling cargo_clippy every round for a full 5-round run despite worker.md
 instruction not to (485). Next step if these persist after a live re-run: try
 `qwen2.5-coder:32b` (already pulled) before writing more mitigations for 14b specifically.
 
+### NEXT ACTION (decided 2026-08-04, roadmap review)
+
+Stop writing new mitigations until there is a number that can move. In order:
+
+1. [ ] **Retarget the gate task to a one-hunk change.** `fix_one_clippy_lint` needs a 2-hunk
+   edit (declaration at agent.rs:82 + construction at agent.rs:116), so it conflates "pipeline
+   works" with "model can decompose a multi-site edit" - it cannot answer either question.
+   Pick a task whose correct fix is genuinely one hunk (e.g. remove an unused `use`).
+2. [ ] **Measure the real success rate on it.** N runs, count commits landed. This replaces
+   "~99/100 fail" with a baseline. Gate for Phase 2's milestone: 5 consecutive unaided lands.
+3. [ ] **Then** hold that task constant and run it with `--chat-provider anthropic`. Only with
+   the task fixed does Claude-vs-qwen discriminate orchestration from model capability - on a
+   2-hunk task it would only show that Claude writes better diffs, which proves nothing.
+   Claude lands it + qwen doesn't => capability limit, stop hardening for 14b (see reference
+   model below). Both fail => a real orchestration bug remains.
+
+Reference model is now `qwen2.5-coder:32b`; 14b is best-effort, not the bar (see ROADMAP.md).
+
+Mitigation policy, from #14's regression: model-agnostic repairs only. `diff_repair.rs` passes
+this test - it repairs malformed diffs, not one model's malformed diffs. Nothing that *rejects*
+an edit may derive from model-written `@@` offsets.
+
 Done (2026-08-04): extracted protocol.rs's diff-repair functions into agent/diff_repair.rs and
 orchestrator.rs's stall-mitigation functions into orchestrator/stall_mitigation.rs. Pure move,
 no behavior change - same 318 tests pass, clippy/fmt clean. (A nom-parser rewrite was considered
@@ -141,6 +163,19 @@ section until one does.
 - [~] Implement graceful degradation when Ollama/Chroma are unavailable — Chroma being unreachable during the Librarian's on-demand retrieval (`Stage::Retrieve`) no longer kills the run (see Done section). Still open: Ollama being unreachable from the very start of a run (Architect/Worker's first call) still surfaces whatever raw error `retry_transient!` exhausts to, not necessarily a clear "Ollama isn't running at <address>" message — not attempted, since Architect/Worker genuinely can't proceed without Ollama regardless of message clarity, this was judged lower-impact than the Chroma case.
 
 ### 3. Agent Orchestration
+- [ ] **Reasoning/advisory roles — unblocked 2026-08-04, now the recommended next feature work.**
+  These were previously marked blocked on section 0's reliability item, applied uniformly to all
+  six new use cases without checking which touch the failing path. The advisory ones don't:
+  every contributor in section 0 is a diff-writing failure (`apply_patch`, Worker tool
+  discipline, the Tester round-trip), and an advisory role never calls `apply_patch`, never
+  commits, and never reaches `Stage::Implement`/`Test`. Scope: answer a question directly
+  (RAG-informed), work through a hard multi-step question, produce a non-code plan. Exercises
+  Scoper → Librarian → Architect only. Two reasons to do this *before* the coding loop is
+  fixed: likely the shortest route to ruchat completing some agentic run reliably end-to-end,
+  and it isolates whether the retrieval/planning half is sound — which the coding loop cannot
+  tell us today, since a failure there is indistinguishable from a diff-writing failure. Also
+  gives `core/agent/evals.rs` its first non-coding scenarios (it covers 3 of 7 roles today).
+  The prompt-engineering assistant stays blocked, but on RAG-collection scoping, not reliability.
 - [ ] Make agent pipeline fully configurable via JSON (the `Stage` sequence in `orchestrator.rs` is still fixed in code, not data — see `ROADMAP.md` Phase 3)
 - [x] Stale, corrected 2026-08-04: this whole item (per-document summarization, multi-collection queries, reranking) already shipped — see `ROADMAP.md`'s "Improved RAG" Phase 2 entry (`doc_summary.rs`, `Query`'s `collection` now a list, `chroma/rerank.rs`).
 
@@ -153,23 +188,14 @@ section until one does.
 - [x] Fixed 2026-08-04: `git_blame` now inserts `--` before `path`, matching `git_log`/`git_diff`.
 - [x] Fixed 2026-08-04: `AnthropicArgs` now has a manual redacting `Debug` impl mirroring `AnthropicClient`'s.
 
-### 4. TUI Chat
-**Reality check (2026-08-03): there is no interactive chat TUI in the codebase right
-now.** The crossterm-based interactive layer (cursor movement, text selection,
-history/undo-redo editing — `providers/llm/ollama/chat/{conversation_tree,history,
-pos,event_result}.rs`, ~1,260 lines) was deleted 2026-07-31 (`ad0708d "remove more old
-code"` and the two commits around it), a few days before the items below were last
-touched. `src/tui/` today is just `io.rs` (async stdin/stdout wrapper) and
-`render.rs` (a streaming ANSI-colored line renderer for `pipe`/`ask`/`manager run`
-output) — 175 lines total, no cursor/selection/editing code at all. The items below
-describe bugs in a subsystem that no longer exists; they'd need to be rebuilt from
-scratch, not "fixed." Leaving them here as a record of what an interactive TUI would
-need if one gets rebuilt, not as active bugs.
-- [ ] ~~Fix redraw artifacts and cursor handling edge cases~~ — moot, no cursor handling exists
-- [ ] ~~Improve selection + copy/paste reliability~~ — moot, no selection exists
-- [ ] ~~Add syntax highlighting for code blocks in chat view~~ — moot, no chat view exists
-- [ ] ~~Support multi-line editing with proper indentation~~ — moot, no editable input buffer exists
-- [ ] ~~Add command palette / key bindings help screen~~ — moot, nothing to bind keys to
+### 4. TUI Chat — closed 2026-08-04
+**Decision: ruchat is a non-interactive CLI.** The five TUI bug items here described a
+subsystem deleted 2026-07-31 (the crossterm interactive layer — cursor movement, selection,
+history/undo-redo editing, ~1,260 lines, `ad0708d` and neighbours); they were re-triaged twice
+and removed rather than carried a third time. `src/tui/` today is `io.rs` + `render.rs` (175
+lines, no cursor/selection/editing code). `--step`/`--breakpoint`/`--approve` already cover
+interactivity where it matters, over plain stdin. A rebuild would be new work, not a bug fix —
+see ROADMAP.md Long-Term Vision; git history has the deleted implementation.
 - [x] Removed 2026-08-04: `crossterm` was unused (no `src/` references). Decision: drop rather than keep for a hypothetical TUI rebuild — trivial to re-add if/when that's actually planned.
 - [x] ~~Wire up an actual producer for `AgentEvent::Progress`~~ — done, see Done section below.
 
@@ -203,6 +229,16 @@ need if one gets rebuilt, not as active bugs.
 - [ ] `run_task_stream`/`run_stage_machine`/`AgentPipeline::Orchestrator` now all carry the same 5-6-field parameter list (`debug_sequence, breakpoints, resume, approve_commit, ...`), added independently over several features — cheap now, but the classic precursor to a wrong-bool-in-wrong-slot bug that compiles silently. A `RunOptions` struct would cost little today.
 - [ ] `-c`/`--collection` has no help text at all on `embed`/`index` (`[default: ""]` under a bare "Collection" heading) — contrast `pipe --collection`, which has a full descriptive sentence for the same flag.
 - [ ] Provider-selector flags split their own on/off switch and sub-args across two different `--help` headings each (internally consistent between the two providers, but a user has to scan two sections to fully configure either one) — cosmetic, low priority.
+
+### Documentation
+- [ ] **Pipe-composition recipes (decided 2026-08-04, answers a maintainer request).** The ask
+  was whether multi-role composition needs a first-class declarative multi-stage config file.
+  Decision: no — shell piping already composes `ruchat pipe`/`ruchat ask --agentic` invocations,
+  costs no engine surface, and keeps the stage machine one predictable unit. Remaining work is a
+  doc pass promoting the working patterns already in `examples_thuis_ses.sh` into real,
+  explained recipes (README.md or a dedicated doc; keep the existing doc split). A declarative
+  format is revisited only if recipes prove insufficient — and if so it must be recognized as
+  the same decision as ROADMAP.md's parked graph items, not built under another name.
 
 ### Performance
 - [x] Stale, corrected 2026-08-04: this already works and isn't buffered. `Agent::query_stream` (`core/agent.rs`) forwards each `StreamItem::ChatChunk` over the channel the instant it arrives from the model; `tui/render.rs` writes each chunk to the terminal immediately on receipt (`cio.write_line`). `ctx.output.push_str` alongside it is a separate concern (accumulating the full text for tool-call parsing after the round completes), not a buffering-before-display step.
