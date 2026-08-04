@@ -95,14 +95,45 @@ live-run evidence attached, not just remove the bullet.
       tool-name list out of the two now-duplicated call sites so they can't drift apart; 2 new tests confirm it
       covers every budgeted lookup tool and excludes `apply_patch`/`memorize`. 290 lib tests pass, clippy clean, fmt
       clean.
-      - **Not yet live-verified**, same reason as the missing-header contributor above — the maintainer will run
-        the live verification themselves this time (`RUCHAT_BIN=./target/debug/ruchat bash
-        scripts/refactoring_examples.sh run fix_one_clippy_lint`, after `cargo build --bin ruchat`) rather than an
-        unattended background run. Do not claim this contributor is resolved without that evidence.
+      - **Live-verified 2026-08-04 (maintainer-run, not autonomous)**: `ruchat_traces/ruchat_trace_475.md` round 1
+        shows the exact designed sequence — first `cargo_clippy` call (budgeted), reminder, second `cargo_clippy`
+        call, the new sharper "last chance" nudge, a third `cargo_clippy` call, then (only then) the pre-existing
+        rejection and `Stage::Retry`. Confirms the fix is real: one extra bounded chance now happens before a round
+        is lost to this, exactly as designed.
+    - **New contributor found via that same live-verification run (2026-08-04): the Worker substituting `memorize`
+      for an actual fix, with the (non-deterministic) Validator inconsistently letting it through.** In
+      `ruchat_trace_475.md` round 2, the Worker called `cargo_clippy` (9 real warnings shown), got the "you must now
+      apply_patch or memorize" reminder, and called `memorize` instead of `apply_patch` — noting the fix rather than
+      making it. The Validator correctly rejected this round 2 attempt ("non-answer: The response restates what
+      information it needs instead of containing a tool_call") — but round 3's Architect re-planned identically, the
+      Worker repeated the *exact same* `memorize` call, and this time the Validator said `VALIDATED`. The run
+      proceeded through `Stage::Commit` and created a real branch (`ai/feature-1785834661`) whose only change is an
+      auto-generated `featured_changes.md` changelog entry — zero actual source changes, a hollow "success." This is
+      a recurrence of an already-documented, previously-unfixed gap (see the `cargo test --lib` trace-pollution Done
+      entry above: "nothing cross-checks the Worker's 'nothing to fix' claim against the `cargo_clippy` output
+      already in context"), now caught live for the first time with a full reproducible trace.
+      - **Fixed in code and unit-tested, live verification still outstanding (2026-08-04).** New
+        `round_has_actionable_diagnostics` (`src/core/orchestrator.rs`) checks whether this exact round already
+        retrieved real `cargo_clippy`/`cargo_check` output containing an actual `warning:`/`error:` line (not just a
+        clean run). `run_implement_patch_loop` now uses it as a deterministic backstop: a `memorize` call with zero
+        patches applied this round, when real diagnostics were already shown this round, is rejected immediately
+        (`Stage::Retry`) — before it ever reaches the non-deterministic Validator — rather than trusting an LLM
+        verdict to catch this reliably every time (it demonstrably doesn't: same input, two different verdicts one
+        round apart). Deliberately narrow: only fires when there's concrete evidence of unaddressed, actionable work
+        (a real diagnostic line), not for a genuinely legitimate memorize-only goal or a genuine "clippy reported
+        nothing" case — the task's own instructed escape hatch. 5 new tests for the predicate; not integration-
+        tested through `run_implement_patch_loop` itself, since `Memorize`'s `execute_and_verify` branch calls
+        `Agent::embed`, which builds a real Ollama/Chroma client — same "needs live infra" category as `Stage::Test`,
+        out of scope for `--lib` unit tests per this file's own precedent. 295 lib tests pass, clippy clean, fmt
+        clean. **Not yet live-verified** — same standing instruction as above, the maintainer will run this
+        themselves. Also note: this fix does NOT retroactively fix the hollow `ai/feature-1785834661` branch already
+        created — that's a leftover artifact from the verification run, left for the maintainer to inspect/delete,
+        not touched here.
     - **Net assessment: meaningfully improved, not resolved.** The single most severe issue (runs dying almost
-      instantly, well short of their configured budget) is fixed and live-confirmed; both the missing-header and
-      double-read-only-tool-call contributors are fixed in code and unit-tested but not yet live-confirmed. The
-      overall "does a real agentic run actually land a committed change" question is still open — keep this section
+      instantly, well short of their configured budget) is fixed and live-confirmed; the double-read-only-tool-call
+      contributor is fixed and live-confirmed; the missing-header and hollow-memorize contributors are fixed in code
+      and unit-tested but not yet live-confirmed. The overall "does a real agentic run actually land a committed
+      change" question is still open — keep this section
       until a live run actually succeeds end-to-end, not just uses its full budget.
 
 ## High Priority

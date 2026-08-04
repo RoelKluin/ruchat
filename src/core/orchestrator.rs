@@ -1443,16 +1443,32 @@ impl Orchestrator {
         let mut patch_budget: u32 = 3;
         let mut any_patch_applied = false;
         loop {
-            let is_apply_patch = matches!(
-                tools::parse_tool_call(&ctx.output),
-                Ok(tools::StructuredToolCall {
-                    tool: ToolName::ApplyPatch,
-                    ..
-                })
-            );
+            let parsed_tool = tools::parse_tool_call(&ctx.output).ok().map(|c| c.tool);
+            let is_apply_patch = matches!(parsed_tool, Some(ToolName::ApplyPatch));
             match self.worker.execute_and_verify(ctx).await? {
                 Validation::Failure(err) => {
                     ctx.push_turn(TurnKind::Rejection, "ApplyPatch", err);
+                    return Ok(Stage::Retry);
+                }
+                // A real failure mode, not hypothetical: a live run showed the Worker calling
+                // `cargo_clippy`, seeing genuine warnings, then `memorize`-ing a note about them
+                // instead of ever calling `apply_patch` — and the (non-deterministic) Validator
+                // approved that exact substitution on one round after correctly rejecting the
+                // identical thing the round before (see TODO.md's pinned reliability item).
+                // Caught deterministically here, before it ever reaches the Validator, rather
+                // than trusting an LLM verdict to catch it reliably every time.
+                Validation::Success
+                    if !any_patch_applied
+                        && matches!(parsed_tool, Some(ToolName::Memorize))
+                        && round_has_actionable_diagnostics(ctx) =>
+                {
+                    let content = "refused: you memorized information instead of applying a \
+                        fix. This round's cargo_clippy/cargo_check output above shows real, \
+                        actionable warnings or errors — memorize does not change any code, so \
+                        the reported issue is still unresolved. Call apply_patch to actually \
+                        fix it now."
+                        .to_string();
+                    ctx.push_turn(TurnKind::Rejection, "Worker", content);
                     return Ok(Stage::Retry);
                 }
                 Validation::Success if is_apply_patch => {
@@ -1614,6 +1630,24 @@ fn is_read_only_worker_tool(tool: &ToolName) -> bool {
             | ToolName::CargoClippy
             | ToolName::CargoDupes
     )
+}
+
+/// True if this round already retrieved real, actionable `cargo_clippy`/`cargo_check` output —
+/// i.e. it actually contains a compiler/clippy diagnostic, not just a clean "nothing to report"
+/// run. Used by `run_implement_patch_loop` to catch a `memorize` call substituting for an actual
+/// fix: a real live-verified run (see TODO.md's pinned reliability item) showed the Worker
+/// calling `cargo_clippy`, seeing genuine warnings, then `memorize`-ing a note about them instead
+/// of ever calling `apply_patch` — and the Validator (an LLM call, not deterministic) approved
+/// that exact substitution on one round after correctly rejecting the identical thing the round
+/// before. This is a deterministic backstop specifically for that failure shape, not a general
+/// replacement for the Validator's broader judgment elsewhere.
+fn round_has_actionable_diagnostics(ctx: &Context) -> bool {
+    ctx.turns.iter().any(|t| {
+        t.round == ctx.round
+            && t.kind == TurnKind::Retrieval
+            && matches!(t.source.as_str(), "CargoClippy" | "CargoCheck")
+            && (t.content.contains("warning:") || t.content.contains("error:"))
+    })
 }
 
 /// Treats an explicit empty string the same as an omitted optional field.
@@ -2088,6 +2122,70 @@ mod tests {
                 .contains("already used this round's one information-lookup")
         );
         assert!(rejection.content.contains("apply_patch"));
+    }
+
+    // Regression: a live-verified run (see TODO.md's pinned reliability item) showed the Worker
+    // calling cargo_clippy, seeing real warnings, then memorize-ing a note about them instead of
+    // ever calling apply_patch — and the Validator (non-deterministic) approved that exact
+    // substitution on one round after correctly rejecting the identical thing the round before.
+    // `round_has_actionable_diagnostics` is the deterministic backstop for that; not testable
+    // through `run_implement_patch_loop` itself (Memorize's `execute_and_verify` branch calls
+    // `Agent::embed`, which builds a real Ollama/Chroma client — same "needs live infra" category
+    // as `Stage::Test`'s real `cargo test` invocation, out of scope for `--lib` unit tests per
+    // this file's own established precedent), so tested directly as the pure predicate it is.
+    #[test]
+    fn round_has_actionable_diagnostics_true_for_a_real_clippy_warning_this_round() {
+        let mut ctx = Context::new("goal".to_string());
+        ctx.round = 1;
+        ctx.push_turn(
+            TurnKind::Retrieval,
+            "CargoClippy",
+            "src/foo.rs:1:1: warning: field `x` is never read".to_string(),
+        );
+        assert!(round_has_actionable_diagnostics(&ctx));
+    }
+
+    #[test]
+    fn round_has_actionable_diagnostics_true_for_a_real_check_error_this_round() {
+        let mut ctx = Context::new("goal".to_string());
+        ctx.round = 1;
+        ctx.push_turn(
+            TurnKind::Retrieval,
+            "CargoCheck",
+            "src/foo.rs:1:1: error: mismatched types".to_string(),
+        );
+        assert!(round_has_actionable_diagnostics(&ctx));
+    }
+
+    #[test]
+    fn round_has_actionable_diagnostics_false_for_a_clean_clippy_run() {
+        let mut ctx = Context::new("goal".to_string());
+        ctx.round = 1;
+        ctx.push_turn(
+            TurnKind::Retrieval,
+            "CargoClippy",
+            "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.11s".to_string(),
+        );
+        assert!(!round_has_actionable_diagnostics(&ctx));
+    }
+
+    #[test]
+    fn round_has_actionable_diagnostics_false_when_the_diagnostics_are_from_an_earlier_round() {
+        let mut ctx = Context::new("goal".to_string());
+        ctx.round = 1;
+        ctx.push_turn(
+            TurnKind::Retrieval,
+            "CargoClippy",
+            "src/foo.rs:1:1: warning: field `x` is never read".to_string(),
+        );
+        ctx.round = 2;
+        assert!(!round_has_actionable_diagnostics(&ctx));
+    }
+
+    #[test]
+    fn round_has_actionable_diagnostics_false_with_no_diagnostic_turn_at_all() {
+        let ctx = Context::new("goal".to_string());
+        assert!(!round_has_actionable_diagnostics(&ctx));
     }
 
     // Regression canary for debug-mode breakpoint support (maintainer: "keep on working on
