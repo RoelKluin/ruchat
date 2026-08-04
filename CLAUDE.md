@@ -119,9 +119,14 @@ Prioritize these repo-specific concerns over generic checklist items:
   `Critic0`) still matches — a naming mismatch here has caused a real,
   previously-shipped bug (multi-critic dispatch silently no-op'd).
 - Known pre-existing issues that are *not* new findings if reintroduced
-  unchanged: ~16 `cargo clippy --lib` dead-code warnings, and repo-wide
-  `cargo fmt --check` drift across ~76 files (no `rustfmt.toml`; default
-  formatting, not a style disagreement) — see `TODO.md`.
+  unchanged (baselines re-verified 2026-08-04, corrected from stale earlier
+  numbers): `cargo clippy --lib --tests` reports **86** warnings total, of
+  which only **~13** are genuine dead code — the other 63 are all
+  `clippy::result_large_err`, tracing to one oversized `RuChatError::
+  ChannelError` variant that trips the lint on every fallible function crate-
+  wide (pre-existing, not new-code drift; see `TODO.md`). Repo-wide `cargo
+  fmt --check` drift is **193 files** (no `rustfmt.toml`; default formatting,
+  not a style disagreement) — see `TODO.md`.
 
 ## Testing Strategy (for `testing-strategy`)
 
@@ -131,17 +136,22 @@ Prioritize these repo-specific concerns over generic checklist items:
   don't propose it as a CI blocker without first proposing the repo-wide
   `cargo fmt` pass called out in `TODO.md`.
 - Stage-machine coverage uses `FakeLlmClient`/`FakeVectorStore`/`FakeEmbeddingsClient`
-  (`core/agent/llm_client.rs`) driven by `agent_debug/*.json` fixtures — 9 of
-  10 fixtures are wired up; the two `architect_librarian_worker[_validator]`
-  combinations are only indirectly covered.
+  (`core/agent/llm_client.rs`) driven by `agent_debug/*.json` fixtures — all
+  11 fixtures are wired up as of 2026-08-04 (the previously-gap
+  `architect_librarian_worker[_validator]` combinations were closed).
 - Three known-failing tests are `#[ignore]`d with reasons, not silently
   skipped: `chroma::metadata::tests::test_get_metadata_valid`,
   `chroma::tests::test_create_table`, `chroma::tests::test_json_output` — see
   `TODO.md` for the specific logic gap in each before "fixing" them by
   changing the assertion instead of the behavior.
-- No CI workflow exists yet in this checkout (`.github/workflows/` is absent)
-  despite `TODO.md` referencing one — verify locally with the commands above
-  before treating a change as "tested."
+- A CI workflow does exist (`.github/workflows/ci.yml`: build + `cargo
+  clippy --lib --tests` + `cargo test --lib` on push/PR, deliberately no
+  `-D warnings`/`fmt --check` gate yet), but its `push` trigger targets
+  branch `main` while this repo's actual default branch is `master` — a
+  real, unfixed bug found 2026-08-04 (see `TODO.md`'s Security & CI
+  section) meaning direct pushes to `master` currently get zero CI signal,
+  only PRs do. Verify locally with the commands above regardless until
+  that's fixed.
 - **Agentic evals** (`core/agent/evals.rs`, added 2026-08-03): a distinct
   category from everything else here — these drive a role's real prompt
   template against a *live* Ollama server (not `FakeLlmClient`) with a
