@@ -245,3 +245,44 @@ independent auxiliary work (build log summarization, test scaffolding, docstring
 doc updates), dispatch them as separate Task calls in the same turn — do not wait
 for the heavy task to finish before starting the light one. Only sequence them if
 the light task depends on the heavy task's output.
+
+**Caveat on that premise (2026-08-05, unresolved):** "frees the 3090" assumes the
+Tesla instance actually runs on the Teslas. Observed otherwise — `ollama ps` on
+:11431 reported `qwen2.5:7b` at **100% CPU** despite that instance being correctly
+pinned to the Tesla GPUs. Tesla M10 is Maxwell (compute capability 5.0) and recent
+Ollama CUDA builds have been dropping the older architectures, so the cards may be
+driver-visible but unusable by Ollama. If so, ollama-light is plain CPU inference —
+slower than just queueing on the 3090, and the split above is a net loss. Check
+`journalctl -u ollama | grep -i "compute capability\|cuda"` before relying on it.
+
+## GPU / Ollama instance map
+
+Host-specific, recorded 2026-08-05 so it doesn't get re-derived every session.
+
+| GPU | Device | Notes |
+|-----|--------|-------|
+| 0 | RTX 3090 Ti, 24 GB | the fast one; UUID `GPU-5fe0e911-80e4-ca27-25af-8002a47f5a67` |
+| 1–4 | Tesla M10, 8 GB each | Maxwell CC 5.0 — see the caveat above |
+
+| Port | Used by | Pinned to |
+|------|---------|-----------|
+| 11434 | ruchat's default, and the `ollama-heavy` MCP server (`qwen2.5-coder:32b`) | should be GPU 0 |
+| 11431 | the `ollama-light` MCP server (`qwen2.5:7b`) | `CUDA_VISIBLE_DEVICES=1,2,3,4` |
+
+ruchat has **no** GPU-selection option and cannot have a meaningful one: Ollama's
+HTTP API has no parameter for choosing a device (`num_gpu` sets layer offload
+count, not which card), so placement is decided entirely by the Ollama server at
+model-load time. Selecting a GPU therefore means selecting an instance — use
+`ruchat -s/--server` (`OLLAMA_SERVER`). Don't add a `--gpu` flag; it would
+silently do nothing.
+
+Pin on the **server** by UUID, not index: CUDA enumerates `FASTEST_FIRST` by
+default, so `CUDA_VISIBLE_DEVICES=0` is not guaranteed to be the card `nvidia-smi`
+calls 0 (or set `CUDA_DEVICE_ORDER=PCI_BUS_ID` as well).
+
+**Known-broken as of 2026-08-05:** the :11434 instance was running with a literal
+unsubstituted template placeholder — `CUDA_VISIBLE_DEVICES=N` and
+`OLLAMA_HOST=0.0.0.0:1143N` (Ollama couldn't parse the port and silently fell back
+to 11434). A malformed device allowlist is the likely cause of runs landing on a
+Tesla unpredictably. Verify it's fixed before trusting any timing measurement,
+including the reliability gate in `TODO.md` section 0.
