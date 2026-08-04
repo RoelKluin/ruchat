@@ -1373,8 +1373,14 @@ impl Orchestrator {
                     .get("max_count")
                     .and_then(|v| v.as_u64())
                     .map(|v| v as u32);
+                let context = call
+                    .args
+                    .get("context")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as u32);
                 let out =
-                    crate::orchestrator::search::ripgrep(pattern, path, glob, max_count).await?;
+                    crate::orchestrator::search::ripgrep(pattern, path, glob, max_count, context)
+                        .await?;
                 ctx.push_turn(TurnKind::Retrieval, "Ripgrep", out);
                 Ok(())
             }

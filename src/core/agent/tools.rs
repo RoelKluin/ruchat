@@ -49,7 +49,7 @@ impl ToolName {
             }
             ToolName::ListDir => r#"{"tool":"list_dir","path":"<string>"}"#,
             ToolName::Ripgrep => {
-                r#"{"tool":"ripgrep","pattern":"<string>","path":"<string|omit>","glob":"<string|omit>","max_count":<int|omit>}"#
+                r#"{"tool":"ripgrep","pattern":"<string>","path":"<string|omit>","glob":"<string|omit>","max_count":<int|omit>,"context":<int|omit, lines of context around each match, e.g. to see a whole function around a matched line — max 50>}"#
             }
             ToolName::ReadTags => r#"{"tool":"read_tags","symbol":"<string|omit>"}"#,
             ToolName::CargoCheck => r#"{"tool":"cargo_check"}"#,

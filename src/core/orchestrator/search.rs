@@ -20,13 +20,14 @@ pub(crate) async fn ripgrep(
     path: Option<&str>,
     glob: Option<&str>,
     max_count: Option<u32>,
+    context: Option<u32>,
 ) -> Result<String> {
     let canonical_path = path
         .map(canonicalize_within_repo)
         .transpose()?
         .map(|p| p.to_string_lossy().into_owned());
 
-    let args = build_rg_args(pattern, canonical_path.as_deref(), glob, max_count);
+    let args = build_rg_args(pattern, canonical_path.as_deref(), glob, max_count, context);
 
     let output = tokio::time::timeout(
         std::time::Duration::from_secs(20),
@@ -48,6 +49,12 @@ pub(crate) async fn ripgrep(
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
+/// Upper bound on `--context`, regardless of what the Worker asks for — same reasoning as
+/// `MAX_READ_BYTES`/`MAX_SHOWN_ORIGINAL_CHARS` elsewhere: a lookup tool's whole point is staying
+/// small enough to be worth a lookup instead of just reading the file; an unbounded context
+/// request would make ripgrep an expensive way to reimplement read_file.
+const MAX_CONTEXT_LINES: u32 = 50;
+
 /// Builds `rg`'s argv. Kept pure/synchronous (no process spawn) so the flag-terminator
 /// invariant can be tested directly without a live `rg` binary. `--` always separates the
 /// flags this function controls from `pattern`/`path`, which are untrusted — see `ripgrep`'s
@@ -57,6 +64,7 @@ fn build_rg_args(
     path: Option<&str>,
     glob: Option<&str>,
     max_count: Option<u32>,
+    context: Option<u32>,
 ) -> Vec<String> {
     let mut args = vec!["--line-number".to_string(), "--no-heading".to_string()];
     if let Some(g) = glob {
@@ -66,6 +74,10 @@ fn build_rg_args(
     let count = max_count.unwrap_or(50).to_string();
     args.push("--max-count".into());
     args.push(count);
+    if let Some(c) = context {
+        args.push("--context".into());
+        args.push(c.min(MAX_CONTEXT_LINES).to_string());
+    }
     args.push("--".to_string());
     args.push(pattern.to_string());
     if let Some(p) = path {
@@ -212,7 +224,7 @@ mod tests {
     // ever inserted).
     #[test]
     fn build_rg_args_inserts_a_flag_terminator_before_the_untrusted_pattern() {
-        let args = build_rg_args("--pre=/bin/sh", None, None, None);
+        let args = build_rg_args("--pre=/bin/sh", None, None, None, None);
         let sep_pos = args
             .iter()
             .position(|a| a == "--")
@@ -228,8 +240,30 @@ mod tests {
     }
 
     #[test]
+    fn build_rg_args_context_is_a_real_flag_before_the_separator() {
+        let args = build_rg_args("needle", None, None, None, Some(5));
+        let context_pos = args
+            .iter()
+            .position(|a| a == "--context")
+            .expect("expected a --context flag");
+        assert_eq!(args[context_pos + 1], "5");
+        let sep_pos = args.iter().position(|a| a == "--").unwrap();
+        assert!(
+            context_pos < sep_pos,
+            "--context is a real flag we control, must come before --, got: {args:?}"
+        );
+    }
+
+    #[test]
+    fn build_rg_args_clamps_context_to_the_max() {
+        let args = build_rg_args("needle", None, None, None, Some(9_999));
+        let context_pos = args.iter().position(|a| a == "--context").unwrap();
+        assert_eq!(args[context_pos + 1], MAX_CONTEXT_LINES.to_string());
+    }
+
+    #[test]
     fn build_rg_args_terminator_also_precedes_the_untrusted_path() {
-        let args = build_rg_args("needle", Some("--pre=/bin/sh"), None, None);
+        let args = build_rg_args("needle", Some("--pre=/bin/sh"), None, None, None);
         let sep_pos = args.iter().position(|a| a == "--").unwrap();
         let path_pos = args
             .iter()
@@ -244,7 +278,9 @@ mod tests {
     // failed (returned `Ok` instead of `Err`) against the pre-fix `ripgrep`.
     #[tokio::test]
     async fn ripgrep_rejects_a_path_that_escapes_the_repo_root() {
-        let err = ripgrep("root", Some("/etc"), None, None).await.unwrap_err();
+        let err = ripgrep("root", Some("/etc"), None, None, None)
+            .await
+            .unwrap_err();
         assert!(
             format!("{err}").contains("escapes"),
             "expected an escape-rejection error, got: {err}"
@@ -260,12 +296,36 @@ mod tests {
             Some("src/core/orchestrator/search.rs"),
             None,
             None,
+            None,
         )
         .await
         .unwrap();
         assert!(
             result.contains("ripgrep"),
             "expected a real match, got: {result:?}"
+        );
+    }
+
+    // Added alongside the `--context` flag so the model can pull a numbered excerpt around a
+    // match on demand instead of paying for a whole `read_file` — closes part of the "how do we
+    // ground a diff in reality without a full round-trip" gap. Real `rg` invocation, not a
+    // `build_rg_args` unit test, to confirm the flag actually changes what comes back.
+    #[tokio::test]
+    async fn ripgrep_with_context_includes_surrounding_lines() {
+        let result = ripgrep(
+            "fn build_rg_args",
+            Some("src/core/orchestrator/search.rs"),
+            None,
+            None,
+            Some(2),
+        )
+        .await
+        .unwrap();
+        // Two lines above `fn build_rg_args`'s doc comment mention the flag-terminator
+        // invariant — only present at all if --context actually pulled surrounding lines in.
+        assert!(
+            result.contains("flags this function controls"),
+            "expected context lines around the match, got: {result:?}"
         );
     }
 
