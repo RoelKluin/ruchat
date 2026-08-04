@@ -158,7 +158,7 @@ pub(crate) fn prompt_scoper_tool_catalog(prepend: &str) -> String {
 /// that already has a structured `Value` in hand, e.g. the Scoper's
 /// `information_needed` array.
 pub(crate) fn structured_call_from_value(
-    value: Value,
+    mut value: Value,
 ) -> std::result::Result<StructuredToolCall, ToolParseError> {
     let tool_str = value
         .get("tool")
@@ -166,6 +166,20 @@ pub(crate) fn structured_call_from_value(
         .ok_or(ToolParseError::MissingTool)?;
     let tool: ToolName = serde_json::from_value(Value::String(tool_str.to_string()))
         .map_err(|_| ToolParseError::UnknownTool(tool_str.to_string()))?;
+
+    // Coder-tuned models sometimes nest apply_patch's diff under a "patch" object
+    // (`{"patch": {"path": ..., "diff": ...}}`) instead of the documented flat shape
+    // (`{"diff": ...}`) — a live-verified real failure (see TODO.md's pinned reliability item):
+    // the Worker copied this exact wrong shape from a hallucinated Architect example for 5
+    // rounds straight, and every one of them was rejected as having no recognized tool_call at
+    // all, since `diff` is only ever checked at the top level. `path` is ignored either way —
+    // apply_patch resolves its target from the diff's own `--- a/<file>` header, not this field.
+    if tool == ToolName::ApplyPatch
+        && value.get("diff").is_none()
+        && let Some(nested_diff) = value.get("patch").and_then(|p| p.get("diff")).cloned()
+    {
+        value["diff"] = nested_diff;
+    }
 
     for field in tool.required_fields() {
         if value.get(*field).is_none() {
@@ -277,6 +291,28 @@ mod tests {
         let call = parse_tool_call(input).unwrap();
         assert_eq!(call.tool, ToolName::ApplyPatch);
         assert!(call.args["diff"].as_str().unwrap().contains("+new"));
+    }
+
+    // Regression: a live-verified run (see TODO.md's pinned reliability item, ruchat_trace_492.md)
+    // showed the Worker (copying a hallucinated Architect example) submitting apply_patch with
+    // its diff nested under a "patch" object instead of the documented flat "diff" field — every
+    // one of 5 rounds was rejected as having no recognized tool_call at all, since `diff` was
+    // only ever checked at the top level.
+    #[test]
+    fn promotes_a_diff_nested_under_a_patch_object_to_the_top_level() {
+        let input = "```tool_call\n{\"tool\":\"apply_patch\",\"patch\":{\"path\":\"src/foo.rs\",\
+            \"diff\":\"--- a/src/foo.rs\\n+++ b/src/foo.rs\\n@@ -1,1 +1,1 @@\\n-old\\n+new\\n\"}}\n```";
+        let call = parse_tool_call(input).unwrap();
+        assert_eq!(call.tool, ToolName::ApplyPatch);
+        assert!(call.args["diff"].as_str().unwrap().contains("+new"));
+    }
+
+    #[test]
+    fn a_top_level_diff_is_not_overwritten_by_a_nested_patch_object() {
+        let input = "```tool_call\n{\"tool\":\"apply_patch\",\"diff\":\"real\",\
+            \"patch\":{\"diff\":\"decoy\"}}\n```";
+        let call = parse_tool_call(input).unwrap();
+        assert_eq!(call.args["diff"].as_str().unwrap(), "real");
     }
 
     #[test]

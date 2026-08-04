@@ -54,6 +54,20 @@ Contributors found via real trace evidence (`qwen2.5-coder:14b`) and fixed, 2026
     `has_runaway_repetition` in `query_stream` (agent.rs) checks the streamed tail after every
     chunk and breaks the stream early once a 6+ word phrase repeats 3+ times in a row, instead of
     waiting for the model to hit its generation limit. Applies to every role, not just Architect.
+12. [x] Not live-verified. Root-caused live (trace 492, maintainer's own `fix_one_clippy_lint` run,
+    same day as #11): contributor #5's `IMPLEMENTATION:` heading match only tolerated a bare line,
+    but the Architect formatted it as a markdown heading (`### IMPLEMENTATION:`) every round -
+    `.trim()` doesn't strip `#`, so the match never fired and the hallucinated tool_call leaked
+    through for all 5 rounds. Worse, the leaked example used a wrong JSON shape
+    (`{"patch":{"path":...,"diff":...}}` instead of the documented flat `{"diff":...}`), which the
+    Worker copied verbatim every round - `parse_tool_call` never even recognized it as a tool
+    call, so every round died as "no recognized tool_call" before ever reaching apply_patch. Two
+    fixes: `strip_architect_tool_call_hallucination` now strips leading `#`/`*`/space and trailing
+    `*`/space before comparing to `IMPLEMENTATION:` (stall_mitigation.rs); `structured_call_from_value`
+    now promotes a `patch.diff` field to top-level `diff` when the flat field is missing, as a
+    defense-in-depth tolerance independent of the hallucination path (tools.rs). Also noted:
+    round-1-4's Architect wrote `FILES: None` despite CHOICE correctly naming the target file -
+    the same already-logged pattern from trace 484, not fixed here.
 
 Two patterns seen live (traces 484/485), not fixed - look like a model-capability limit, not a
 further orchestration bug: Architect suggesting a raw shell command instead of `FILES:` (484);
@@ -71,7 +85,7 @@ Logged, not acted on: maintainer's "add a reason field to every tool_call" idea 
 ROADMAP.md's chain-of-thought Phase 3 item, deferred pending the agentic-evals harness having
 enough scenarios to judge it.
 
-Net: meaningfully improved, not resolved. #1, #2, #5 are live-confirmed; #3/4/6/7/9/10/11 are
+Net: meaningfully improved, not resolved. #1, #2, #5 are live-confirmed; #3/4/6/7/9/10/11/12 are
 code-fixed and unit-tested but not yet live-confirmed. The two capability-suspected patterns are
 still open. Whether a real run can land a committed change is still unanswered - keep this
 section until one does.

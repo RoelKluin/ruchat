@@ -60,13 +60,22 @@ pub(super) fn round_has_actionable_diagnostics(ctx: &Context) -> bool {
 /// itself is the reliable signal instead, since the Architect should never produce that section
 /// under any label at all. Truncates at the first line that trims to exactly "IMPLEMENTATION:"
 /// (case-insensitive, matching `Context::planned_files`'s own "FILES:" convention) and drops
-/// everything from there on. Falls back to truncating at a bare `\`\`\`tool_call` fence with no
-/// preceding label, for the rarer case seen without one. Leaves the plan untouched if neither
-/// appears.
+/// everything from there on. Tolerates the label being wrapped as a markdown heading or bold text
+/// (`### IMPLEMENTATION:`, `**IMPLEMENTATION:**`) — a real live-verified run (see TODO.md's
+/// pinned reliability item) showed a bare-line match alone still missing it: the model formatted
+/// every section label as a `### `-prefixed heading, so `"### IMPLEMENTATION:".trim()` never
+/// equals the bare string this used to compare against, and the hallucination (including a wrong
+/// JSON shape the Worker then copied verbatim for 5 rounds straight) sailed through untouched.
+/// Falls back to truncating at a bare `\`\`\`tool_call` fence with no preceding label, for the
+/// rarer case seen without one. Leaves the plan untouched if neither appears.
 pub(super) fn strip_architect_tool_call_hallucination(plan: &str) -> String {
     let mut offset = 0;
     for line in plan.split_inclusive('\n') {
-        if line.trim().eq_ignore_ascii_case("IMPLEMENTATION:") {
+        let label = line
+            .trim()
+            .trim_start_matches(['#', '*', ' '])
+            .trim_end_matches(['*', ' ']);
+        if label.eq_ignore_ascii_case("IMPLEMENTATION:") {
             return plan[..offset].trim_end().to_string();
         }
         offset += line.len();
@@ -299,6 +308,29 @@ mod tests {
         assert!(
             !stripped.contains("apply_patch") && !stripped.contains("IMPLEMENTATION:"),
             "the json-fenced hallucination should be removed too, got: {stripped:?}"
+        );
+        assert!(stripped.contains("FILES: src/foo.rs"));
+    }
+
+    // Regression: a live-verified run (see TODO.md's pinned reliability item, ruchat_trace_492.md)
+    // showed the previous fix's bare-line match still missing a real case — the Architect
+    // formatted the label as a markdown heading (`### IMPLEMENTATION:`), which
+    // `"### IMPLEMENTATION:".trim()` never equals the bare "IMPLEMENTATION:" string the old check
+    // compared against. The leaked hallucination used a wrong JSON shape
+    // (`{"patch": {"path":..., "diff":...}}` instead of the documented flat `{"diff":...}`), which
+    // the Worker then copied verbatim for 5 rounds straight, never producing a recognizable
+    // tool_call at all.
+    #[test]
+    fn strip_architect_tool_call_hallucination_catches_a_markdown_heading_label_too() {
+        let plan = "PLAN:\nFix the lint.\n\nFILES: src/foo.rs\n\n### CHOICE:\n\nSome reasoning.\n\n\
+            ### IMPLEMENTATION:\n\n\
+            ```json\n{\"tool\": \"apply_patch\", \"patch\": {\"path\": \"src/foo.rs\", \
+            \"diff\": \"...\"}}\n```";
+        let stripped = strip_architect_tool_call_hallucination(plan);
+        assert!(
+            !stripped.contains("apply_patch")
+                && !stripped.to_uppercase().contains("IMPLEMENTATION"),
+            "the markdown-heading-labeled hallucination should be removed too, got: {stripped:?}"
         );
         assert!(stripped.contains("FILES: src/foo.rs"));
     }
