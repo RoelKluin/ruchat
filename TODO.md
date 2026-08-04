@@ -79,7 +79,7 @@ need if one gets rebuilt, not as active bugs.
 ### Performance
 - [ ] Streaming response handling in agent orchestrator (currently buffers)
 - [ ] Optimize history limit calculation and token counting
-- [ ] Review `reqwest` feature flags in `Cargo.toml`
+- [x] Reviewed 2026-08-04: `reqwest`'s default features (`default-tls` (rustls), `charset`, `http2`, `system-proxy`) are all genuinely used — TLS for the Anthropic API, `system-proxy` for corporate/dev network setups, `http2` likely relevant to Anthropic's API. No trimming warranted; explicit `["json", "stream"]` are the only additions beyond defaults, both used.
 
 ### Security & Production Readiness
 - [~] Never log sensitive data (tokens, prompts with secrets) — audited `src/` for tracing/println calls that interpolate raw config strings or `{:?}`-dump config values; found and fixed the two real instances (see Done section: `orchestrator.rs`'s Librarian `chroma_client` parse-failure log and `ask.rs`'s `--agentic` parse-failure log both used to echo the raw config string, which can legitimately embed `chroma_token`). No other call site found doing this. Left `[~]` rather than `[x]` since this is an ongoing practice for new code, not a one-time fix — no dedicated lint enforces it.
