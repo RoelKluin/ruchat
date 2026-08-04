@@ -439,14 +439,30 @@ mod tests {
             "testcol",
         ]);
 
-        let collection = args.resolve_collection(&serde_json::json!({})).await.unwrap();
+        let collection = args
+            .resolve_collection(&serde_json::json!({}))
+            .await
+            .unwrap();
         collection
-            .add(vec!["a".into()], vec![vec![1.0, 0.0]], Some(vec![Some("hi".into())]), None)
+            .add(
+                vec!["a".into()],
+                vec![vec![1.0, 0.0]],
+                Some(vec![Some("hi".into())]),
+                None,
+            )
             .await
             .unwrap();
 
         let client = crate::sqlite_vec::SqliteVecClient::open(&path).unwrap();
-        let found = client.collection("testcol").unwrap().existing_ids(vec!["a".into()]).await.unwrap();
-        assert!(found.contains("a"), "expected the write to land in the real sqlite file");
+        let found = client
+            .collection("testcol")
+            .unwrap()
+            .existing_ids(vec!["a".into()])
+            .await
+            .unwrap();
+        assert!(
+            found.contains("a"),
+            "expected the write to land in the real sqlite file"
+        );
     }
 }

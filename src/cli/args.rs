@@ -183,9 +183,16 @@ mod tests {
 
     #[test]
     fn redact_args_hides_secret_flag_values_both_forms() {
-        let args = ["ruchat", "ask", "--chroma-token", "secret1", "--anthropic-api-key=secret2", "hi"]
-            .into_iter()
-            .map(String::from);
+        let args = [
+            "ruchat",
+            "ask",
+            "--chroma-token",
+            "secret1",
+            "--anthropic-api-key=secret2",
+            "hi",
+        ]
+        .into_iter()
+        .map(String::from);
         let out = redact_args(args);
         assert!(!out.contains("secret1"));
         assert!(!out.contains("secret2"));
