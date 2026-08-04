@@ -28,15 +28,17 @@ pub(crate) async fn ripgrep(
 
     let args = build_rg_args(pattern, canonical_path.as_deref(), glob, max_count);
 
-    let output = tokio::process::Command::new("rg")
-        .args(&args)
-        .output()
-        .await
-        .map_err(|e| {
-            RuChatError::InternalError(format!(
-                "failed to spawn rg: {e} (is ripgrep installed and on PATH?)"
-            ))
-        })?;
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        tokio::process::Command::new("rg").args(&args).output(),
+    )
+    .await
+    .map_err(|_| RuChatError::InternalError("rg timed out after 20s".into()))?
+    .map_err(|e| {
+        RuChatError::InternalError(format!(
+            "failed to spawn rg: {e} (is ripgrep installed and on PATH?)"
+        ))
+    })?;
 
     // rg exits 1 for "no matches" — not an error condition here.
     if !output.status.success() && output.status.code() != Some(1) {

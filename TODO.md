@@ -21,7 +21,7 @@ Last updated: 2026-08-04
 - [x] Fixed 2026-08-04: `--verbose` printed the raw command line including any `--chroma-token`/`--anthropic-api-key` secret. `cli/args.rs::redact_args` now redacts both flag forms before printing.
 - [x] Fixed 2026-08-04: `.github/workflows/ci.yml`'s `push` trigger targeted `main`, repo's actual branch is `master` — CI silently never ran on direct pushes. One-line fix.
 - [x] Fixed 2026-08-04: `cargo_dupes` now calls `limit_resources` like `cargo_check`/`cargo_clippy` do.
-- [ ] **LOW**: `ripgrep` (`orchestrator/search.rs`) has no wall-clock timeout at all, unlike every other subprocess tool in this file/`cargo.rs` (20-30s) — a slow path/glob combination could hang a round indefinitely. Independent of the containment/injection fix above.
+- [x] Fixed 2026-08-04: `ripgrep` now has a 20s wall-clock timeout, matching every other subprocess tool.
 - [x] Fixed 2026-08-04: `git_blame` now inserts `--` before `path`, matching `git_log`/`git_diff`.
 - [x] Fixed 2026-08-04: `AnthropicArgs` now has a manual redacting `Debug` impl mirroring `AnthropicClient`'s.
 
