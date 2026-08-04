@@ -61,10 +61,11 @@ Worker calling cargo_clippy every round for a full 5-round run despite worker.md
 instruction not to (485). Next step if these persist after a live re-run: try
 `qwen2.5-coder:32b` (already pulled) before writing more mitigations for 14b specifically.
 
-Queued, not started (maintainer 2026-08-04, deliberately deferred): extract protocol.rs's
-diff-repair functions and orchestrator.rs's stall-mitigation functions into dedicated modules.
-A nom-parser rewrite was considered and rejected (diffy already parses unified diffs; rewriting
-it would duplicate that work for an organizational, not behavioral, win).
+Done (2026-08-04): extracted protocol.rs's diff-repair functions into agent/diff_repair.rs and
+orchestrator.rs's stall-mitigation functions into orchestrator/stall_mitigation.rs. Pure move,
+no behavior change - same 318 tests pass, clippy/fmt clean. (A nom-parser rewrite was considered
+and rejected earlier: diffy already parses unified diffs; rewriting would duplicate that work
+for an organizational, not behavioral, win.)
 
 Logged, not acted on: maintainer's "add a reason field to every tool_call" idea - ties into
 ROADMAP.md's chain-of-thought Phase 3 item, deferred pending the agentic-evals harness having

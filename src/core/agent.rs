@@ -1,3 +1,4 @@
+mod diff_repair;
 #[cfg(test)]
 mod evals;
 pub(crate) mod event;
