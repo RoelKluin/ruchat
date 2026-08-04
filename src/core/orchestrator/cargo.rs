@@ -105,15 +105,13 @@ pub(crate) async fn cargo_clippy() -> Result<String> {
 /// `cargo tree --duplicates` — lists dependency versions duplicated in the
 /// resolved graph. Fast, read-only, no timeout needed beyond a generous cap.
 pub(crate) async fn cargo_dupes() -> Result<String> {
-    let output = tokio::time::timeout(
-        Duration::from_secs(20),
-        Command::new("cargo")
-            .args(["tree", "--duplicates"])
-            .output(),
-    )
-    .await
-    .map_err(|_| RuChatError::InternalError("cargo tree timed out after 20s".into()))?
-    .map_err(|e| RuChatError::InternalError(format!("cargo tree failed to run: {e}")))?;
+    let mut cmd = Command::new("cargo");
+    cmd.args(["tree", "--duplicates"]);
+    limit_resources(&mut cmd, 20);
+    let output = tokio::time::timeout(Duration::from_secs(20), cmd.output())
+        .await
+        .map_err(|_| RuChatError::InternalError("cargo tree timed out after 20s".into()))?
+        .map_err(|e| RuChatError::InternalError(format!("cargo tree failed to run: {e}")))?;
     if !output.status.success() {
         return Err(RuChatError::InternalError(
             String::from_utf8_lossy(&output.stderr).into_owned(),
