@@ -29,7 +29,7 @@
 #   - A local Ollama server running with the model(s) referenced below pulled
 #     (`ollama pull qwen2.5-coder:14b`).
 #   - A local Chroma server with the `repo_src-all-minilm_l6-v2` collection
-#     populated from this repo's source (see embed_script.sh / db_config.json).
+#     populated from this repo's source (`ruchat index src` / `db_config.json`).
 #   - Run from the repository root, with a clean `git status` — each
 #     successful run creates a new `ai/feature-<timestamp>` branch and commits
 #     to it, then returns you to your original branch (see
