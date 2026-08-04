@@ -164,6 +164,36 @@ mod tests {
         assert_eq!(stage, Stage::Plan);
     }
 
+    // Regression: `Turn` gained a `duration_ms` field for `--trace-timings` after this
+    // checkpoint format already shipped — a checkpoint written by an older binary (no such
+    // field in its JSON at all) must still load cleanly on `--resume`, not fail with a missing-
+    // field deserialize error. `#[serde(default)]` on `Turn::duration_ms` is what makes this
+    // work; this test locks in that a checkpoint file shaped like the pre-field format actually
+    // still parses, not just that the derive macro compiles.
+    #[tokio::test]
+    async fn load_accepts_a_checkpoint_written_before_duration_ms_existed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(CHECKPOINT_PATH);
+        let pre_field_json = r#"{
+            "goal": "fix the flaky test",
+            "turns": [
+                {"round": 1, "kind": "Plan", "source": "Architect", "content": "Plan: do it."}
+            ],
+            "round": 1,
+            "pending_patches": [],
+            "trace_index": 1,
+            "stage": "Plan"
+        }"#;
+        tokio::fs::write(&path, pre_field_json).await.unwrap();
+
+        let loaded = Checkpoint::load(&path)
+            .await
+            .expect("a checkpoint missing duration_ms entirely should still parse");
+        let (restored, _stage) = loaded.into_context_and_stage();
+
+        assert_eq!(restored.turns[0].duration_ms, None);
+    }
+
     #[tokio::test]
     async fn load_without_a_checkpoint_file_errors_clearly() {
         let dir = tempfile::tempdir().unwrap();

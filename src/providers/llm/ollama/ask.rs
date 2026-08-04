@@ -138,6 +138,15 @@ pub(crate) struct AskArgs {
     #[arg(long, help_heading = "Agent Configuration")]
     approve: bool,
 
+    /// Show how long each agent call and tool execution actually took, inline in the trace file
+    /// (`ruchat_traces/ruchat_trace_<N>.md`) — e.g. "### Worker [Implementation, round 2]
+    /// (4.2s):". Off by default; durations are still recorded either way, this only controls
+    /// whether they're shown. Meant to inform tuning decisions (how many read-only lookups or
+    /// patch attempts a round can afford, how aggressive a timeout should be) from real measured
+    /// costs instead of guessing — never shown to the agents themselves, only in the trace file.
+    #[arg(long, help_heading = "Debugging")]
+    trace_timings: bool,
+
     #[command(flatten)]
     prompt: PromptArgs,
 
@@ -344,6 +353,7 @@ impl AskArgs {
                 breakpoints: DebugBreakpoints::new(self.step, self.breakpoint.clone()),
                 resume: self.resume,
                 approve_commit: self.approve,
+                trace_timings: self.trace_timings,
             }
         } else if self.resume {
             // OneShot has no Context/Stage machine at all — nothing a checkpoint could resume.

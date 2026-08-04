@@ -294,6 +294,7 @@ impl Orchestrator {
         breakpoints: DebugBreakpoints,
         resume: bool,
         approve_commit: bool,
+        trace_timings: bool,
     ) -> impl Stream<Item = OrchestratorResult> {
         let (tx, rx) = mpsc::channel(100);
         let cancel = CancellationToken::new();
@@ -325,8 +326,15 @@ impl Orchestrator {
                 self.debug_stage_machine(goal, path, tx.clone(), task_cancel, breakpoints)
                     .await
             } else {
-                self.run_stage_machine(goal, tx.clone(), task_cancel, resume, approve_commit)
-                    .await
+                self.run_stage_machine(
+                    goal,
+                    tx.clone(),
+                    task_cancel,
+                    resume,
+                    approve_commit,
+                    trace_timings,
+                )
+                .await
             };
             if let Err(e) = result
                 && !matches!(e, RuChatError::Cancelled)
@@ -367,6 +375,7 @@ impl Orchestrator {
             );
             scratch.round = round;
             let ollama = &self.chat;
+            let start = std::time::Instant::now();
             futs.push(async move {
                 // Critics run concurrently (`join_all` below), but `query_stream` streams
                 // token-by-token into whatever `tx` it's given — forwarding all of them into
@@ -384,17 +393,22 @@ impl Orchestrator {
                     r
                 };
                 let (result, ()) = tokio::join!(query, drain);
-                result.map(|_| (label, scratch.output, approval_signal))
+                (
+                    label,
+                    result.map(|_| scratch.output),
+                    approval_signal,
+                    start,
+                )
             });
         }
         let results = futures_util::future::join_all(futs).await;
-        for res in results {
-            match res {
-                Ok((label, text, approval_signal)) => {
+        for (label, result, approval_signal, start) in results {
+            match result {
+                Ok(text) => {
                     ctx.trace(tx, format!("[Critic '{label}']:\n{text}")).await;
                     let source = format!("Critic '{label}'");
                     if !text.contains(&approval_signal) {
-                        ctx.push_turn(TurnKind::Rejection, &source, text);
+                        ctx.push_turn_timed(TurnKind::Rejection, &source, text, start);
                     } else {
                         // Unlike the rejection arm above, an approving critic's review used to
                         // push no turn at all — only the ephemeral `ctx.trace(...)` call above
@@ -402,7 +416,7 @@ impl Orchestrator {
                         // added to `ctx.turns`, so it's gone from the persisted trace file the
                         // next time it's rewritten. An approving review is still an action this
                         // critic took and should be just as visible as a rejecting one.
-                        ctx.push_turn(TurnKind::System, &source, text);
+                        ctx.push_turn_timed(TurnKind::System, &source, text, start);
                     }
                 }
                 Err(e) => {
@@ -410,10 +424,11 @@ impl Orchestrator {
                     // rejection, not a silent no-op — otherwise an
                     // unreachable/erroring critic is indistinguishable from
                     // an approving one, inverting the consensus gate's intent.
-                    ctx.push_turn(
+                    ctx.push_turn_timed(
                         TurnKind::Rejection,
                         "Critic",
                         format!("critic failed to produce a verdict: {e}"),
+                        start,
                     );
                 }
             }
@@ -488,6 +503,10 @@ impl Orchestrator {
             .as_mut()
             .ok_or_else(|| RuChatError::Is("Librarian not enabled".into()))?;
 
+        // One lump covering the whole retrieval: the Librarian's own query-construction LLM
+        // call(s) below plus the actual Chroma round-trip and any doc summarization — pushed
+        // with whichever of the two turns below actually lands.
+        let librarian_start = std::time::Instant::now();
         retry_transient!(librarian.query_stream(&self.chat, ctx, tx))?;
 
         let mut q = Query::default();
@@ -545,7 +564,7 @@ impl Orchestrator {
         {
             Ok(docs) => {
                 let docs = self.maybe_summarize_retrieved_docs(docs, ctx, tx).await;
-                ctx.push_turn(TurnKind::Retrieval, "Librarian", docs);
+                ctx.push_turn_timed(TurnKind::Retrieval, "Librarian", docs, librarian_start);
             }
             Err(e) => {
                 tracing::warn!(error = %e, "Librarian retrieval failed; continuing without RAG context");
@@ -554,7 +573,7 @@ impl Orchestrator {
                     format!("Librarian retrieval skipped this round (retrieval failed): {e}"),
                 )
                 .await;
-                ctx.push_turn(
+                ctx.push_turn_timed(
                     TurnKind::System,
                     "System",
                     format!(
@@ -562,6 +581,7 @@ impl Orchestrator {
                          failed (Chroma may be unreachable): {e}. Continuing without retrieved \
                          context."
                     ),
+                    librarian_start,
                 );
             }
         }
@@ -622,10 +642,11 @@ impl Orchestrator {
 
         let mut q = Query::default();
         let _ = q.update_from_json(query_json);
+        let recall_start = std::time::Instant::now();
         match q.query(client, &self.embed, &embed_model).await {
             Ok(docs) if !docs.trim().is_empty() => {
                 let docs = self.maybe_summarize_retrieved_docs(docs, ctx, tx).await;
-                ctx.push_turn(TurnKind::Retrieval, "Memory", docs);
+                ctx.push_turn_timed(TurnKind::Retrieval, "Memory", docs, recall_start);
             }
             Ok(_) => {}
             Err(e) => {
@@ -679,6 +700,7 @@ impl Orchestrator {
         cancel: CancellationToken,
         resume: bool,
         approve_commit: bool,
+        trace_timings: bool,
     ) -> Result<()> {
         let max_iterations = self
             .orchestrator_config
@@ -708,6 +730,10 @@ impl Orchestrator {
             // history the old one had.
             ctx.init_trace_index().await;
         }
+        // Re-applied unconditionally (fresh or resumed) — `--trace-timings` isn't persisted
+        // through `Checkpoint`, same as `--team-model`/etc. already must be re-specified on
+        // `--resume`, so this always reflects *this* invocation's flag, not a stale one.
+        ctx.trace_timings = trace_timings;
 
         if let Some(librarian) = self.librarian.as_ref() {
             ctx.read_config_file(
@@ -771,6 +797,7 @@ impl Orchestrator {
                     if ctx.round > max_iterations {
                         Stage::Escalate("max iterations reached without acceptance".into())
                     } else {
+                        let architect_start = std::time::Instant::now();
                         retry_transient!(self.architect.query_stream(&self.chat, ctx, &tx))?;
                         // `architect.md` explicitly forbids the Architect from ever emitting a
                         // `tool_call` — it's plan-only, no tools — but a live-verified run (see
@@ -815,7 +842,12 @@ impl Orchestrator {
                         // Architect's own next round all read an empty
                         // "PLAN:" section and effectively improvise from
                         // scratch each round instead of building on it.
-                        ctx.push_turn(TurnKind::Plan, "Architect", ctx.output.clone());
+                        ctx.push_turn_timed(
+                            TurnKind::Plan,
+                            "Architect",
+                            ctx.output.clone(),
+                            architect_start,
+                        );
                         Stage::Retrieve
                     }
                 }
@@ -827,6 +859,11 @@ impl Orchestrator {
                     Stage::Implement
                 }
                 Stage::Implement => {
+                    // Re-assigned before each reask below, so whichever push_turn_timed call
+                    // ends up storing `ctx.output` — inside the read-only-tool branch or the
+                    // fallthrough at the bottom — always attributes it to the query that
+                    // actually produced it, not an earlier one in the same round.
+                    let mut worker_start = std::time::Instant::now();
                     retry_transient!(self.worker.query_stream(&self.chat, ctx, &tx))?;
 
                     if let Ok(call) = tools::parse_tool_call(&ctx.output)
@@ -842,7 +879,12 @@ impl Orchestrator {
                         // called or with what arguments — the console showed the action (via
                         // the streamed response) but the trace file didn't, making it unclear
                         // after the fact which tool produced which result.
-                        ctx.push_turn(TurnKind::Implementation, "Worker", ctx.output.clone());
+                        ctx.push_turn_timed(
+                            TurnKind::Implementation,
+                            "Worker",
+                            ctx.output.clone(),
+                            worker_start,
+                        );
                         // A failing tool call (bad git args, missing ripgrep, a
                         // vanished file) must not abort the whole run — same
                         // posture as the Scoper's identical dispatch below.
@@ -877,6 +919,7 @@ impl Orchestrator {
                                 );
                             }
                         }
+                        worker_start = std::time::Instant::now();
                         retry_transient!(self.worker.query_stream(&self.chat, ctx, &tx))?;
 
                         // Bounded second chance, in-round: real traces (see TODO.md's pinned
@@ -894,7 +937,12 @@ impl Orchestrator {
                         if let Ok(repeat_call) = tools::parse_tool_call(&ctx.output)
                             && is_read_only_worker_tool(&repeat_call.tool)
                         {
-                            ctx.push_turn(TurnKind::Implementation, "Worker", ctx.output.clone());
+                            ctx.push_turn_timed(
+                                TurnKind::Implementation,
+                                "Worker",
+                                ctx.output.clone(),
+                                worker_start,
+                            );
                             ctx.push_turn(
                                 TurnKind::System,
                                 "Orchestrator",
@@ -907,28 +955,57 @@ impl Orchestrator {
                                     repeat_call.tool
                                 ),
                             );
+                            worker_start = std::time::Instant::now();
                             retry_transient!(self.worker.query_stream(&self.chat, ctx, &tx))?;
                         }
                     }
-                    ctx.push_turn(TurnKind::Implementation, "Worker", ctx.output.clone());
+                    ctx.push_turn_timed(
+                        TurnKind::Implementation,
+                        "Worker",
+                        ctx.output.clone(),
+                        worker_start,
+                    );
                     self.run_implement_patch_loop(ctx, &tx).await?
                 }
                 Stage::Test => {
+                    let test_start = std::time::Instant::now();
                     let report = Validation::run_build_and_test(&cancel).await?;
                     if !report.compiled || !report.tests_passed {
-                        ctx.push_turn(TurnKind::Rejection, "Tester", report.rejection_message());
+                        ctx.push_turn_timed(
+                            TurnKind::Rejection,
+                            "Tester",
+                            report.rejection_message(),
+                            test_start,
+                        );
                         Stage::Retry
                     } else {
+                        // Same posture as the Validator's own VALIDATED-verdict turn below:
+                        // every stage's actual outcome should be visible in the trace, not just
+                        // the ones that trigger a rejection — and `cargo check`+`cargo test` is
+                        // typically one of the slowest steps in a round, exactly the kind of
+                        // cost `--trace-timings` exists to surface.
+                        ctx.push_turn_timed(
+                            TurnKind::System,
+                            "Tester",
+                            "cargo check and cargo test both passed.".to_string(),
+                            test_start,
+                        );
                         Stage::Validate
                     }
                 }
                 Stage::Validate => {
                     if let Some(validator) = self.validator.as_mut() {
+                        let validator_start = std::time::Instant::now();
                         retry_transient!(validator.query_stream(&self.chat, ctx, &tx))?;
                         let stripped = strip_json_fences(&ctx.output);
                         match serde_json::from_str::<ValidatorVerdict>(stripped).ok() {
                             Some(v) if v.verdict.eq_ignore_ascii_case("REJECTED") => {
-                                ctx.push_turn(TurnKind::Rejection, "Validator", v.reason);
+                                ctx.push_turn_timed(
+                                    TurnKind::Rejection,
+                                    "Validator",
+                                    v.reason,
+                                    validator_start,
+                                );
                                 Stage::Retry
                             }
                             Some(_) => {
@@ -938,19 +1015,25 @@ impl Orchestrator {
                                 // was invisible in the trace file afterward even though nothing
                                 // went wrong. Every agent's actual output should be visible in
                                 // the trace, not just the ones that trigger a rejection.
-                                ctx.push_turn(TurnKind::System, "Validator", ctx.output.clone());
+                                ctx.push_turn_timed(
+                                    TurnKind::System,
+                                    "Validator",
+                                    ctx.output.clone(),
+                                    validator_start,
+                                );
                                 Stage::Critique
                             }
                             None => {
                                 // Conservative: unparseable verdict is treated
                                 // as a rejection rather than silently passing.
-                                ctx.push_turn(
+                                ctx.push_turn_timed(
                                     TurnKind::Rejection,
                                     "Validator",
                                     format!(
                                         "Validator produced unparseable output: {}",
                                         ctx.output
                                     ),
+                                    validator_start,
                                 );
                                 Stage::Retry
                             }
@@ -1007,8 +1090,9 @@ impl Orchestrator {
                                 .map(|t| crate::agent::tokens::count_tokens(&t.content))
                                 .sum();
                             if approx_tokens > summarizer.get_dynamic_history_limit() {
+                                let summarizer_start = std::time::Instant::now();
                                 retry_transient!(summarizer.query_stream(&self.chat, ctx, &tx))?;
-                                ctx.collapse_to_summary(ctx.output.clone());
+                                ctx.collapse_to_summary(ctx.output.clone(), summarizer_start);
                             }
                         }
                         Stage::Plan
@@ -1318,9 +1402,10 @@ impl Orchestrator {
         let mut q = Query::default();
         q.update_from_json(serde_json::json!({ "query": [query_text] }))?;
 
+        let retrieve_start = std::time::Instant::now();
         let docs = q.query(client, &self.embed, &model).await?;
         let docs = self.maybe_summarize_retrieved_docs(docs, ctx, tx).await;
-        ctx.push_turn(TurnKind::Retrieval, "Retrieve", docs);
+        ctx.push_turn_timed(TurnKind::Retrieval, "Retrieve", docs, retrieve_start);
         Ok(())
     }
 
@@ -1334,6 +1419,11 @@ impl Orchestrator {
         ctx: &mut Context,
         tx: &mpsc::Sender<OrchestratorResult>,
     ) -> Result<()> {
+        // Exactly one arm below actually runs per call, so timing the whole match covers
+        // whichever tool this dispatch is — for --trace-timings, "how long did this specific
+        // tool call take" (`Retrieve` excepted: `handle_retrieve` times itself, since it's a
+        // whole RAG round trip, not a single subprocess/filesystem call like the rest here).
+        let tool_start = std::time::Instant::now();
         match call.tool {
             ToolName::Retrieve => {
                 let query = call.args["query"].as_str().unwrap_or_default();
@@ -1347,7 +1437,7 @@ impl Orchestrator {
                     .and_then(|v| v.as_u64())
                     .map(|v| v as u32);
                 let out = git::git_log(path, max_count).await?;
-                ctx.push_turn(TurnKind::Retrieval, "GitLog", out);
+                ctx.push_turn_timed(TurnKind::Retrieval, "GitLog", out, tool_start);
                 Ok(())
             }
             ToolName::GitBlame => {
@@ -1357,7 +1447,7 @@ impl Orchestrator {
                     .and_then(|v| v.as_str())
                     .unwrap_or_default();
                 let out = git::git_blame(path).await?;
-                ctx.push_turn(TurnKind::Retrieval, "GitBlame", out);
+                ctx.push_turn_timed(TurnKind::Retrieval, "GitBlame", out, tool_start);
                 Ok(())
             }
             ToolName::GitDiff => {
@@ -1368,7 +1458,7 @@ impl Orchestrator {
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
                 let out = git::git_diff(path, staged).await?;
-                ctx.push_turn(TurnKind::Retrieval, "GitDiff", out);
+                ctx.push_turn_timed(TurnKind::Retrieval, "GitDiff", out, tool_start);
                 Ok(())
             }
             ToolName::GitSearchHistory => {
@@ -1381,7 +1471,7 @@ impl Orchestrator {
                     .and_then(|v| v.as_u64())
                     .map(|v| v as u32);
                 let out = git::git_search_history(pattern, mode, path, max_count).await?;
-                ctx.push_turn(TurnKind::Retrieval, "GitSearchHistory", out);
+                ctx.push_turn_timed(TurnKind::Retrieval, "GitSearchHistory", out, tool_start);
                 Ok(())
             }
             ToolName::ReadFile => {
@@ -1397,13 +1487,13 @@ impl Orchestrator {
                     .and_then(|v| v.as_u64())
                     .map(|v| v as u32);
                 let out = crate::orchestrator::fs::read_file(path, start, end).await?;
-                ctx.push_turn(TurnKind::Retrieval, "ReadFile", out);
+                ctx.push_turn_timed(TurnKind::Retrieval, "ReadFile", out, tool_start);
                 Ok(())
             }
             ToolName::ListDir => {
                 let path = call.args["path"].as_str().unwrap_or_default();
                 let out = crate::orchestrator::fs::list_dir(path).await?;
-                ctx.push_turn(TurnKind::Retrieval, "ListDir", out);
+                ctx.push_turn_timed(TurnKind::Retrieval, "ListDir", out, tool_start);
                 Ok(())
             }
             ToolName::Ripgrep => {
@@ -1423,28 +1513,28 @@ impl Orchestrator {
                 let out =
                     crate::orchestrator::search::ripgrep(pattern, path, glob, max_count, context)
                         .await?;
-                ctx.push_turn(TurnKind::Retrieval, "Ripgrep", out);
+                ctx.push_turn_timed(TurnKind::Retrieval, "Ripgrep", out, tool_start);
                 Ok(())
             }
             ToolName::ReadTags => {
                 let symbol = opt_str(&call.args, "symbol");
                 let out = crate::orchestrator::search::read_tags(symbol).await?;
-                ctx.push_turn(TurnKind::Retrieval, "ReadTags", out);
+                ctx.push_turn_timed(TurnKind::Retrieval, "ReadTags", out, tool_start);
                 Ok(())
             }
             ToolName::CargoCheck => {
                 let out = crate::orchestrator::cargo::cargo_check().await?;
-                ctx.push_turn(TurnKind::Retrieval, "CargoCheck", out);
+                ctx.push_turn_timed(TurnKind::Retrieval, "CargoCheck", out, tool_start);
                 Ok(())
             }
             ToolName::CargoClippy => {
                 let out = crate::orchestrator::cargo::cargo_clippy().await?;
-                ctx.push_turn(TurnKind::Retrieval, "CargoClippy", out);
+                ctx.push_turn_timed(TurnKind::Retrieval, "CargoClippy", out, tool_start);
                 Ok(())
             }
             ToolName::CargoDupes => {
                 let out = crate::orchestrator::cargo::cargo_dupes().await?;
-                ctx.push_turn(TurnKind::Retrieval, "CargoDupes", out);
+                ctx.push_turn_timed(TurnKind::Retrieval, "CargoDupes", out, tool_start);
                 Ok(())
             }
             ToolName::Memorize | ToolName::ApplyPatch => Ok(()),
@@ -1473,9 +1563,13 @@ impl Orchestrator {
         loop {
             let parsed_tool = tools::parse_tool_call(&ctx.output).ok().map(|c| c.tool);
             let is_apply_patch = matches!(parsed_tool, Some(ToolName::ApplyPatch));
+            // Times the actual tool execution (apply_patch's parse+apply, or memorize's embed
+            // call) — separate from the Worker's own LLM call time above, so --trace-timings can
+            // tell the two costs apart.
+            let exec_start = std::time::Instant::now();
             match self.worker.execute_and_verify(ctx).await? {
                 Validation::Failure(err) => {
-                    ctx.push_turn(TurnKind::Rejection, "ApplyPatch", err);
+                    ctx.push_turn_timed(TurnKind::Rejection, "ApplyPatch", err, exec_start);
                     return Ok(Stage::Retry);
                 }
                 // A real failure mode, not hypothetical: a live run showed the Worker calling
@@ -1496,7 +1590,7 @@ impl Orchestrator {
                         the reported issue is still unresolved. Call apply_patch to actually \
                         fix it now."
                         .to_string();
-                    ctx.push_turn(TurnKind::Rejection, "Worker", content);
+                    ctx.push_turn_timed(TurnKind::Rejection, "Worker", content, exec_start);
                     return Ok(Stage::Retry);
                 }
                 Validation::Success if is_apply_patch => {
@@ -1513,8 +1607,14 @@ impl Orchestrator {
                         tool call if you're done."
                             .into(),
                     );
+                    let worker_reask_start = std::time::Instant::now();
                     retry_transient!(self.worker.query_stream(&self.chat, ctx, tx))?;
-                    ctx.push_turn(TurnKind::Implementation, "Worker", ctx.output.clone());
+                    ctx.push_turn_timed(
+                        TurnKind::Implementation,
+                        "Worker",
+                        ctx.output.clone(),
+                        worker_reask_start,
+                    );
                 }
                 // `Validation::Skip` means `parse_tool_call` found nothing it recognized
                 // anywhere in the Worker's output — no tool_call fence, no bare-diff fallback
@@ -1523,10 +1623,11 @@ impl Orchestrator {
                 // "I'm done" — fine, proceed to Test. On the *first* attempt this round it means
                 // the Worker did nothing actionable at all.
                 Validation::Skip if !any_patch_applied => {
-                    ctx.push_turn(
+                    ctx.push_turn_timed(
                         TurnKind::Rejection,
                         "Worker",
                         NO_TOOL_CALL_REJECTION.to_string(),
+                        exec_start,
                     );
                     return Ok(Stage::Retry);
                 }
@@ -1545,13 +1646,14 @@ impl Orchestrator {
             .as_mut()
             .ok_or_else(|| RuChatError::Is("Scoper not enabled".into()))?;
 
+        let scoper_start = std::time::Instant::now();
         retry_transient!(scoper.query_stream(&self.chat, ctx, tx))?;
         // The Scoper's own raw output used to only ever reach `ctx.turns` in fragments — the
         // `notes` field below if non-empty, a rejected-lookup reason, a failed-lookup message —
         // never the actual action it took this round. A round where the Scoper found nothing
         // notable to say (empty notes, goal already READY) left no trace of it having run at
         // all, even though its output was streamed live to the console. Record it unconditionally.
-        ctx.push_turn(TurnKind::System, "Scoper", ctx.output.clone());
+        ctx.push_turn_timed(TurnKind::System, "Scoper", ctx.output.clone(), scoper_start);
 
         let Some(verdict) = scope::parse_scope_verdict(&ctx.output) else {
             ctx.trace(
@@ -1977,6 +2079,7 @@ mod tests {
             "test goal".to_string(),
             Some(path),
             DebugBreakpoints::default(),
+            false,
             false,
             false,
         );

@@ -69,6 +69,13 @@ pub(crate) struct Turn {
     pub(crate) kind: TurnKind,
     pub(crate) source: String,
     pub(crate) content: String,
+    /// Wall-clock time the operation that produced this turn actually took — an LLM call
+    /// (`push_turn_timed`) or a tool execution, `None` for turns the orchestrator synthesizes
+    /// itself (System/Rejection notes, which are instant). `#[serde(default)]` so an
+    /// already-checkpointed run (`ruchat_checkpoint.json`, written before this field existed)
+    /// still deserializes cleanly on `--resume` instead of erroring on a missing field.
+    #[serde(default)]
+    pub(crate) duration_ms: Option<u64>,
 }
 
 /// Pre-image of a file `apply_patch` just wrote to disk, kept so a rejected
@@ -98,6 +105,17 @@ pub(crate) struct Context {
     /// nothing reads it) for `Context::new` callers — mostly tests — that never touch a trace
     /// file at all.
     pub(crate) trace_index: u64,
+    /// `--trace-timings` — whether `full_history_view()` (the trace-file renderer) should show
+    /// each timed turn's `duration_ms` inline. Set once by the orchestrator right after
+    /// construction, from the CLI flag; not itself persisted through `Checkpoint` (a `--resume`
+    /// re-specifies it fresh each invocation, same as `--team-model`/etc. already must). Default
+    /// `false` — durations are still captured either way (`push_turn_timed` is unconditional, the
+    /// cost of an `Instant::now()` is negligible), this only gates whether they're *shown*, so
+    /// turning the flag on for a `--resume`d run can still see timings recorded before the flag
+    /// was ever set. Deliberately does NOT affect `history_view`/`context_view` (the prompt-
+    /// facing renderers other agents actually read) — timing data is for a human/the trace file,
+    /// not something to inject into another agent's own context.
+    pub(crate) trace_timings: bool,
 }
 
 impl Context {
@@ -110,6 +128,7 @@ impl Context {
             round: 0,
             pending_patches: Vec::new(),
             trace_index: 0,
+            trace_timings: false,
         }
     }
 
@@ -156,6 +175,27 @@ impl Context {
             kind,
             source: source.to_string(),
             content,
+            duration_ms: None,
+        });
+    }
+
+    /// Same as `push_turn`, but records how long the operation that produced `content` actually
+    /// took — `start` is the `Instant` captured right before that operation began (an LLM call
+    /// or a tool execution). See `--trace-timings` (`Context::trace_timings`) for where this
+    /// becomes visible: captured unconditionally here (cheap), only *shown* when that flag is on.
+    pub(crate) fn push_turn_timed(
+        &mut self,
+        kind: TurnKind,
+        source: &str,
+        content: String,
+        start: std::time::Instant,
+    ) {
+        self.turns.push(Turn {
+            round: self.round,
+            kind,
+            source: source.to_string(),
+            content,
+            duration_ms: Some(start.elapsed().as_millis() as u64),
         });
     }
 
@@ -352,6 +392,7 @@ impl Context {
                 kind: TurnKind::Retrieval,
                 source: "DebugImputation".to_string(),
                 content: d.to_string(),
+                duration_ms: None,
             });
         }
         if let Some(c) = imputations.get("context").and_then(|v| v.as_str()) {
@@ -360,6 +401,7 @@ impl Context {
                 kind: TurnKind::Plan,
                 source: "DebugImputation".to_string(),
                 content: c.to_string(),
+                duration_ms: None,
             });
         }
         if let Some(h) = imputations.get("history").and_then(|v| v.as_str()) {
@@ -368,6 +410,7 @@ impl Context {
                 kind: TurnKind::Summary,
                 source: "DebugImputation".to_string(),
                 content: h.to_string(),
+                duration_ms: None,
             });
         }
     }
@@ -408,12 +451,25 @@ impl Context {
     /// Used only by `trace_body()` for a complete human-readable snapshot of the run; prompt
     /// building keeps using `history_view`/`documents_view` as separate sections, since that
     /// split is meaningful to the model (data vs. narrative), not just a formatting choice.
+    ///
+    /// When `--trace-timings` (`self.trace_timings`) is on, each timed turn's header gets an
+    /// inline `(N.Ns)` — how long the LLM call or tool execution that produced it actually took.
+    /// Deliberately only here, not in `history_view`/`context_view`: those feed other agents'
+    /// own prompts, and timing data is for a human reading the trace file, not something to hand
+    /// another agent as if it were task-relevant context.
     pub(crate) fn full_history_view(&self) -> String {
         self.turns
             .iter()
             .map(|t| {
+                let timing = if self.trace_timings {
+                    t.duration_ms
+                        .map(|ms| format!(" ({:.1}s)", ms as f64 / 1000.0))
+                        .unwrap_or_default()
+                } else {
+                    String::new()
+                };
                 format!(
-                    "### {} [{:?}, round {}]:\n{}\n",
+                    "### {} [{:?}, round {}]{timing}:\n{}\n",
                     t.source,
                     t.kind,
                     t.round,
@@ -521,7 +577,8 @@ impl Context {
 
     /// Collapses all turns up to `round` into a single Summary turn — this is what
     /// the Summarizer role's output now does instead of overwriting `ctx.history`.
-    pub(crate) fn collapse_to_summary(&mut self, summary_text: String) {
+    /// `start` is when the Summarizer's own query began, for `--trace-timings`.
+    pub(crate) fn collapse_to_summary(&mut self, summary_text: String, start: std::time::Instant) {
         self.turns.retain(|t| t.round > self.round);
         self.turns.insert(
             0,
@@ -530,6 +587,7 @@ impl Context {
                 kind: TurnKind::Summary,
                 source: "Summarizer".to_string(),
                 content: summary_text,
+                duration_ms: Some(start.elapsed().as_millis() as u64),
             },
         );
     }
@@ -641,6 +699,79 @@ mod tests {
         assert!(body.contains("make a plan"));
         assert!(body.contains("ReadFile"));
         assert!(body.contains("fn parse_key_val<T, U>(s: &str) -> ..."));
+    }
+
+    #[test]
+    fn push_turn_timed_records_the_elapsed_duration() {
+        let mut ctx = Context::new("goal".to_string());
+        let start = std::time::Instant::now();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        ctx.push_turn_timed(TurnKind::Plan, "Architect", "a plan".to_string(), start);
+        assert!(
+            ctx.turns[0].duration_ms.unwrap() >= 5,
+            "expected at least 5ms recorded, got: {:?}",
+            ctx.turns[0].duration_ms
+        );
+    }
+
+    #[test]
+    fn push_turn_records_no_duration() {
+        let mut ctx = Context::new("goal".to_string());
+        ctx.push_turn(TurnKind::System, "Orchestrator", "a note".to_string());
+        assert_eq!(ctx.turns[0].duration_ms, None);
+    }
+
+    // --trace-timings: `full_history_view` (the trace-file renderer `trace_body` uses) must show
+    // each timed turn's duration inline when the flag is on...
+    #[test]
+    fn full_history_view_shows_duration_when_trace_timings_is_on() {
+        let mut ctx = Context::new("goal".to_string());
+        ctx.trace_timings = true;
+        let start = std::time::Instant::now() - std::time::Duration::from_millis(2500);
+        ctx.push_turn_timed(TurnKind::Plan, "Architect", "a plan".to_string(), start);
+        let view = ctx.full_history_view();
+        assert!(
+            view.contains("(2.5s)"),
+            "expected a duration annotation, got: {view}"
+        );
+    }
+
+    // ...but not when it's off (the default) — durations are still recorded either way (see
+    // `push_turn_timed_records_the_elapsed_duration` above), this only gates whether they show.
+    #[test]
+    fn full_history_view_hides_duration_when_trace_timings_is_off() {
+        let mut ctx = Context::new("goal".to_string());
+        assert!(!ctx.trace_timings, "trace_timings should default to false");
+        let start = std::time::Instant::now() - std::time::Duration::from_millis(2500);
+        ctx.push_turn_timed(TurnKind::Plan, "Architect", "a plan".to_string(), start);
+        let view = ctx.full_history_view();
+        assert!(
+            !view.contains("2.5s"),
+            "duration should not appear when the flag is off, got: {view}"
+        );
+    }
+
+    // A turn the orchestrator synthesizes itself (a System reminder, say) has no duration to
+    // show even with the flag on — must not print a bogus "(0.0s)" for something that was never
+    // actually timed.
+    #[test]
+    fn full_history_view_omits_timing_for_an_untimed_turn_even_when_the_flag_is_on() {
+        let mut ctx = Context::new("goal".to_string());
+        ctx.trace_timings = true;
+        ctx.push_turn(TurnKind::System, "Orchestrator", "a note".to_string());
+        let view = ctx.full_history_view();
+        assert!(
+            view.contains("### Orchestrator [System, round 0]:"),
+            "expected no duration suffix on an untimed turn, got: {view}"
+        );
+    }
+
+    #[test]
+    fn collapse_to_summary_records_the_summarizers_own_duration() {
+        let mut ctx = Context::new("goal".to_string());
+        let start = std::time::Instant::now() - std::time::Duration::from_millis(1200);
+        ctx.collapse_to_summary("condensed history".to_string(), start);
+        assert!(ctx.turns[0].duration_ms.unwrap() >= 1200);
     }
 
     // Regression: a real apply_patch diff rides inside a JSON string field, so its newlines

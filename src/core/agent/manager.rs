@@ -91,6 +91,9 @@ impl Manager {
                     breakpoints: Default::default(),
                     resume: false,
                     approve_commit: false,
+                    // Team presets have no --trace-timings flag of their own yet either — same
+                    // deferred-scope note as the provider-selection comment above.
+                    trace_timings: false,
                 };
                 let mut cio = Io::new();
                 render_pipeline_stream(pipeline.run(), &mut cio).await?;

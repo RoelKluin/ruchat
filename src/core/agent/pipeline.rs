@@ -26,6 +26,7 @@ pub(crate) enum AgentPipeline {
         breakpoints: DebugBreakpoints,
         resume: bool,
         approve_commit: bool,
+        trace_timings: bool,
     },
     /// The non-agentic `pipe` path — no Architect/Worker config, just a bare
     /// prompt sent straight to the model. Kept as its own variant (rather
@@ -49,12 +50,14 @@ impl AgentPipeline {
                 breakpoints,
                 resume,
                 approve_commit,
+                trace_timings,
             } => Box::pin(orchestrator.run_task_stream(
                 goal,
                 debug_sequence,
                 breakpoints,
                 resume,
                 approve_commit,
+                trace_timings,
             )),
             AgentPipeline::OneShot {
                 ollama,
