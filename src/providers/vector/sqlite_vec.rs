@@ -32,13 +32,13 @@ impl SqliteVecClientConfigArgs {
     /// `Orchestrator::new`) that must not stall the executor.
     pub(crate) async fn create_client(&self) -> Result<SqliteVecClient> {
         let path = self.sqlite_vec_path.clone().ok_or_else(|| {
-            RuChatError::Is(
+            RuChatError::SqliteVecError(
                 "--sqlite-vec-path is required when --vector-provider is sqlite-vec".into(),
             )
         })?;
         let path = PathBuf::from(path);
         tokio::task::spawn_blocking(move || SqliteVecClient::open(&path))
             .await
-            .map_err(|e| RuChatError::InternalError(e.to_string()))?
+            .map_err(|e| RuChatError::SqliteVecError(e.to_string()))?
     }
 }

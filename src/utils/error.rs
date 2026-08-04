@@ -49,6 +49,14 @@ pub enum RuChatError {
     #[error("Anthropic API error: {0}")]
     AnthropicError(String),
 
+    /// Error from the SQLite-vec vector-store backend (`providers/vector/sqlite_vec`) — file
+    /// open, schema creation, or query/write failures against the local database. Same
+    /// String-carrying shape as `AnthropicError`: distinguishable from the generic `Is`/
+    /// `InternalError` catch-alls without a full per-failure-mode enum, matching what was
+    /// judged proportionate for a single external-integration surface.
+    #[error("SQLite-vec error: {0}")]
+    SqliteVecError(String),
+
     /// Error when parsing metadata.
     #[error("Metadata parse error for input '{0}': {1}")]
     MetadataFileReadError(String, std::io::Error),
