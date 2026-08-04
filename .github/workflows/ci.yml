@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-test-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build
+
+      - name: Clippy (lib + tests)
+        # Not -D warnings: the crate currently carries ~16 pre-existing
+        # dead-code warnings unrelated to any given PR (see TODO.md's Code
+        # Quality section). This still fails on actual clippy/rustc errors.
+        run: cargo clippy --lib --tests
+
+      - name: Test
+        run: cargo test --lib
