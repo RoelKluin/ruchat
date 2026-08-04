@@ -177,11 +177,15 @@ pub enum RuChatError {
     #[error("Missing agent: {0}")]
     MissingAgent(String),
 
-    /// Error when sending a message through a channel fails.
+    /// Error when sending a message through a channel fails. Boxed (not `#[from]`, since that
+    /// only auto-derives when the field type matches the source type exactly) because the
+    /// unboxed `SendError<StdResult<StreamItem, Box<RuChatError>>>` embeds a whole `StreamItem`,
+    /// making this by far the largest variant (≥240 bytes) and tripping `clippy::
+    /// result_large_err` on every fallible function in the crate, since `RuChatError` is the
+    /// crate-wide `Result<T>` error type. Manual `From` impl below does the boxing `#[from]`
+    /// can't.
     #[error("Channel send error: {0}")]
-    ChannelError(
-        #[from] tokio::sync::mpsc::error::SendError<StdResult<StreamItem, Box<RuChatError>>>,
-    ),
+    ChannelError(Box<tokio::sync::mpsc::error::SendError<StdResult<StreamItem, Box<RuChatError>>>>),
 
     /// Error when a role is invalid.
     #[error("Invalid role: {0}")]
@@ -196,6 +200,17 @@ pub enum RuChatError {
     /// rejections and transient infra errors.
     #[error("Orchestration cancelled")]
     Cancelled,
+}
+
+/// Manual, not `#[from]`: see `ChannelError`'s doc comment for why the field is boxed.
+impl From<tokio::sync::mpsc::error::SendError<StdResult<StreamItem, Box<RuChatError>>>>
+    for RuChatError
+{
+    fn from(
+        e: tokio::sync::mpsc::error::SendError<StdResult<StreamItem, Box<RuChatError>>>,
+    ) -> Self {
+        RuChatError::ChannelError(Box::new(e))
+    }
 }
 
 /// A type alias for `Result` that uses `RuChatError` as the error type.
