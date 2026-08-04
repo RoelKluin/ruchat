@@ -137,6 +137,122 @@ pub(super) fn ensure_diff_has_file_header(diff: &str, planned: &[String]) -> Str
     format!("--- a/{only_file}\n+++ b/{only_file}\n{diff}")
 }
 
+/// How many real context lines to put either side of a relocated deletion when rebuilding its
+/// hunk — the customary unified-diff default.
+const REALIGN_CONTEXT_LINES: usize = 3;
+
+/// Re-anchors a *pure-deletion* hunk whose removed lines really do exist in the file, but whose
+/// surrounding context lines (and/or `@@` offsets) don't match it — so `diffy::apply` rejects an
+/// edit whose actual intent was correct and unambiguous.
+///
+/// The live failure this fixes (traces 499/500, `fix_one_clippy_lint`): clippy flagged
+/// `src/core/agent.rs:82: field `options` is never read`, and the Worker correctly emitted
+/// `-    options: ModelOptions,` — but wrote the struct's *other* fields around it in the wrong
+/// order, so no such context block exists in the file and the patch could never apply. The model
+/// then re-emitted the identical diff every remaining round, because from its point of view it
+/// was already deleting exactly the field it was asked to delete.
+///
+/// Only acts where the intent is unambiguous, otherwise returns `None` and leaves the existing
+/// rejection path (which shows the real line-numbered file content) to handle it:
+/// - The hunk must be a pure deletion — at least one `-` line and no `+` lines. A hunk that also
+///   adds lines needs an insertion point, which can't be inferred once its context is known-bad.
+/// - The removed lines must appear in the file as one contiguous, in-order block, and that block
+///   must occur **exactly once**. Ambiguity is left alone rather than guessed at.
+/// - Matching compares trimmed text (the model's indentation is frequently off) but the rebuilt
+///   hunk always uses the file's own exact bytes, so the result applies cleanly by construction.
+///
+/// This only ever changes *where* a deletion is anchored, never *what* it deletes — the rebuilt
+/// hunk removes lines whose trimmed text the model itself wrote. It is deliberately run only
+/// after `diffy::apply` has already failed, so a diff that applies as submitted is never touched.
+pub(super) fn realign_pure_deletion_hunks(diff: &str, original: &str) -> Option<String> {
+    let file_lines: Vec<&str> = original.lines().collect();
+    let lines: Vec<&str> = diff.split_inclusive('\n').collect();
+    let mut out = String::with_capacity(diff.len());
+    let mut changed = false;
+    let mut i = 0;
+    while i < lines.len() {
+        let trimmed = lines[i].trim_end_matches('\n');
+        if !trimmed.starts_with("@@") {
+            out.push_str(lines[i]);
+            i += 1;
+            continue;
+        }
+        // Collect this hunk's body: everything up to the next hunk or file header.
+        let mut j = i + 1;
+        while j < lines.len() {
+            let t = lines[j].trim_end_matches('\n');
+            if t.starts_with("@@") || t.starts_with("--- ") || t.starts_with("+++ ") {
+                break;
+            }
+            j += 1;
+        }
+        let body: Vec<&str> = lines[i + 1..j]
+            .iter()
+            .map(|l| l.trim_end_matches('\n'))
+            .collect();
+        match rebuild_deletion_hunk(&body, &file_lines) {
+            Some(rebuilt) => {
+                out.push_str(&rebuilt);
+                changed = true;
+            }
+            None => {
+                for line in &lines[i..j] {
+                    out.push_str(line);
+                }
+            }
+        }
+        i = j;
+    }
+    changed.then_some(out)
+}
+
+/// Rebuilds one hunk body against the real file, or `None` if it isn't an unambiguously
+/// relocatable pure deletion. See `realign_pure_deletion_hunks` for the rules.
+fn rebuild_deletion_hunk(body: &[&str], file_lines: &[&str]) -> Option<String> {
+    if body.iter().any(|l| l.starts_with('+')) {
+        return None;
+    }
+    let removed: Vec<&str> = body
+        .iter()
+        .filter_map(|l| l.strip_prefix('-'))
+        .map(str::trim)
+        .collect();
+    if removed.is_empty() {
+        return None;
+    }
+    // Locate the removed block in the file, requiring exactly one contiguous in-order match.
+    let mut matches = file_lines
+        .windows(removed.len())
+        .enumerate()
+        .filter(|(_, w)| w.iter().map(|l| l.trim()).eq(removed.iter().copied()))
+        .map(|(idx, _)| idx);
+    let start = matches.next()?;
+    if matches.next().is_some() {
+        return None; // ambiguous — refuse to guess which occurrence was meant
+    }
+    let ctx_start = start.saturating_sub(REALIGN_CONTEXT_LINES);
+    let ctx_end = (start + removed.len() + REALIGN_CONTEXT_LINES).min(file_lines.len());
+    let mut rebuilt = String::new();
+    let old_count = ctx_end - ctx_start;
+    let new_count = old_count - removed.len();
+    rebuilt.push_str(&format!(
+        "@@ -{},{old_count} +{},{new_count} @@\n",
+        ctx_start + 1,
+        ctx_start + 1
+    ));
+    for (idx, line) in file_lines.iter().enumerate().take(ctx_end).skip(ctx_start) {
+        let prefix = if (start..start + removed.len()).contains(&idx) {
+            '-'
+        } else {
+            ' '
+        };
+        rebuilt.push(prefix);
+        rebuilt.push_str(line);
+        rebuilt.push('\n');
+    }
+    Some(rebuilt)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -265,5 +381,73 @@ mod tests {
             ensure_diff_has_file_header(diff, &["src/foo.rs".to_string()]),
             diff
         );
+    }
+
+    /// The real struct `fix_one_clippy_lint` kept failing on, byte-for-byte from
+    /// `src/core/agent.rs` at the time (lines 81-88).
+    const AGENT_RS: &str = "fn unrelated() {\n    false\n}\n\npub(crate) struct Agent {\n    options: ModelOptions,\n    agent_config: HashMap<String, Value>,\n    pub(super) embed_args: Option<EmbedArgs>,\n    cfg: Value,\n}\n\nimpl Agent {\n";
+
+    #[test]
+    fn realigns_the_verbatim_trace_500_diff_onto_the_right_line() {
+        // Verbatim from ruchat_traces/ruchat_trace_500.md round 2: the removed line is exactly
+        // right (`options`, the field clippy flagged), but the model listed the struct's other
+        // fields in the wrong order, so this context block appears nowhere in the file and
+        // diffy::apply could never match it — the run then looped on this identical diff.
+        let submitted = "--- a/src/core/agent.rs\n+++ b/src/core/agent.rs\n@@ -81,7 +81,6 @@ pub struct Agent {\n     agent_config: HashMap<String, Value>,\n     pub(super) embed_args: Option<EmbedArgs>,\n     cfg: Value,\n-    options: ModelOptions,\n }\n";
+        // Run the same pre-processing `apply_patch` does before it ever calls diffy, so this
+        // exercises the diff exactly as the real pipeline sees it.
+        let diff = fix_hunk_header_counts(&normalize_diff_hunk_lines(submitted));
+        // Precondition: after that repair it parses, but still genuinely does not apply.
+        let as_submitted = diffy::Patch::from_str(&diff).expect("parses");
+        assert!(diffy::apply(AGENT_RS, &as_submitted).is_err());
+
+        let repaired = realign_pure_deletion_hunks(&diff, AGENT_RS).expect("should realign");
+        let patch = diffy::Patch::from_str(&repaired).expect("repaired diff should parse");
+        let patched = diffy::apply(AGENT_RS, &patch).expect("repaired diff should apply");
+
+        // Deletes `options` and nothing else — every other field survives verbatim.
+        assert!(!patched.contains("options: ModelOptions,"));
+        assert!(patched.contains("    agent_config: HashMap<String, Value>,"));
+        assert!(patched.contains("    pub(super) embed_args: Option<EmbedArgs>,"));
+        assert!(patched.contains("    cfg: Value,"));
+        assert_eq!(patched.lines().count(), AGENT_RS.lines().count() - 1);
+    }
+
+    #[test]
+    fn realign_refuses_when_the_removed_line_is_ambiguous() {
+        // Two identical candidate lines — relocating would be a coin flip, so it must decline
+        // and let the normal context-mismatch rejection show the real file instead.
+        let file = "a\n    dup();\nb\n    dup();\nc\n";
+        let diff = "--- a/f.rs\n+++ b/f.rs\n@@ -1,3 +1,2 @@\n zzz\n-    dup();\n yyy\n";
+        assert!(realign_pure_deletion_hunks(diff, file).is_none());
+    }
+
+    #[test]
+    fn realign_refuses_a_hunk_that_also_adds_lines() {
+        // A replacement needs an insertion point, which can't be inferred once the hunk's
+        // context is known not to match.
+        let file = "a\n    old();\nb\n";
+        let diff =
+            "--- a/f.rs\n+++ b/f.rs\n@@ -1,3 +1,3 @@\n zzz\n-    old();\n+    new();\n yyy\n";
+        assert!(realign_pure_deletion_hunks(diff, file).is_none());
+    }
+
+    #[test]
+    fn realign_refuses_when_the_removed_line_is_absent_entirely() {
+        let file = "a\nb\nc\n";
+        let diff = "--- a/f.rs\n+++ b/f.rs\n@@ -1,2 +1,1 @@\n a\n-    nonexistent();\n";
+        assert!(realign_pure_deletion_hunks(diff, file).is_none());
+    }
+
+    #[test]
+    fn realign_matches_despite_wrong_indentation() {
+        // Models routinely get leading whitespace wrong; the rebuilt hunk still uses the file's
+        // own exact bytes, so it applies cleanly.
+        let file = "fn a() {\n        deeply_indented();\n}\n";
+        let diff = "--- a/f.rs\n+++ b/f.rs\n@@ -1,2 +1,1 @@\n zzz\n-deeply_indented();\n";
+        let repaired = realign_pure_deletion_hunks(diff, file).expect("should realign");
+        let patch = diffy::Patch::from_str(&repaired).expect("parses");
+        let patched = diffy::apply(file, &patch).expect("applies");
+        assert_eq!(patched, "fn a() {\n}\n");
     }
 }

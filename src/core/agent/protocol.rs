@@ -241,55 +241,51 @@ fn file_in_scope(target: &str, planned: &[String]) -> bool {
         .any(|p| p == target || target.ends_with(p.as_str()) || p.ends_with(target))
 }
 
-/// Old-file line numbers of every `-` (removed) line across all of a unified diff's hunks — the
-/// lines this diff actually *changes*, as opposed to lines it merely shows as context. Parsed
-/// directly from `@@ -a,b +c,d @@` headers rather than via `diffy::Patch`, so this can run before
-/// (and independent of) `diffy::apply` succeeding or failing.
-fn removed_line_numbers(diff_text: &str) -> Vec<usize> {
-    let mut removed = Vec::new();
-    let mut old_line: usize = 0;
-    for line in diff_text.lines() {
-        if let Some(rest) = line.strip_prefix("@@ ") {
-            old_line = rest
-                .split_whitespace()
-                .next()
-                .and_then(|old| old.trim_start_matches('-').split(',').next())
-                .and_then(|start| start.parse::<usize>().ok())
-                .unwrap_or(0);
-            continue;
-        }
-        if old_line == 0 || line.starts_with("---") || line.starts_with("+++") {
-            continue;
-        }
-        if line.starts_with('-') {
-            removed.push(old_line);
-            old_line += 1;
-        } else if !line.starts_with('+') {
-            // Context line — present in both old and new, advances the old-file cursor.
-            old_line += 1;
-        }
-    }
-    removed
+/// The text of every `-` (removed) line in a diff, trimmed. Deliberately content-based: the
+/// `@@ -a,b @@` offsets a local model writes are unreliable enough that this repo already has to
+/// recompute them (`diff_repair::fix_hunk_header_counts`), so nothing that decides whether to
+/// *reject* an edit may be derived from them.
+fn removed_line_texts(diff_text: &str) -> Vec<String> {
+    diff_text
+        .lines()
+        .filter(|l| !l.starts_with("---"))
+        .filter_map(|l| l.strip_prefix('-'))
+        .map(|l| l.trim().to_string())
+        .collect()
 }
 
-/// Line numbers a `CargoClippy` retrieval turn (`orchestrator.rs`'s `ToolName::CargoClippy`
+/// Identifiers a `CargoClippy` retrieval turn (`orchestrator.rs`'s `ToolName::CargoClippy`
 /// dispatch, output format `cargo clippy --message-format=short`: `path:line:col: level: msg`)
-/// flagged in `target` this run, if any. Empty whenever clippy wasn't consulted this run (the
-/// overwhelmingly common case) — this makes the caller's check below a no-op for every task that
-/// isn't specifically "fix a clippy-flagged line."
-fn diagnostic_lines_for(ctx: &Context, target: &str) -> Vec<usize> {
+/// named in backticks for `target`, restricted to *dead-code* warnings ("is never read", "is
+/// never used", "unused ..."). Those are exactly the warnings whose fix is "delete the thing the
+/// message names", so a pure-deletion diff answering one must touch a line mentioning that name.
+///
+/// Everything else yields an empty list and so disables the caller's check entirely: warnings
+/// like `needless_return` are fixed by editing lines that need not mention any backticked
+/// identifier, and guessing there would block correct work — the same fail-open stance the
+/// missing-`FILES:` scope check takes.
+fn clippy_dead_code_symbols_for(ctx: &Context, target: &str) -> Vec<String> {
     let file_name = target.rsplit('/').next().unwrap_or(target);
     ctx.turns
         .iter()
         .filter(|t| t.kind == TurnKind::Retrieval && t.source == "CargoClippy")
         .flat_map(|t| t.content.lines())
-        .filter_map(|line| {
-            let mut parts = line.splitn(3, ':');
-            let path = parts.next()?.trim();
-            if !(path.ends_with(target) || path.ends_with(file_name)) {
-                return None;
-            }
-            parts.next()?.trim().parse::<usize>().ok()
+        .filter(|line| {
+            let path = line.split(':').next().unwrap_or_default().trim();
+            path.ends_with(target) || path.ends_with(file_name)
+        })
+        .filter(|line| {
+            line.contains("is never read")
+                || line.contains("is never used")
+                || line.contains("unused")
+        })
+        .flat_map(|line| {
+            line.split('`')
+                .skip(1)
+                .step_by(2)
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
         })
         .collect()
 }
@@ -379,32 +375,37 @@ impl Validation {
             ctx.push_turn(TurnKind::Rejection, "Validator", content.clone());
             return Ok(Validation::Failure(content));
         }
-        // Real, observed failure mode (see TODO.md): the Worker's plan correctly names the
-        // clippy-flagged field (e.g. "remove the unused field `options`", quoting
-        // `path:82:5: warning: field \`options\` is never read` verbatim), but the diff it
-        // actually writes removes a different, nearby line in the same struct instead — diffy
-        // happily applies it (still syntactically valid), and the mistake surfaces only after a
-        // full cargo-check round-trip via a confusing "no field named ..." compile error. Caught
-        // here, deterministically and before any file I/O, whenever this run's own CargoClippy
-        // tool already pointed at a specific line in this exact file.
-        let diag_lines = diagnostic_lines_for(ctx, target);
-        if !diag_lines.is_empty() {
-            let touched = removed_line_numbers(diff_text);
-            if !touched.is_empty() && !diag_lines.iter().any(|d| touched.contains(d)) {
-                let flagged = diag_lines
-                    .iter()
-                    .map(|n| n.to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let content = format!(
-                    "refused: this run's own cargo_clippy result flagged {target}:{flagged} — \
-                    but this diff's removed/changed line(s) are {touched:?} instead. You likely \
-                    have the right file but the wrong line: re-check the field/line the warning \
-                    actually named before writing the diff again."
-                );
-                ctx.push_turn(TurnKind::Rejection, "Validator", content.clone());
-                return Ok(Validation::Failure(content));
-            }
+        // Real, observed failure mode (trace 497): clippy flagged one field as dead
+        // (`field `options` is never read`), the Architect's plan correctly said to remove
+        // `options`, but the Worker's diff deleted a *different*, still-used field from the same
+        // struct. Being a syntactically valid deletion of a line that really exists, nothing
+        // upstream can tell it's wrong — it costs a full cargo-check round-trip to surface, as a
+        // confusing "no field named ..." compile error, and the run then repeats it.
+        //
+        // Checked by symbol, never by line number, and only for pure deletions answering a
+        // dead-code warning: if clippy said `options` is dead and this diff only removes lines,
+        // at least one removed line has to mention `options`. Anything else fails open.
+        let symbols = clippy_dead_code_symbols_for(ctx, target);
+        let removed = removed_line_texts(diff_text);
+        let is_pure_deletion = !removed.is_empty()
+            && !diff_text
+                .lines()
+                .any(|l| l.starts_with('+') && !l.starts_with("+++"));
+        if !symbols.is_empty()
+            && is_pure_deletion
+            && !removed
+                .iter()
+                .any(|line| symbols.iter().any(|s| line.contains(s.as_str())))
+        {
+            let named = symbols.join("`, `");
+            let content = format!(
+                "refused: this run's own cargo_clippy result reported `{named}` as dead code in \
+                {target}, but this diff doesn't remove any line mentioning it — it removes \
+                {removed:?} instead. Delete the item the warning actually named, not a \
+                neighbouring one."
+            );
+            ctx.push_turn(TurnKind::Rejection, "Validator", content.clone());
+            return Ok(Validation::Failure(content));
         }
         let original = tokio::fs::read_to_string(target).await.unwrap_or_default();
         match diffy::apply(&original, &patch) {
@@ -417,6 +418,24 @@ impl Validation {
                 Ok(Validation::Success)
             }
             Err(e) => {
+                // Before giving up: a pure deletion whose removed lines do exist in the file,
+                // just not surrounded by the context the model wrote, can be re-anchored onto
+                // the real location — the trace 499/500 loop, where the Worker deleted exactly
+                // the right field but listed the struct's other fields in the wrong order and
+                // then re-sent that same unapplicable diff every remaining round. Only ever runs
+                // once the diff has already failed to apply as submitted.
+                if let Some(realigned) =
+                    crate::core::agent::diff_repair::realign_pure_deletion_hunks(
+                        &normalized,
+                        &original,
+                    )
+                    && let Ok(patch) = diffy::Patch::from_str(&realigned)
+                    && let Ok(patched) = diffy::apply(&original, &patch)
+                {
+                    tokio::fs::write(target, patched).await?;
+                    ctx.record_patch(target.to_string(), original);
+                    return Ok(Validation::Success);
+                }
                 // `diffy::apply` fails here for essentially one reason: the diff's context
                 // lines don't match `target`'s actual current content — almost always because
                 // the Worker guessed/hallucinated what the file looks like instead of reading
@@ -857,89 +876,89 @@ mod tests {
     }
 
     #[test]
-    fn removed_line_numbers_ignores_context_and_added_lines() {
-        let diff = "--- a/x\n+++ b/x\n@@ -81,7 +81,6 @@ pub(crate) struct Agent {\n     options: ModelOptions,\n     agent_config: HashMap<String, Value>,\n     pub(super) embed_args: Option<EmbedArgs>,\n-    cfg: Value,\n }\n \n impl Agent {\n";
-        // Body line 1 (`options`) sits at the hunk's declared old-start (81); the removed line
-        // (`cfg`) is the 4th body line, so 81 + 3 = 84 — never 82 (`options`, what the plan
-        // actually named), which is the property this guard depends on.
-        assert_eq!(removed_line_numbers(diff), vec![84]);
+    fn removed_line_texts_ignores_context_added_and_header_lines() {
+        let diff = "--- a/x\n+++ b/x\n@@ -81,7 +81,6 @@ struct Agent {\n     kept: T,\n+    added: T,\n-    cfg: Value,\n }\n";
+        assert_eq!(removed_line_texts(diff), vec!["cfg: Value,".to_string()]);
     }
 
     #[test]
-    fn removed_line_numbers_handles_multiple_hunks() {
-        let diff =
-            "--- a/x\n+++ b/x\n@@ -1,2 +1,1 @@\n-one\n two\n@@ -10,2 +9,1 @@\n-ten\n eleven\n";
-        assert_eq!(removed_line_numbers(diff), vec![1, 10]);
-    }
-
-    #[test]
-    fn diagnostic_lines_for_reads_a_cargo_clippy_retrieval_turn() {
+    fn clippy_symbols_are_read_only_from_dead_code_warnings_for_that_file() {
         let mut ctx = Context::new("goal".to_string());
         ctx.push_turn(
             TurnKind::Retrieval,
             "CargoClippy",
             "src/core/agent.rs:82:5: warning: field `options` is never read\n\
-             src/core/index.rs:595:9: warning: this `if` statement can be collapsed"
+             src/core/agent.rs:90:9: warning: unneeded `return` statement\n\
+             src/core/index.rs:595:9: warning: function `helper` is never used"
                 .to_string(),
         );
-        assert_eq!(diagnostic_lines_for(&ctx, "src/core/agent.rs"), vec![82]);
-        assert!(diagnostic_lines_for(&ctx, "src/core/other.rs").is_empty());
+        // Only the dead-code warning contributes; `return` (a style lint whose fix need not
+        // mention any backticked name) must not, or it would block correct edits.
+        assert_eq!(
+            clippy_dead_code_symbols_for(&ctx, "src/core/agent.rs"),
+            vec!["options".to_string()]
+        );
+        assert_eq!(
+            clippy_dead_code_symbols_for(&ctx, "src/core/index.rs"),
+            vec!["helper".to_string()]
+        );
+        assert!(clippy_dead_code_symbols_for(&ctx, "src/core/other.rs").is_empty());
     }
 
     #[test]
-    fn diagnostic_lines_for_is_empty_when_clippy_was_never_run_this_turn() {
+    fn clippy_symbols_are_empty_when_clippy_was_never_run_this_run() {
         let ctx = Context::new("goal".to_string());
-        assert!(diagnostic_lines_for(&ctx, "Cargo.toml").is_empty());
+        assert!(clippy_dead_code_symbols_for(&ctx, "Cargo.toml").is_empty());
     }
 
-    // Regression for the real `fix_one_clippy_lint` failure documented in TODO.md: the Worker's
-    // plan correctly quotes the clippy warning at Cargo.toml:2, but the diff it writes removes a
-    // different line (4) in the same hunk instead — this must be refused before diffy::apply
-    // (and hence before any disk write), with a message pointing at the specific mismatch.
+    // Regression for trace 497: clippy reported `options` as dead, but the Worker's diff deleted
+    // a different, still-used field from the same struct. Refused before diffy::apply — and so
+    // before any disk write — rather than costing a full cargo-check round-trip to surface as a
+    // confusing "no field named ..." compile error.
     #[tokio::test]
-    async fn apply_patch_rejects_a_diff_that_misses_the_flagged_clippy_line() {
+    async fn apply_patch_rejects_deleting_a_line_other_than_the_dead_code_clippy_named() {
         let mut ctx = Context::new("goal".to_string());
         ctx.push_turn(
             TurnKind::Retrieval,
             "CargoClippy",
-            "Cargo.toml:2:1: warning: field `authors` is never read".to_string(),
+            "Cargo.toml:2:1: warning: field `nonexistent_field` is never read".to_string(),
         );
-        let diff = "--- a/Cargo.toml\n+++ b/Cargo.toml\n@@ -1,4 +1,3 @@\n [package]\n authors = [\"Roelof J.C. Kluin\"]\n description = \"ollama/chroma command-line AI chat tool\"\n-edition = \"2024\"\n";
+        // The removed line deliberately doesn't exist in Cargo.toml: this asserts on a guard that
+        // fires before any file I/O, and a diff that could really apply would edit the repo's own
+        // manifest for real should that guard ever regress.
+        let diff = "--- a/Cargo.toml\n+++ b/Cargo.toml\n@@ -1,3 +1,2 @@\n [package]\n-fabricated_key = \"never in this file\"\n edition = \"2024\"\n";
         let result = Validation::apply_patch(diff, &mut ctx).await.unwrap();
-        match result {
-            Validation::Failure(_) => {
-                let rejection = ctx
-                    .turns
-                    .iter()
-                    .rev()
-                    .find(|t| t.kind == TurnKind::Rejection)
-                    .expect("a mismatched-line diff should be rejected");
-                assert!(
-                    rejection.content.contains("cargo_clippy result flagged"),
-                    "expected the flagged-line mismatch message, got: {}",
-                    rejection.content
-                );
-            }
-            other => panic!("expected the patch to be rejected, got: {other:?}"),
-        }
-        // Never reached diffy::apply, so the real file on disk must be untouched.
-        let on_disk = tokio::fs::read_to_string("Cargo.toml").await.unwrap();
-        assert!(on_disk.contains("edition = \"2024\""));
+        let Validation::Failure(_) = result else {
+            panic!("expected the patch to be rejected, got: {result:?}");
+        };
+        let rejection = ctx
+            .turns
+            .iter()
+            .rev()
+            .find(|t| t.kind == TurnKind::Rejection)
+            .expect("a wrong-symbol deletion should be rejected");
+        assert!(
+            rejection.content.contains("nonexistent_field"),
+            "expected the dead-code symbol mismatch message, got: {}",
+            rejection.content
+        );
     }
 
-    // A diff that DOES touch the flagged line must pass this guard through to the normal
-    // diffy::apply path — proven here by using a real line number but fabricated content, which
-    // fails for the pre-existing "content mismatch" reason instead, never this new one. Confirms
-    // no false positive on a genuinely correct target line.
+    // The false-positive case the previous, line-number-based guard got wrong (traces 499/500):
+    // the diff removes exactly the line clippy named, but with the file's other lines written in
+    // the wrong order. The guard must stay silent and let the diff proceed — here it still fails,
+    // but for the pre-existing content-mismatch reason, never the dead-code one.
     #[tokio::test]
-    async fn apply_patch_does_not_reject_a_diff_that_touches_the_flagged_line() {
+    async fn apply_patch_does_not_reject_a_deletion_that_names_the_flagged_symbol() {
         let mut ctx = Context::new("goal".to_string());
         ctx.push_turn(
             TurnKind::Retrieval,
             "CargoClippy",
             "Cargo.toml:2:1: warning: field `authors` is never read".to_string(),
         );
-        let diff = "--- a/Cargo.toml\n+++ b/Cargo.toml\n@@ -1,4 +1,3 @@\n [package]\n-totally made up line two\n description = \"ollama/chroma command-line AI chat tool\"\n edition = \"2024\"\n";
+        // Mentions `authors`, so the guard passes it through; the line doesn't exist in the real
+        // file, so realignment can't anchor it either and Cargo.toml is left untouched.
+        let diff = "--- a/Cargo.toml\n+++ b/Cargo.toml\n@@ -1,3 +1,2 @@\n [package]\n-authors_fabricated = [\"nobody\"]\n edition = \"2024\"\n";
         let result = Validation::apply_patch(diff, &mut ctx).await.unwrap();
         let Validation::Failure(_) = result else {
             panic!("expected the fabricated content to still fail apply, got: {result:?}");
@@ -951,10 +970,39 @@ mod tests {
             .find(|t| t.kind == TurnKind::Rejection)
             .expect("a failed apply should push a rejection");
         assert!(
-            !rejection.content.contains("cargo_clippy result flagged"),
-            "the flagged-line guard must not fire when the diff does target that line, got: {}",
+            !rejection
+                .content
+                .contains("reported `authors` as dead code"),
+            "the dead-code guard must not fire when the diff does name that symbol, got: {}",
             rejection.content
         );
         assert!(rejection.content.contains("Patch apply failed"));
+    }
+
+    // End-to-end wiring for the trace 499/500 loop: a pure deletion of a line that really exists,
+    // wrapped in context lines written in the wrong order, must now be re-anchored and applied
+    // instead of rejected. Uses `.gitignore` (tracked, and touched by no other test) as scratch,
+    // restoring it before any assertion so a failure can't leave the repo dirty.
+    #[tokio::test]
+    async fn apply_patch_realigns_a_correct_deletion_whose_context_is_out_of_order() {
+        let before = tokio::fs::read_to_string(".gitignore").await.unwrap();
+        assert!(before.contains("responses"), "test fixture assumption");
+        // `responses` really is in .gitignore, but never adjacent to these lines in this order.
+        let diff = "--- a/.gitignore\n+++ b/.gitignore\n@@ -1,4 +1,3 @@\n tags\n tarpaulin-report.html\n-responses\n docs\n";
+        let mut ctx = Context::new("goal".to_string());
+        let result = Validation::apply_patch(diff, &mut ctx).await.unwrap();
+        let after = tokio::fs::read_to_string(".gitignore").await.unwrap();
+        tokio::fs::write(".gitignore", &before).await.unwrap();
+
+        assert!(
+            matches!(result, Validation::Success),
+            "realignment should have rescued this deletion, got: {result:?}"
+        );
+        // Removed the named line, and only that line.
+        assert!(!after.lines().any(|l| l.trim() == "responses"));
+        assert_eq!(after.lines().count(), before.lines().count() - 1);
+        for line in before.lines().filter(|l| l.trim() != "responses") {
+            assert!(after.lines().any(|a| a == line), "lost line: {line}");
+        }
     }
 }

@@ -69,18 +69,38 @@ Contributors found via real trace evidence (`qwen2.5-coder:14b`) and fixed, 2026
     round-1-4's Architect wrote `FILES: None` despite CHOICE correctly naming the target file -
     the same already-logged pattern from trace 484, not fixed here.
 13. [x] Not live-verified. Root-caused from trace 497 (another `fix_one_clippy_lint` run, same
-    shape as #12 but a different bug): Architect's plan correctly named the clippy-flagged field
-    (`options`, line 82), but the Worker's diff removed a different field (`cfg`, line 85) in the
-    same struct three rounds running - `diffy::apply` accepted it fine (still syntactically
-    valid), so it only surfaced as a confusing Tester compile error each time, burning the whole
-    iteration budget. New deterministic guard in `Validation::apply_patch`: cross-checks the
-    diff's actually-removed line numbers against any `file:line` this run's own CargoClippy result
-    flagged for that file, before ever calling `diffy::apply` - rejects with a specific
-    "wrong line" message instead of spending a Tester round-trip to find out. No-op for any run
-    that never called CargoClippy. protocol.rs (`diagnostic_lines_for`, `removed_line_numbers`).
-    Also observed, not fixed: traces 494-497 all ended at round 5 with no archival into
-    successes/ or failures/ - unconfirmed whether this is a real finalize_trace gap or just the
-    maintainer Ctrl-C'ing a run that was visibly stuck; needs a live repro before treating as a bug.
+    shape as #12 but a different bug): clippy flagged `options` as dead, the Architect's plan said
+    to remove `options`, but the Worker's diff removed a different, still-used field (`cfg`) from
+    the same struct three rounds running - a syntactically valid deletion of a real line, so
+    nothing upstream could tell it was wrong and it cost a full Tester round-trip each time to
+    surface as a confusing "no field named cfg" error. Guard in `Validation::apply_patch`: for a
+    pure-deletion diff answering a dead-code warning, at least one removed line must mention the
+    symbol clippy named. Fails open otherwise. protocol.rs (`clippy_dead_code_symbols_for`,
+    `removed_line_texts`).
+
+14. [x] Not live-verified. Regression introduced by #13's first attempt and caught in traces
+    499/500: that guard compared *line numbers* - the diff's computed removed-line offsets vs the
+    `file:line` clippy reported - and so rejected correct edits. The Worker deleted exactly the
+    right line (`options`) but listed the struct's other fields in the wrong order, which shifted
+    the computed offset to 84; the run then looped on "wrong line, re-check the field" (a message
+    that was simply false) for every remaining round. Root cause: model-written `@@` offsets are
+    unreliable by construction - this repo already has to recompute them
+    (`diff_repair::fix_hunk_header_counts`) - so nothing that *rejects* an edit may be derived
+    from them. Guard rewritten to be position-independent (#13 above), plus the actual fix for
+    the reordered-context shape: `diff_repair::realign_pure_deletion_hunks` re-anchors a
+    pure-deletion hunk onto the real location when its removed lines exist in the file exactly
+    once, rebuilding the hunk from the file's own bytes. Only runs after `diffy::apply` has
+    already failed, only for unambiguous single-match pure deletions - never changes *what* is
+    deleted, only *where* it is anchored. Regression test uses the verbatim trace-500 diff.
+
+    Also observed, not fixed: (a) traces 494-500 all ended without archival into successes/ or
+    failures/ - unconfirmed whether a real finalize_trace gap or the maintainer Ctrl-C'ing a
+    visibly stuck run; needs a live repro. (b) "you called CargoClippy again instead of applying
+    a change" fires in round 1 of all three of traces 498/499/500 (and again in 500 round 3),
+    burning roughly half the round budget before any diff problem matters - a distinct bug from
+    #13/#14. (c) every apply_patch rejection is pushed twice into the context, once as `Validator`
+    by protocol.rs and again as `ApplyPatch` by orchestrator.rs:1577 - pre-existing on all
+    rejection paths, pure context bloat.
 
 Two patterns seen live (traces 484/485), not fixed - look like a model-capability limit, not a
 further orchestration bug: Architect suggesting a raw shell command instead of `FILES:` (484);
@@ -98,7 +118,7 @@ Logged, not acted on: maintainer's "add a reason field to every tool_call" idea 
 ROADMAP.md's chain-of-thought Phase 3 item, deferred pending the agentic-evals harness having
 enough scenarios to judge it.
 
-Net: meaningfully improved, not resolved. #1, #2, #5 are live-confirmed; #3/4/6/7/9/10/11/12/13 are
+Net: meaningfully improved, not resolved. #1, #2, #5 are live-confirmed; #3/4/6/7/9/10/11/12/13/14 are
 code-fixed and unit-tested but not yet live-confirmed. The two capability-suspected patterns are
 still open. Whether a real run can land a committed change is still unanswered - keep this
 section until one does.
