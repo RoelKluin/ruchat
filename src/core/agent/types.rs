@@ -49,12 +49,6 @@ fn render_turn_content_for_trace(kind: TurnKind, content: &str) -> String {
     format!("[apply_patch]\n```diff\n{diff}\n```")
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct Issue {
-    pub(crate) source: String,
-    pub(crate) text: String,
-}
-
 // Serialize/Deserialize (in addition to the derives every other type here already has): needed
 // so a whole `Context` can round-trip through `core/orchestrator/checkpoint.rs`'s resumable-run
 // checkpoint file — see that module for why (ROADMAP.md Phase 3 "Resumable/crash-resilient
@@ -210,9 +204,6 @@ impl Context {
         let config_str = std::fs::read_to_string(path)?;
         self.context_config = serde_json::from_str(&config_str)?;
         Ok(())
-    }
-    pub(crate) fn is_approved(&self) -> bool {
-        self.turns.iter().all(|t| t.kind != TurnKind::Rejection)
     }
     pub(crate) async fn trace(&mut self, tx: &mpsc::Sender<Result<StreamItem>>, msg: String) {
         if !msg.is_empty() {

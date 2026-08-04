@@ -392,26 +392,6 @@ impl Validation {
             }
         }
     }
-    pub(crate) async fn run_cargo_check() -> Result<Self> {
-        let mut cmd = Command::new("cargo");
-        cmd.args(["check"]);
-        crate::orchestrator::cargo::limit_resources(&mut cmd, 30);
-        let output = tokio::time::timeout(Duration::from_secs(30), cmd.output()).await;
-        match output {
-            Ok(Ok(output)) if output.status.success() => Ok(Validation::Success),
-            Ok(Ok(output)) => {
-                let err = String::from_utf8_lossy(&output.stderr).to_string();
-                Ok(Validation::Failure(err))
-            }
-            Ok(Err(e)) => Ok(Validation::Failure(format!(
-                "Failed to execute cargo check: {e}"
-            ))),
-            Err(_) => Ok(Validation::Failure(
-                "Cargo check timed out after 30s".into(),
-            )),
-        }
-    }
-
     pub(crate) async fn run_build_and_test(cancel: &CancellationToken) -> Result<BuildReport> {
         let mut check_cmd = Command::new("cargo");
         check_cmd.args(["check", "--message-format=json"]);

@@ -61,12 +61,13 @@ fn set_rlimit(resource: libc::__rlimit_resource_t, limit: u64) -> std::io::Resul
     }
 }
 
-/// Read-only compile check, reusing the same 30s-timeout pattern as
-/// `protocol::Validation::run_cargo_check`. Distinct call site: this is a
-/// Worker-invoked, on-demand inspection (no rejection/turn semantics),
-/// whereas `Validation::run_build_and_test` is the automatic `Stage::Test`
-/// gate. Kept as two functions rather than merged to avoid coupling the
-/// Tester's rejection flow to what the Worker sees mid-Implement.
+/// Read-only compile check, 30s-timeout. Distinct from
+/// `protocol::Validation::run_build_and_test` (the automatic `Stage::Test`
+/// gate, with rejection/turn semantics): this is a Worker-invoked, on-demand
+/// inspection, kept separate to avoid coupling the Tester's rejection flow
+/// to what the Worker sees mid-Implement. (A third, near-duplicate
+/// `Validation::run_cargo_check` this comment used to also reference was
+/// removed 2026-08-04 — genuinely dead code, zero call sites.)
 pub(crate) async fn cargo_check() -> Result<String> {
     let mut cmd = Command::new("cargo");
     cmd.args(["check", "--message-format=short"]);
