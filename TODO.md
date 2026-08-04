@@ -66,14 +66,30 @@ live-run evidence attached, not just remove the bullet.
       round 5, the Worker's `apply_patch` diff omitted the mandatory `--- a/<file>`/`+++ b/<file>` header lines
       entirely (just a bare `@@ ... @@` hunk), so `apply_patch`'s existing "refused: this diff has no header" check
       correctly rejected it — with no round left to retry. The same missing-header signature also appears in
-      `ruchat_traces/failures/ruchat_trace_66.md`, so it's a real, recurring pattern, not a one-off. Not fixed this
-      session — worth investigating next: either strengthening `worker.md`'s diff-format instructions, or having
-      `apply_patch` infer the header from the plan's `FILES:` line when a diff has hunks but no header at all,
-      instead of only refusing it.
+      `ruchat_traces/failures/ruchat_trace_66.md`, so it's a real, recurring pattern, not a one-off.
+    - **Missing-header contributor: fixed in code and unit-tested, live verification still outstanding
+      (2026-08-04).** New `ensure_diff_has_file_header` (`src/core/agent/protocol.rs`) runs alongside the existing
+      `normalize_diff_hunk_lines`/`fix_hunk_header_counts` repair-before-parse steps: when a diff has `@@ ... @@`
+      hunk(s) but zero `--- ` header lines, and the plan's `FILES:` line names exactly one file, it synthesizes
+      `--- a/<file>`/`+++ b/<file>` from that instead of refusing outright. Deliberately does nothing when zero or
+      more than one file is planned — no safe way to guess which file a bare hunk belongs to, so the existing
+      "add a header" refusal still fires in that ambiguous case (covered by
+      `apply_patch_does_not_guess_a_header_when_multiple_files_are_planned`). 6 new tests (pure-function cases plus
+      an integration test proving the repair is actually wired in, via the failure reason changing from "no header"
+      to a real context-mismatch once repaired — never reaches a real file write, so it's safe to run against this
+      repo's own tracked files). 288 lib tests pass, clippy clean, fmt clean.
+      - **Not yet live-verified.** A second live run of the same `fix_one_clippy_lint` scenario was started to
+        confirm this against a real model, but the maintainer stopped it before it finished (explicitly: don't run
+        long unattended `ruchat pipe` verification in the background without asking first — see the maintainer's
+        own instruction, now saved as standing guidance). Do not claim this contributor is resolved without a real
+        live run's evidence; ask the maintainer before starting one.
+    - The Worker-recalls-a-read-only-tool-twice contributor (rounds 1-2 of the same trace) is also still open, not
+      attempted this session.
     - **Net assessment: meaningfully improved, not resolved.** The single most severe issue (runs dying almost
-      instantly, well short of their configured budget) is fixed and live-confirmed. The overall "does a real
-      agentic run actually land a committed change" question is still open — keep this section until a live run
-      actually succeeds end-to-end, not just uses its full budget.
+      instantly, well short of their configured budget) is fixed and live-confirmed; the missing-header contributor
+      is fixed in code but not yet live-confirmed; the double-read-only-tool-call contributor is untouched. The
+      overall "does a real agentic run actually land a committed change" question is still open — keep this section
+      until a live run actually succeeds end-to-end, not just uses its full budget.
 
 ## High Priority
 

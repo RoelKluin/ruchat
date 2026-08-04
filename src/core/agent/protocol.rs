@@ -331,6 +331,31 @@ fn count_hunk_body_lines(body: &[&str]) -> (usize, usize) {
     (old, new)
 }
 
+/// Repairs a diff that's missing its `--- a/<file>`/`+++ b/<file>` header entirely — just a bare
+/// `@@ ... @@` hunk (or several) with no header line at all. `diffy::Patch::from_str` needs this
+/// header to know which file the hunks apply to; without it, `apply_patch` used to only ever
+/// refuse and ask the Worker to resubmit with a header added — but real runs showed the Worker
+/// not reliably doing that within its remaining round budget (see TODO.md's pinned reliability
+/// item; this is the second of the two contributors identified there in the live-verified
+/// `fix_one_clippy_lint` run and `ruchat_traces/failures/ruchat_trace_66.md`).
+///
+/// Only repairs when it's unambiguous: zero existing `--- ` lines (a header that's merely
+/// malformed is left alone rather than second-guessed — the multi-file check right after this
+/// runs still needs to see the diff as submitted) AND the plan's `FILES:` line names exactly one
+/// file. With zero or more than one planned file there's no safe way to guess which file a bare
+/// hunk belongs to, so the existing "add a header" refusal below still fires in those cases.
+fn ensure_diff_has_file_header(diff: &str, planned: &[String]) -> String {
+    let already_has_header = diff.lines().any(|l| l.starts_with("--- "));
+    let has_hunk = diff.lines().any(|l| l.starts_with("@@"));
+    if already_has_header || !has_hunk {
+        return diff.to_string();
+    }
+    let [only_file] = planned else {
+        return diff.to_string();
+    };
+    format!("--- a/{only_file}\n+++ b/{only_file}\n{diff}")
+}
+
 /// True if `target` matches one of the plan's declared paths. Matches exactly or by suffix in
 /// either direction (`p.ends_with(target)`/`target.ends_with(p)`) so a plan that names just
 /// `foo.rs` still covers a target resolved as `src/foo.rs`, and vice versa.
@@ -351,6 +376,13 @@ impl Validation {
             ctx.push_turn(TurnKind::Rejection, "Validator", content.clone());
             return Ok(Validation::Failure(content));
         }
+        // Enforced only when the Architect's plan actually declared a `FILES:` scope (see
+        // `Context::planned_files`) — a plan that omits the line doesn't retroactively unlock
+        // anything here, `ensure_diff_has_file_header` only ever acts when it names exactly one
+        // file. Computed once and reused below for the scope check too.
+        let planned = ctx.planned_files();
+        let repaired = ensure_diff_has_file_header(diff_text, &planned);
+        let diff_text = repaired.as_str();
         // `diffy::Patch::from_str` only understands one file's diff (one '--- a/'/'+++ b/'
         // pair, followed by that file's hunks) — a real failure had the Worker concatenate two
         // files' diffs into a single apply_patch call instead of calling apply_patch twice (the
@@ -406,8 +438,8 @@ impl Validation {
         }
         // Enforced only when the Architect's plan actually declared a `FILES:` scope (see
         // `Context::planned_files`) — a plan that omits the line doesn't retroactively block
-        // every patch, since local models don't reliably follow the convention yet.
-        let planned = ctx.planned_files();
+        // every patch, since local models don't reliably follow the convention yet. `planned`
+        // was already computed above for `ensure_diff_has_file_header`, reused here.
         if !planned.is_empty() && !file_in_scope(target, &planned) {
             let content = format!(
                 "refused: '{target}' is not one of the files the plan named with its `FILES:` \
@@ -689,6 +721,104 @@ mod tests {
                 assert!(
                     msg.contains("no '--- a/<file>' header line"),
                     "expected the actionable missing-header message, got: {msg}"
+                );
+            }
+            other => panic!("expected a Failure explaining the missing header, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ensure_diff_has_file_header_synthesizes_one_when_the_plan_names_exactly_one_file() {
+        let diff = "@@ -1,3 +1,3 @@\n line one\n-line two\n+line two changed\n line three\n";
+        let repaired = ensure_diff_has_file_header(diff, &["src/foo.rs".to_string()]);
+        assert!(
+            repaired.starts_with("--- a/src/foo.rs\n+++ b/src/foo.rs\n@@"),
+            "got: {repaired:?}"
+        );
+    }
+
+    #[test]
+    fn ensure_diff_has_file_header_leaves_diff_unchanged_with_zero_or_multiple_planned_files() {
+        let diff = "@@ -1,3 +1,3 @@\n line one\n-line two\n+line two changed\n line three\n";
+        assert_eq!(ensure_diff_has_file_header(diff, &[]), diff);
+        assert_eq!(
+            ensure_diff_has_file_header(
+                diff,
+                &["src/foo.rs".to_string(), "src/bar.rs".to_string()]
+            ),
+            diff
+        );
+    }
+
+    #[test]
+    fn ensure_diff_has_file_header_does_not_second_guess_an_existing_header() {
+        let diff = "--- a/src/foo.rs\n+++ b/src/foo.rs\n@@ -1,1 +1,1 @@\n-x\n+y\n";
+        assert_eq!(
+            ensure_diff_has_file_header(diff, &["src/bar.rs".to_string()]),
+            diff
+        );
+    }
+
+    #[test]
+    fn ensure_diff_has_file_header_leaves_a_diff_with_no_hunk_at_all_unchanged() {
+        let diff = "not a diff at all";
+        assert_eq!(
+            ensure_diff_has_file_header(diff, &["src/foo.rs".to_string()]),
+            diff
+        );
+    }
+
+    // Regression: the second of the two contributors found in the live-verified
+    // `fix_one_clippy_lint` run documented in TODO.md's pinned reliability item — the Worker's
+    // diff omitted the mandatory header entirely, and used to always get refused outright even
+    // when the plan unambiguously named the one file it must be. `ensure_diff_has_file_header`
+    // now synthesizes it in that case; this test proves the repair actually reaches this call
+    // site (not just correct in isolation) by checking the failure reason changed from "no
+    // header" to a real context-mismatch — the content is still fabricated on purpose, so this
+    // never reaches `diffy::apply`'s success path (would write to the real tracked file).
+    #[tokio::test]
+    async fn apply_patch_synthesizes_a_missing_header_when_the_plan_names_exactly_one_file() {
+        let diff = "@@ -1,3 +1,3 @@\n totally made up line one\n totally made up line two\n-totally made up line three\n+totally made up line three, changed\n";
+        let mut ctx = Context::new("goal".to_string());
+        ctx.push_turn(TurnKind::Plan, "Architect", "FILES: Cargo.toml".to_string());
+        match Validation::apply_patch(diff, &mut ctx).await.unwrap() {
+            Validation::Failure(_) => {
+                let rejection = ctx
+                    .turns
+                    .iter()
+                    .find(|t| t.kind == TurnKind::Rejection)
+                    .expect("a failed apply should push a rejection");
+                assert!(
+                    rejection.content.contains("real current content"),
+                    "expected the header to have been synthesized, reaching the \
+                    context-mismatch stage instead of the missing-header refusal, got: {}",
+                    rejection.content
+                );
+            }
+            other => panic!(
+                "expected the patch to fail on the (fabricated) content mismatch, got: {other:?}"
+            ),
+        }
+    }
+
+    // The ambiguous case: with more than one planned file, there's no safe way to guess which
+    // one a bare hunk belongs to, so the missing-header refusal must still fire exactly as
+    // before rather than guessing the wrong file.
+    #[tokio::test]
+    async fn apply_patch_does_not_guess_a_header_when_multiple_files_are_planned() {
+        let diff = "@@ -1,3 +1,3 @@\n totally made up line one\n totally made up line two\n-totally made up line three\n+totally made up line three, changed\n";
+        let mut ctx = Context::new("goal".to_string());
+        ctx.push_turn(
+            TurnKind::Plan,
+            "Architect",
+            "FILES: Cargo.toml, README.md".to_string(),
+        );
+        match Validation::apply_patch(diff, &mut ctx).await.unwrap() {
+            Validation::Failure(msg) => {
+                assert!(
+                    msg.contains("no '--- a/<file>' header line"),
+                    "expected the missing-header refusal since which of two files is \
+                    ambiguous, got: {msg}"
                 );
             }
             other => panic!("expected a Failure explaining the missing header, got: {other:?}"),
