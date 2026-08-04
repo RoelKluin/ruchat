@@ -194,7 +194,7 @@ pub(crate) async fn git_log(path: Option<&str>, max_count: Option<u32>) -> Resul
 
 /// Read-only `git blame --line-porcelain` for a single file.
 pub(crate) async fn git_blame(path: &str) -> Result<String> {
-    run_git_command_capture(vec!["blame", "--line-porcelain", path]).await
+    run_git_command_capture(vec!["blame", "--line-porcelain", "--", path]).await
 }
 
 /// Read-only `git diff`, optionally `--staged` and/or scoped to `path`.

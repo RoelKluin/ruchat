@@ -22,7 +22,7 @@ Last updated: 2026-08-04
 - [x] Fixed 2026-08-04: `.github/workflows/ci.yml`'s `push` trigger targeted `main`, repo's actual branch is `master` — CI silently never ran on direct pushes. One-line fix.
 - [x] Fixed 2026-08-04: `cargo_dupes` now calls `limit_resources` like `cargo_check`/`cargo_clippy` do.
 - [ ] **LOW**: `ripgrep` (`orchestrator/search.rs`) has no wall-clock timeout at all, unlike every other subprocess tool in this file/`cargo.rs` (20-30s) — a slow path/glob combination could hang a round indefinitely. Independent of the containment/injection fix above.
-- [ ] **LOW**: `git_blame` (`orchestrator/git.rs:194-196`) omits the `--` separator before `path` that `git_log`/`git_diff`/`git_search_history` all correctly use — no known RCE-capable `git blame` flag, but worth normalizing for consistency with the pattern just fixed for `ripgrep`.
+- [x] Fixed 2026-08-04: `git_blame` now inserts `--` before `path`, matching `git_log`/`git_diff`.
 - [ ] **LOW**: `AnthropicArgs` (the CLI/config struct, distinct from `AnthropicClient` which already has a manual redacting `Debug`) still derives plain `Debug` over a raw `api_key: Option<String>` — no current `{:?}` call site dumps it, so not actively exploitable today, but one debug-print away from a leak. Mirror `AnthropicClient`'s manual impl.
 
 ### 4. TUI Chat
