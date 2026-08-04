@@ -193,22 +193,48 @@ impl Orchestrator {
         )
         .await
         {
-            let mut client_config = ChromaClientConfigArgs::default();
-            lib.remove_str("chroma_client").and_then(|s| {
-                let val = s.parse::<serde_json::Value>()?;
-                client_config.update_from_json(&val).map_err(|e| {
-                    // Deliberately not logging `s` itself: `chroma_client` config legitimately
-                    // carries `chroma_token` (a secret), and the parse error already includes
-                    // enough position/context to debug without echoing the raw string.
-                    tracing::error!(error = ?e, "Failed to parse chroma_client config as JSON");
-                    e
-                }).map_err(RuChatError::AnyhowError)
-            })?;
-            let concrete_client = client_config
-                .create_client(cfg)
-                .await
-                .map_err(RuChatError::AnyhowError)?;
-            client = Some(Arc::new(concrete_client) as Arc<dyn VectorStore>);
+            // `vector_provider` (Librarian role config key, mirrors `EmbedArgs`'s
+            // `--vector-provider`) picks which backend `chroma_client`/`sqlite_vec_client`
+            // below is interpreted as — defaults to Chroma, unchanged from before this key
+            // existed.
+            let provider = lib
+                .remove_str("vector_provider")
+                .ok()
+                .and_then(|s| serde_json::from_value(serde_json::Value::String(s)).ok())
+                .unwrap_or(crate::VectorProvider::Chroma);
+            let concrete_client: Arc<dyn VectorStore> = match provider {
+                crate::VectorProvider::Chroma => {
+                    let mut client_config = ChromaClientConfigArgs::default();
+                    lib.remove_str("chroma_client").and_then(|s| {
+                        let val = s.parse::<serde_json::Value>()?;
+                        client_config.update_from_json(&val).map_err(|e| {
+                            // Deliberately not logging `s` itself: `chroma_client` config
+                            // legitimately carries `chroma_token` (a secret), and the parse
+                            // error already includes enough position/context to debug without
+                            // echoing the raw string.
+                            tracing::error!(error = ?e, "Failed to parse chroma_client config as JSON");
+                            e
+                        }).map_err(RuChatError::AnyhowError)
+                    })?;
+                    Arc::new(
+                        client_config
+                            .create_client(cfg)
+                            .await
+                            .map_err(RuChatError::AnyhowError)?,
+                    ) as Arc<dyn VectorStore>
+                }
+                crate::VectorProvider::SqliteVec => {
+                    let mut client_config = crate::sqlite_vec::SqliteVecClientConfigArgs::default();
+                    if let Ok(s) = lib.remove_str("sqlite_vec_client") {
+                        let val: serde_json::Value = s
+                            .parse()
+                            .map_err(|e: serde_json::Error| RuChatError::AnyhowError(e.into()))?;
+                        client_config.update_from_json(&val)?;
+                    }
+                    Arc::new(client_config.create_client().await?) as Arc<dyn VectorStore>
+                }
+            };
+            client = Some(concrete_client);
 
             librarian = Some(lib);
         }
@@ -233,7 +259,9 @@ impl Orchestrator {
             && let Some(embed_args) = worker.embed_args.as_ref()
             && let Ok(concrete_client) = embed_args.client(cfg).await
         {
-            client = Some(Arc::new(concrete_client) as Arc<dyn VectorStore>);
+            // `EmbedArgs::client` already returns `Arc<dyn VectorStore>` (and already respects
+            // `vector_provider`) — no extra wrapping needed here.
+            client = Some(concrete_client);
         }
 
         Ok(Self {
@@ -1494,7 +1522,7 @@ fn looks_like_placeholder(value: &Value) -> Option<String> {
 mod tests {
     use super::*;
     use crate::agent::llm_client::fake_vector_store::FakeVectorStore;
-    use crate::agent::llm_client::FakeLlmClient;
+    use crate::agent::llm_client::{FakeLlmClient, VectorCollection};
     use chroma::types::QueryResponse;
     use serde_json::json;
 
@@ -2219,6 +2247,63 @@ mod tests {
             recorded.as_slice(),
             ["repo_src-all-minilm_l6-v2"],
             "expected the configured collection to be queried, not the literal \"default\""
+        );
+    }
+
+    // Exercises `Orchestrator::new`'s actual branch-selection logic for
+    // `Librarian.vector_provider` (unlike every other Librarian test above,
+    // which goes through `build_test_orchestrator`'s hand-built bypass
+    // specifically to avoid constructing a real Chroma client) — this is the
+    // one test that runs the real constructor end-to-end for the SQLite-vec
+    // path, against a real on-disk database seeded with real content ahead
+    // of time (no live Ollama needed for the embeddings themselves; raw
+    // vectors are enough to prove the KNN round trip through the whole
+    // `Orchestrator::new` -> `self.client` -> `query_collection` chain).
+    #[tokio::test]
+    async fn orchestrator_new_builds_a_working_sqlite_vec_client_when_librarian_requests_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("librarian.sqlite3");
+
+        {
+            let client = crate::sqlite_vec::SqliteVecClient::open(&db_path).unwrap();
+            let collection = client.collection("notes").unwrap();
+            collection
+                .add(
+                    vec!["a".into()],
+                    vec![vec![1.0, 0.0]],
+                    Some(vec![Some("seeded real content".into())]),
+                    None,
+                )
+                .await
+                .unwrap();
+        }
+
+        let mut config = base_config();
+        config["Librarian"] = json!({
+            "model": "fake",
+            "vector_provider": "sqlite-vec",
+            "sqlite_vec_client": { "sqlite_vec_path": db_path.to_str().unwrap() },
+        });
+
+        let orchestrator = Orchestrator::new(
+            config,
+            Arc::new(FakeLlmClient::new(vec![])),
+            Arc::new(FakeLlmClient::new(vec![])),
+            &json!({}),
+        )
+        .await
+        .unwrap();
+
+        let client = orchestrator
+            .client
+            .expect("Librarian's sqlite-vec client should have been built");
+        let response = client
+            .query_collection("notes", vec![vec![0.9, 0.1]], Some(1), None, None, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            response.documents.unwrap()[0],
+            vec![Some("seeded real content".to_string())]
         );
     }
 
