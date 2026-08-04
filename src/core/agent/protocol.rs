@@ -371,8 +371,20 @@ impl Validation {
                 // round-trip that may not even be available (`retrieve_budget` could already be
                 // exhausted) — showing the real content directly in this same rejection lets it
                 // write a correct diff on the very next attempt instead.
-                let shown: String = original.chars().take(MAX_SHOWN_ORIGINAL_CHARS).collect();
-                let truncated_note = if original.chars().count() > MAX_SHOWN_ORIGINAL_CHARS {
+                // Line-numbered (`grep -n`/`ripgrep` style: "N:content") rather than plain text
+                // — the model needs to write not just matching context lines but an accurate
+                // `@@ -a,b +c,d @@` hunk header, and a mismatched hunk header is exactly as
+                // fatal to `diffy::apply` as mismatched context text. Numbering the shown
+                // content lets it read the correct starting line number directly instead of
+                // guessing that too.
+                let numbered: String = original
+                    .lines()
+                    .enumerate()
+                    .map(|(i, line)| format!("{}:{line}", i + 1))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let shown: String = numbered.chars().take(MAX_SHOWN_ORIGINAL_CHARS).collect();
+                let truncated_note = if numbered.chars().count() > MAX_SHOWN_ORIGINAL_CHARS {
                     format!(
                         "\n... (truncated, {} bytes total — request a narrower range with \
                         read_file if you need more)",
@@ -384,8 +396,9 @@ impl Validation {
                 let content = format!(
                     "Patch apply failed on {target}: {e}\n\nThis means the diff's context \
                     lines don't match {target}'s actual current content. Here is the file's \
-                    real current content — write your next diff's context lines to match this \
-                    exactly, don't guess:\n\n{shown}{truncated_note}"
+                    real current content, with line numbers (N:content) — write your next \
+                    diff's context lines AND its @@ -a,b +c,d @@ hunk header's starting line \
+                    number to match this exactly, don't guess:\n\n{shown}{truncated_note}"
                 );
                 ctx.push_turn(TurnKind::Rejection, "Validator", content);
                 Ok(Validation::Failure(e.to_string()))
@@ -718,5 +731,31 @@ mod tests {
             }
             other => panic!("expected the patch to fail to apply, got: {other:?}"),
         }
+    }
+
+    // Regression: the shown-real-content-on-mismatch rejection used to be plain, unnumbered
+    // text — the model could match context lines but had no way to read the correct `@@ -a,b
+    // +c,d @@` hunk header starting line number off it, since it wasn't shown at all. Now
+    // formatted `grep -n`/`ripgrep`-style ("N:content") so both the context text AND the hunk
+    // header's line number can be copied directly instead of guessed.
+    #[tokio::test]
+    async fn apply_patch_shows_line_numbers_in_the_real_content_on_mismatch() {
+        let mut ctx = Context::new("goal".to_string());
+        let diff = "--- a/Cargo.toml\n+++ b/Cargo.toml\n@@ -1,3 +1,3 @@\n totally made up line one\n totally made up line two\n-totally made up line three\n+totally made up line three, changed\n";
+        let result = Validation::apply_patch(diff, &mut ctx).await.unwrap();
+        let Validation::Failure(_) = result else {
+            panic!("expected the patch to fail to apply, got: {result:?}");
+        };
+        let rejection = ctx
+            .turns
+            .iter()
+            .find(|t| t.kind == TurnKind::Rejection)
+            .expect("a failed apply should push a rejection");
+        // Cargo.toml's first real line is "[package]" — must appear as "1:[package]", not bare.
+        assert!(
+            rejection.content.contains("1:[package]"),
+            "expected a line-numbered first line, got: {}",
+            rejection.content
+        );
     }
 }
