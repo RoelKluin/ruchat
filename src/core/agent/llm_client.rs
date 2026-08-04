@@ -1,12 +1,13 @@
 use crate::retry_transient;
 use crate::{Result, RuChatError};
 use async_trait::async_trait;
-use chroma::types::{IncludeList, QueryResponse, Where};
-use chroma::ChromaHttpClient;
+use chroma::types::{IncludeList, Metadata, QueryResponse, UpdateMetadata, Where};
+use chroma::{ChromaCollection, ChromaHttpClient};
 use ollama_rs::generation::chat::{request::ChatMessageRequest, ChatMessage, ChatMessageResponse};
 use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
 use ollama_rs::generation::embeddings::GenerateEmbeddingsResponse;
 use ollama_rs::Ollama;
+use std::collections::HashSet;
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio_stream::Stream;
@@ -138,6 +139,120 @@ impl VectorStore for ChromaHttpClient {
                 .await
                 .map_err(RuChatError::from)
         })
+    }
+}
+
+/// The write-side counterpart to `VectorStore` — what `embed.rs`'s
+/// `embed_chunks` (shared by `ruchat index`/`ruchat embed`/history ingestion)
+/// needs to populate a collection, abstracted the same way `VectorStore`
+/// abstracts reading one. Added alongside the `sqlite-vec` backend
+/// (`providers/vector/sqlite_vec`) so that backend is genuinely usable
+/// standalone — not just queryable during a stage-machine run — without
+/// duplicating `embed_chunks`'s chunking/ID-hashing/dedup logic in a second
+/// ingestion path. Narrower than `ChromaCollection`'s own API: only the
+/// operations `embed_chunks` actually calls, with `GetResponse` collapsed to
+/// the one thing it reads out of it (`existing_ids`) and the three
+/// AddCollectionRecordsResponse-shaped return values collapsed to `Result<()>`
+/// since none of their fields are used either.
+#[async_trait]
+pub(crate) trait VectorCollection: Send + Sync {
+    async fn existing_ids(&self, ids: Vec<String>) -> Result<HashSet<String>>;
+    async fn add(
+        &self,
+        ids: Vec<String>,
+        embeddings: Vec<Vec<f32>>,
+        documents: Option<Vec<Option<String>>>,
+        metadatas: Option<Vec<Option<Metadata>>>,
+    ) -> Result<()>;
+    async fn update(
+        &self,
+        ids: Vec<String>,
+        embeddings: Option<Vec<Option<Vec<f32>>>>,
+        documents: Option<Vec<Option<String>>>,
+        metadatas: Option<Vec<Option<UpdateMetadata>>>,
+    ) -> Result<()>;
+    async fn upsert(
+        &self,
+        ids: Vec<String>,
+        embeddings: Vec<Vec<f32>>,
+        documents: Option<Vec<Option<String>>>,
+        metadatas: Option<Vec<Option<UpdateMetadata>>>,
+    ) -> Result<()>;
+}
+
+#[async_trait]
+impl VectorCollection for ChromaCollection {
+    async fn existing_ids(&self, ids: Vec<String>) -> Result<HashSet<String>> {
+        Ok(retry_transient!(async {
+            self.get(Some(ids.clone()), None, None, None, None)
+                .await
+                .map(|r| r.ids.into_iter().collect())
+                .map_err(RuChatError::from)
+        })
+        .unwrap_or_default())
+    }
+
+    async fn add(
+        &self,
+        ids: Vec<String>,
+        embeddings: Vec<Vec<f32>>,
+        documents: Option<Vec<Option<String>>>,
+        metadatas: Option<Vec<Option<Metadata>>>,
+    ) -> Result<()> {
+        retry_transient!(async {
+            self.add(
+                ids.clone(),
+                embeddings.clone(),
+                documents.clone(),
+                None,
+                metadatas.clone(),
+            )
+            .await
+            .map_err(RuChatError::ChromaHttpClientError)
+        })?;
+        Ok(())
+    }
+
+    async fn update(
+        &self,
+        ids: Vec<String>,
+        embeddings: Option<Vec<Option<Vec<f32>>>>,
+        documents: Option<Vec<Option<String>>>,
+        metadatas: Option<Vec<Option<UpdateMetadata>>>,
+    ) -> Result<()> {
+        retry_transient!(async {
+            self.update(
+                ids.clone(),
+                embeddings.clone(),
+                documents.clone(),
+                None,
+                metadatas.clone(),
+            )
+            .await
+            .map_err(RuChatError::ChromaHttpClientError)
+        })?;
+        Ok(())
+    }
+
+    async fn upsert(
+        &self,
+        ids: Vec<String>,
+        embeddings: Vec<Vec<f32>>,
+        documents: Option<Vec<Option<String>>>,
+        metadatas: Option<Vec<Option<UpdateMetadata>>>,
+    ) -> Result<()> {
+        retry_transient!(async {
+            self.upsert(
+                ids.clone(),
+                embeddings.clone(),
+                documents.clone(),
+                None,
+                metadatas.clone(),
+            )
+            .await
+            .map_err(RuChatError::ChromaHttpClientError)
+        })?;
+        Ok(())
     }
 }
 
