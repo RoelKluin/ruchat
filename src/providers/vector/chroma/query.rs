@@ -3,8 +3,8 @@ use crate::chroma::r#where::{
     metadata_matches, select_indices, where_needs_client_side_eval, with_metadata_included,
 };
 use crate::chroma::{
-    rerank::{rerank_query_results, RerankWeights},
     ChromaClientConfigArgs, ChromaResponse, IncludeArgs, OutputArgs, WhereArgs,
+    rerank::{RerankWeights, rerank_query_results},
 };
 use crate::ollama::OllamaArgs;
 use crate::{Result, RuChatError};
@@ -202,7 +202,11 @@ impl Query {
 /// filtered by the same kept-index set per batch entry to stay aligned. `pub(crate)` so
 /// `retrieve.rs`'s `execute_query` (structurally the same similarity-search shape as `Query::
 /// query` below, just via a different embedding call) can reuse it instead of duplicating.
-pub(crate) fn filter_query_response(r: &mut QueryResponse, w: &chroma::types::Where, keep_n: usize) {
+pub(crate) fn filter_query_response(
+    r: &mut QueryResponse,
+    w: &chroma::types::Where,
+    keep_n: usize,
+) {
     for i in 0..r.ids.len() {
         let keep_indices: Vec<usize> = (0..r.ids[i].len())
             .filter(|&j| {
@@ -282,8 +286,8 @@ impl QueryArgs {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::llm_client::fake_vector_store::FakeVectorStore;
     use crate::agent::llm_client::FakeLlmClient;
+    use crate::agent::llm_client::fake_vector_store::FakeVectorStore;
     use chroma::types::Metadata;
     use chroma::types::MetadataValue;
 

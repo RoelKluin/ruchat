@@ -1,15 +1,15 @@
+use crate::Result;
+use crate::RuChatError;
 use crate::agent::event::StreamItem;
 use crate::agent::llm_client::LlmClient;
 use crate::core::orchestrator::{DebugBreakpoints, Orchestrator};
-use crate::Result;
-use crate::RuChatError;
 use ollama_rs::generation::chat::ChatMessage;
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::Stream;
 use tokio_stream::StreamExt;
+use tokio_stream::wrappers::ReceiverStream;
 
 pub(crate) type PipelineStream = Pin<Box<dyn Stream<Item = Result<StreamItem>> + Send>>;
 

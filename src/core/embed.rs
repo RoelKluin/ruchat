@@ -9,8 +9,8 @@ use chrono::Utc;
 use clap::{Parser, ValueEnum};
 use log::info;
 use md5::{Digest, Md5};
-use ollama_rs::generation::embeddings::request::{EmbeddingsInput, GenerateEmbeddingsRequest};
 use ollama_rs::Ollama;
+use ollama_rs::generation::embeddings::request::{EmbeddingsInput, GenerateEmbeddingsRequest};
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -117,7 +117,10 @@ impl EmbedArgs {
         match self.vector_provider {
             VectorProvider::Chroma => {
                 let client = self.client_config.create_client(cfg).await?;
-                let collection = self.collection_config.get_collection(&client, "default").await?;
+                let collection = self
+                    .collection_config
+                    .get_collection(&client, "default")
+                    .await?;
                 Ok(Box::new(collection))
             }
             VectorProvider::SqliteVec => {
@@ -366,10 +369,14 @@ impl EmbedArgs {
                 info!("Added records");
             }
             UpsertMode::Update => {
-                let update_embeddings =
-                    Some(final_embeddings.into_iter().map(Some).collect());
+                let update_embeddings = Some(final_embeddings.into_iter().map(Some).collect());
                 collection
-                    .update(final_ids, update_embeddings, docs_to_send, metadatas_to_send)
+                    .update(
+                        final_ids,
+                        update_embeddings,
+                        docs_to_send,
+                        metadatas_to_send,
+                    )
                     .await?;
                 info!("Updated Records");
             }

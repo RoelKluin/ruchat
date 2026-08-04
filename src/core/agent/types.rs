@@ -1,6 +1,6 @@
+use crate::Result;
 use crate::agent::tools::{self, ToolName};
 use crate::agent::{AgentEvent, StreamItem};
-use crate::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -131,11 +131,7 @@ impl Context {
                 continue;
             };
             while let Ok(Some(entry)) = entries.next_entry().await {
-                if let Some(n) = entry
-                    .file_name()
-                    .to_str()
-                    .and_then(parse_trace_index)
-                {
+                if let Some(n) = entry.file_name().to_str().and_then(parse_trace_index) {
                     max_seen = max_seen.max(n);
                 }
             }
@@ -365,7 +361,11 @@ impl Context {
         let context = self.context_view();
         let debug_info = format!(
             "DEBUG INFO FOR ROLE: {role}\n\nGOAL:\n{}\n\nCONTEXT:\n{}\n\nHISTORY:\n{}\n\nDOCUMENTS:\n{}",
-            self.goal, context, self.history_view(u64::MAX), self.documents_view(u64::MAX));
+            self.goal,
+            context,
+            self.history_view(u64::MAX),
+            self.documents_view(u64::MAX)
+        );
         self.trace(tx, debug_info).await;
     }
 
@@ -529,7 +529,10 @@ mod tests {
         // pre-round baseline — `record_patch` must ignore that second, wrong "original".
         let mut ctx = Context::new("goal".to_string());
         ctx.record_patch("src/foo.rs".to_string(), "true original".to_string());
-        ctx.record_patch("src/foo.rs".to_string(), "intermediate patched content".to_string());
+        ctx.record_patch(
+            "src/foo.rs".to_string(),
+            "intermediate patched content".to_string(),
+        );
         assert_eq!(ctx.pending_patches.len(), 1);
         assert_eq!(ctx.pending_patches[0].original, "true original");
     }
@@ -543,8 +546,14 @@ mod tests {
         std::fs::write(&file_b, "patched b").unwrap();
 
         let mut ctx = Context::new("goal".to_string());
-        ctx.record_patch(file_a.to_str().unwrap().to_string(), "original a".to_string());
-        ctx.record_patch(file_b.to_str().unwrap().to_string(), "original b".to_string());
+        ctx.record_patch(
+            file_a.to_str().unwrap().to_string(),
+            "original a".to_string(),
+        );
+        ctx.record_patch(
+            file_b.to_str().unwrap().to_string(),
+            "original b".to_string(),
+        );
 
         let (tx, mut rx) = mpsc::channel(100);
         ctx.revert_pending_patches(&tx).await;
@@ -565,7 +574,11 @@ mod tests {
     #[test]
     fn planned_files_empty_when_plan_has_no_files_line() {
         let mut ctx = Context::new("goal".to_string());
-        ctx.push_turn(TurnKind::Plan, "Architect", "just think about it".to_string());
+        ctx.push_turn(
+            TurnKind::Plan,
+            "Architect",
+            "just think about it".to_string(),
+        );
         assert!(ctx.planned_files().is_empty());
     }
 
@@ -625,9 +638,15 @@ mod tests {
         ctx.push_turn(TurnKind::Implementation, "Worker", tool_call.to_string());
         let body = ctx.trace_body();
         // The escaped form must be gone — this is the actual bug: `\n` as two literal chars.
-        assert!(!body.contains(r"\n-old"), "diff should not contain literal \\n escapes: {body}");
+        assert!(
+            !body.contains(r"\n-old"),
+            "diff should not contain literal \\n escapes: {body}"
+        );
         // And the real newline-separated diff lines must be present instead.
-        assert!(body.contains("-old\n+new"), "expected real newlines in the diff, got: {body}");
+        assert!(
+            body.contains("-old\n+new"),
+            "expected real newlines in the diff, got: {body}"
+        );
     }
 
     // A non-apply_patch turn (or content that doesn't parse as a tool call at all, e.g. a
@@ -641,7 +660,11 @@ mod tests {
             "Worker",
             "```tool_call\n{\"tool\": \"memorize\", \"content\": \"note\"}\n```".to_string(),
         );
-        ctx.push_turn(TurnKind::Rejection, "Validator", "plain rejection text".to_string());
+        ctx.push_turn(
+            TurnKind::Rejection,
+            "Validator",
+            "plain rejection text".to_string(),
+        );
         let body = ctx.trace_body();
         assert!(body.contains(r#"{"tool": "memorize", "content": "note"}"#));
         assert!(body.contains("plain rejection text"));

@@ -107,7 +107,9 @@ pub(crate) async fn cargo_clippy() -> Result<String> {
 pub(crate) async fn cargo_dupes() -> Result<String> {
     let output = tokio::time::timeout(
         Duration::from_secs(20),
-        Command::new("cargo").args(["tree", "--duplicates"]).output(),
+        Command::new("cargo")
+            .args(["tree", "--duplicates"])
+            .output(),
     )
     .await
     .map_err(|_| RuChatError::InternalError("cargo tree timed out after 20s".into()))?

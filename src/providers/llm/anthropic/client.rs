@@ -1,12 +1,12 @@
-use super::sse::{parse_event, SseEffect};
+use super::sse::{SseEffect, parse_event};
 use crate::agent::llm_client::{ChatStream, LlmClient};
 use crate::{Result, RuChatError};
 use async_trait::async_trait;
 use eventsource_stream::Eventsource;
 use futures_util::StreamExt;
 use ollama_rs::generation::chat::{ChatMessage, ChatMessageResponse, MessageRole};
-use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
 use ollama_rs::generation::embeddings::GenerateEmbeddingsResponse;
+use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
 use serde_json::json;
 
 const API_URL: &str = "https://api.anthropic.com/v1/messages";
@@ -130,9 +130,7 @@ impl LlmClient for AnthropicClient {
             async move {
                 let parsed = match item {
                     Ok(event) => parse_event(&event.event, &event.data),
-                    Err(e) => Err(RuChatError::AnthropicError(format!(
-                        "SSE parse error: {e}"
-                    ))),
+                    Err(e) => Err(RuChatError::AnthropicError(format!("SSE parse error: {e}"))),
                 };
                 match parsed {
                     Ok(SseEffect::TextDelta(text)) => Some(Ok(ChatMessageResponse {

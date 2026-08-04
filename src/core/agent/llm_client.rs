@@ -3,10 +3,10 @@ use crate::{Result, RuChatError};
 use async_trait::async_trait;
 use chroma::types::{IncludeList, Metadata, QueryResponse, UpdateMetadata, Where};
 use chroma::{ChromaCollection, ChromaHttpClient};
-use ollama_rs::generation::chat::{request::ChatMessageRequest, ChatMessage, ChatMessageResponse};
-use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
-use ollama_rs::generation::embeddings::GenerateEmbeddingsResponse;
 use ollama_rs::Ollama;
+use ollama_rs::generation::chat::{ChatMessage, ChatMessageResponse, request::ChatMessageRequest};
+use ollama_rs::generation::embeddings::GenerateEmbeddingsResponse;
+use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
 use std::collections::HashSet;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -424,7 +424,9 @@ pub(crate) mod fake_vector_store {
             _ids: Option<Vec<String>>,
             _include: Option<IncludeList>,
         ) -> Result<QueryResponse> {
-            Err(RuChatError::Is("connection refused (simulated Chroma outage)".into()))
+            Err(RuChatError::Is(
+                "connection refused (simulated Chroma outage)".into(),
+            ))
         }
     }
 }

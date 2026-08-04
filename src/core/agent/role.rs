@@ -133,7 +133,9 @@ impl Role {
             Role::Validator => "Identify technical flaws or incomplete logic",
             Role::Critic => "Identify any issues in the work",
             Role::PerformanceCritic => "Identify any performance issues in the work",
-            Role::Scoper => "Determine whether enough repo-specific information is known to plan a solution; if not, specify what to look up",
+            Role::Scoper => {
+                "Determine whether enough repo-specific information is known to plan a solution; if not, specify what to look up"
+            }
             Role::Summarizer => "Compress the history of events into a concise summary",
             Role::Librarian => "Formulate a single vector search query against ChromaDB",
         }

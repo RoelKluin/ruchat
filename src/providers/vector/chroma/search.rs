@@ -1,7 +1,7 @@
 use crate::chroma::{
     ChromaClientConfigArgs, ChromaCollectionConfigArgs, ChromaResponse, OutputArgs,
 };
-use crate::{retry_transient, Result, RuChatError};
+use crate::{Result, RuChatError, retry_transient};
 use chroma::types::SearchPayload;
 use chroma::types::{Key, QueryVector, RankExpr};
 use clap::Parser;

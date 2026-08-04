@@ -2,16 +2,16 @@ use crate::chroma::r#where::{
     filter_get_response, where_needs_client_side_eval, with_metadata_included,
 };
 use crate::chroma::{
-    query::{filter_query_response, CLIENT_FILTER_MAX_FETCH, CLIENT_FILTER_OVERFETCH_FACTOR},
-    rerank::{rerank_query_results, RerankWeights},
     ChromaClientConfigArgs, ChromaCollectionConfigArgs, ChromaResponse, IncludeArgs, OutputArgs,
     WhereArgs,
+    query::{CLIENT_FILTER_MAX_FETCH, CLIENT_FILTER_OVERFETCH_FACTOR, filter_query_response},
+    rerank::{RerankWeights, rerank_query_results},
 };
 use crate::ollama::OllamaArgs;
-use crate::{retry_transient, Result, RuChatError};
+use crate::{Result, RuChatError, retry_transient};
+use chroma::ChromaCollection;
 use chroma::types::SearchPayload;
 use chroma::types::{Key, QueryVector, RankExpr};
-use chroma::ChromaCollection;
 use clap::{Parser, ValueEnum};
 use log::warn;
 use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
@@ -166,7 +166,9 @@ impl RetrieveArgs {
         let mut include_list = self.include.parse()?;
 
         // See `get.rs::GetArgs::get`'s identical fix — same underlying bug, same reasoning.
-        let needs_client_filter = where_cond.as_ref().is_some_and(where_needs_client_side_eval);
+        let needs_client_filter = where_cond
+            .as_ref()
+            .is_some_and(where_needs_client_side_eval);
         let (query_where, fetch_limit, fetch_offset) = if needs_client_filter {
             include_list = Some(with_metadata_included(include_list));
             (None, None, None)
@@ -231,7 +233,9 @@ impl RetrieveArgs {
         let mut include = self.include.parse()?;
 
         // See `query.rs::Query::query`'s identical fix — same underlying bug, same reasoning.
-        let needs_client_filter = where_cond.as_ref().is_some_and(where_needs_client_side_eval);
+        let needs_client_filter = where_cond
+            .as_ref()
+            .is_some_and(where_needs_client_side_eval);
         let requested_n = self.n_results.or(self.limit).unwrap_or(10);
         let (query_where, fetch_n) = if needs_client_filter {
             include = Some(with_metadata_included(include));

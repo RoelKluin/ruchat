@@ -1,7 +1,7 @@
+use crate::Result;
 use crate::agent::event::{AgentEvent, StreamItem};
 use crate::agent::pipeline::PipelineStream;
 use crate::io::Io;
-use crate::Result;
 use tokio_stream::StreamExt;
 
 /// Consumes a `PipelineStream` and renders it to the terminal — shared by

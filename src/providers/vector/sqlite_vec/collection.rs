@@ -35,11 +35,7 @@ fn register_extension_once() {
 /// dialects allow unquoted) closes that off entirely rather than trying to
 /// escape/quote an arbitrary string safely.
 fn validate_collection_name(name: &str) -> Result<()> {
-    if !name.is_empty()
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_')
-    {
+    if !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
         Ok(())
     } else {
         Err(RuChatError::Is(format!(
@@ -63,8 +59,11 @@ impl SqliteVecClient {
     /// for why callers run this via `spawn_blocking`.
     pub(crate) fn open(path: &Path) -> Result<Self> {
         register_extension_once();
-        let conn = Connection::open(path)
-            .map_err(|e| RuChatError::Is(format!("failed to open sqlite-vec database at {path:?}: {e}")))?;
+        let conn = Connection::open(path).map_err(|e| {
+            RuChatError::Is(format!(
+                "failed to open sqlite-vec database at {path:?}: {e}"
+            ))
+        })?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })
@@ -114,7 +113,12 @@ impl SqliteVecCollection {
     /// an already-created `vec0` table (a real dimension mismatch surfaces
     /// naturally as a `sqlite-vec` error on the following `INSERT`, not
     /// here).
-    fn ensure_schema(conn: &Connection, vec_table: &str, meta_table: &str, dim: usize) -> Result<()> {
+    fn ensure_schema(
+        conn: &Connection,
+        vec_table: &str,
+        meta_table: &str,
+        dim: usize,
+    ) -> Result<()> {
         conn.execute_batch(&format!(
             "CREATE VIRTUAL TABLE IF NOT EXISTS {vec_table} USING vec0(embedding float[{dim}]);
              CREATE TABLE IF NOT EXISTS {meta_table} (
@@ -124,7 +128,11 @@ impl SqliteVecCollection {
                  metadata TEXT
              );"
         ))
-        .map_err(|e| RuChatError::Is(format!("failed to create sqlite-vec collection {meta_table:?}: {e}")))
+        .map_err(|e| {
+            RuChatError::Is(format!(
+                "failed to create sqlite-vec collection {meta_table:?}: {e}"
+            ))
+        })
     }
 }
 
@@ -137,11 +145,15 @@ fn embedding_to_json(embedding: &[f32]) -> String {
 }
 
 fn metadata_to_json(metadata: &Option<Metadata>) -> Option<String> {
-    metadata.as_ref().map(|m| serde_json::to_string(m).unwrap_or_default())
+    metadata
+        .as_ref()
+        .map(|m| serde_json::to_string(m).unwrap_or_default())
 }
 
 fn update_metadata_to_json(metadata: &Option<UpdateMetadata>) -> Option<String> {
-    metadata.as_ref().map(|m| serde_json::to_string(m).unwrap_or_default())
+    metadata
+        .as_ref()
+        .map(|m| serde_json::to_string(m).unwrap_or_default())
 }
 
 fn json_to_metadata(json: Option<String>) -> Option<Metadata> {
@@ -170,15 +182,17 @@ impl VectorCollection for SqliteVecCollection {
             }
             let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
             let sql = format!("SELECT id FROM {meta_table} WHERE id IN ({placeholders})");
-            let mut stmt = conn
-                .prepare(&sql)
-                .map_err(|e| RuChatError::Is(format!("sqlite-vec existing_ids query failed: {e}")))?;
+            let mut stmt = conn.prepare(&sql).map_err(|e| {
+                RuChatError::Is(format!("sqlite-vec existing_ids query failed: {e}"))
+            })?;
             let params = rusqlite::params_from_iter(ids.iter());
             let found = stmt
                 .query_map(params, |row| row.get::<_, String>(0))
                 .map_err(|e| RuChatError::Is(format!("sqlite-vec existing_ids query failed: {e}")))?
                 .collect::<std::result::Result<HashSet<String>, _>>()
-                .map_err(|e| RuChatError::Is(format!("sqlite-vec existing_ids row read failed: {e}")))?;
+                .map_err(|e| {
+                    RuChatError::Is(format!("sqlite-vec existing_ids row read failed: {e}"))
+                })?;
             Ok(found)
         })
         .await
@@ -209,16 +223,24 @@ impl VectorCollection for SqliteVecCollection {
                     .and_then(|m| m.get(i))
                     .and_then(|m| metadata_to_json(m));
                 tx.execute(
-                    &format!("INSERT INTO {meta_table} (id, document, metadata) VALUES (?1, ?2, ?3)"),
+                    &format!(
+                        "INSERT INTO {meta_table} (id, document, metadata) VALUES (?1, ?2, ?3)"
+                    ),
                     rusqlite::params![id, doc, meta_json],
                 )
-                .map_err(|e| RuChatError::Is(format!("sqlite-vec add failed for id {id:?} (already exists?): {e}")))?;
+                .map_err(|e| {
+                    RuChatError::Is(format!(
+                        "sqlite-vec add failed for id {id:?} (already exists?): {e}"
+                    ))
+                })?;
                 let rowid = tx.last_insert_rowid();
                 tx.execute(
                     &format!("INSERT INTO {vec_table} (rowid, embedding) VALUES (?1, ?2)"),
                     rusqlite::params![rowid, embedding_to_json(&embeddings[i])],
                 )
-                .map_err(|e| RuChatError::Is(format!("sqlite-vec add failed for id {id:?}: {e}")))?;
+                .map_err(|e| {
+                    RuChatError::Is(format!("sqlite-vec add failed for id {id:?}: {e}"))
+                })?;
             }
             tx.commit()
                 .map_err(|e| RuChatError::Is(format!("sqlite-vec add commit failed: {e}")))?;
@@ -247,28 +269,38 @@ impl VectorCollection for SqliteVecCollection {
                         [id],
                         |row| row.get(0),
                     )
-                    .map_err(|_| RuChatError::Is(format!("sqlite-vec update failed: id {id:?} does not exist")))?;
+                    .map_err(|_| {
+                        RuChatError::Is(format!(
+                            "sqlite-vec update failed: id {id:?} does not exist"
+                        ))
+                    })?;
 
                 if let Some(doc) = documents.as_ref().and_then(|d| d.get(i)) {
                     conn.execute(
                         &format!("UPDATE {meta_table} SET document = ?1 WHERE rowid = ?2"),
                         rusqlite::params![doc, rowid],
                     )
-                    .map_err(|e| RuChatError::Is(format!("sqlite-vec update failed for id {id:?}: {e}")))?;
+                    .map_err(|e| {
+                        RuChatError::Is(format!("sqlite-vec update failed for id {id:?}: {e}"))
+                    })?;
                 }
                 if let Some(meta) = metadatas.as_ref().and_then(|m| m.get(i)) {
                     conn.execute(
                         &format!("UPDATE {meta_table} SET metadata = ?1 WHERE rowid = ?2"),
                         rusqlite::params![update_metadata_to_json(meta), rowid],
                     )
-                    .map_err(|e| RuChatError::Is(format!("sqlite-vec update failed for id {id:?}: {e}")))?;
+                    .map_err(|e| {
+                        RuChatError::Is(format!("sqlite-vec update failed for id {id:?}: {e}"))
+                    })?;
                 }
                 if let Some(Some(embedding)) = embeddings.as_ref().and_then(|e| e.get(i)) {
                     conn.execute(
                         &format!("UPDATE {vec_table} SET embedding = ?1 WHERE rowid = ?2"),
                         rusqlite::params![embedding_to_json(embedding), rowid],
                     )
-                    .map_err(|e| RuChatError::Is(format!("sqlite-vec update failed for id {id:?}: {e}")))?;
+                    .map_err(|e| {
+                        RuChatError::Is(format!("sqlite-vec update failed for id {id:?}: {e}"))
+                    })?;
                 }
             }
             Ok(())
@@ -311,17 +343,25 @@ impl VectorCollection for SqliteVecCollection {
 
                 let rowid = if let Some(rowid) = existing_rowid {
                     tx.execute(
-                        &format!("UPDATE {meta_table} SET document = ?1, metadata = ?2 WHERE rowid = ?3"),
+                        &format!(
+                            "UPDATE {meta_table} SET document = ?1, metadata = ?2 WHERE rowid = ?3"
+                        ),
                         rusqlite::params![doc, meta_json, rowid],
                     )
-                    .map_err(|e| RuChatError::Is(format!("sqlite-vec upsert failed for id {id:?}: {e}")))?;
+                    .map_err(|e| {
+                        RuChatError::Is(format!("sqlite-vec upsert failed for id {id:?}: {e}"))
+                    })?;
                     rowid
                 } else {
                     tx.execute(
-                        &format!("INSERT INTO {meta_table} (id, document, metadata) VALUES (?1, ?2, ?3)"),
+                        &format!(
+                            "INSERT INTO {meta_table} (id, document, metadata) VALUES (?1, ?2, ?3)"
+                        ),
                         rusqlite::params![id, doc, meta_json],
                     )
-                    .map_err(|e| RuChatError::Is(format!("sqlite-vec upsert failed for id {id:?}: {e}")))?;
+                    .map_err(|e| {
+                        RuChatError::Is(format!("sqlite-vec upsert failed for id {id:?}: {e}"))
+                    })?;
                     tx.last_insert_rowid()
                 };
 
@@ -334,13 +374,17 @@ impl VectorCollection for SqliteVecCollection {
                         &format!("UPDATE {vec_table} SET embedding = ?1 WHERE rowid = ?2"),
                         rusqlite::params![embedding_to_json(&embeddings[i]), rowid],
                     )
-                    .map_err(|e| RuChatError::Is(format!("sqlite-vec upsert failed for id {id:?}: {e}")))?;
+                    .map_err(|e| {
+                        RuChatError::Is(format!("sqlite-vec upsert failed for id {id:?}: {e}"))
+                    })?;
                 } else {
                     tx.execute(
                         &format!("INSERT INTO {vec_table} (rowid, embedding) VALUES (?1, ?2)"),
                         rusqlite::params![rowid, embedding_to_json(&embeddings[i])],
                     )
-                    .map_err(|e| RuChatError::Is(format!("sqlite-vec upsert failed for id {id:?}: {e}")))?;
+                    .map_err(|e| {
+                        RuChatError::Is(format!("sqlite-vec upsert failed for id {id:?}: {e}"))
+                    })?;
                 }
             }
             tx.commit()
@@ -427,7 +471,9 @@ impl VectorStore for SqliteVecCollection {
                     )
                     .map_err(|e| RuChatError::Is(format!("sqlite-vec query failed: {e}")))?
                     .collect::<std::result::Result<Vec<_>, _>>()
-                    .map_err(|e| RuChatError::Is(format!("sqlite-vec query row read failed: {e}")))?;
+                    .map_err(|e| {
+                        RuChatError::Is(format!("sqlite-vec query row read failed: {e}"))
+                    })?;
 
                 let mut q_ids = Vec::new();
                 let mut q_docs = Vec::new();
@@ -468,7 +514,11 @@ impl VectorStore for SqliteVecCollection {
                 uris: None,
                 metadatas: Some(out_metas),
                 distances: Some(out_dists),
-                include: include.0.into_iter().filter(|i| *i != Include::Embedding).collect(),
+                include: include
+                    .0
+                    .into_iter()
+                    .filter(|i| *i != Include::Embedding)
+                    .collect(),
             })
         })
         .await
@@ -489,7 +539,14 @@ impl VectorStore for SqliteVecClient {
     ) -> Result<QueryResponse> {
         let collection = self.collection(collection_name)?;
         collection
-            .query_collection(collection_name, embeddings, n_results, r#where, ids, include)
+            .query_collection(
+                collection_name,
+                embeddings,
+                n_results,
+                r#where,
+                ids,
+                include,
+            )
             .await
     }
 }
@@ -557,12 +614,7 @@ mod tests {
         let (_dir, client) = open_temp();
         let collection = client.collection("docs").unwrap();
         collection
-            .add(
-                vec!["a".into()],
-                vec![vec![1.0, 0.0]],
-                None,
-                None,
-            )
+            .add(vec!["a".into()], vec![vec![1.0, 0.0]], None, None)
             .await
             .unwrap();
 
@@ -601,7 +653,12 @@ mod tests {
         let (_dir, client) = open_temp();
         let collection = client.collection("docs").unwrap();
         let err = collection
-            .update(vec!["missing".into()], None, Some(vec![Some("x".into())]), None)
+            .update(
+                vec!["missing".into()],
+                None,
+                Some(vec![Some("x".into())]),
+                None,
+            )
             .await
             .unwrap_err();
         assert!(format!("{err}").contains("does not exist"));
@@ -612,7 +669,12 @@ mod tests {
         let (_dir, client) = open_temp();
         let collection = client.collection("docs").unwrap();
         collection
-            .add(vec!["a".into()], vec![vec![1.0, 0.0]], Some(vec![Some("old".into())]), None)
+            .add(
+                vec!["a".into()],
+                vec![vec![1.0, 0.0]],
+                Some(vec![Some("old".into())]),
+                None,
+            )
             .await
             .unwrap();
 

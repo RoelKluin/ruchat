@@ -1,6 +1,8 @@
-use crate::chroma::r#where::{filter_get_response, where_needs_client_side_eval, with_metadata_included};
+use crate::chroma::r#where::{
+    filter_get_response, where_needs_client_side_eval, with_metadata_included,
+};
 use crate::chroma::{ChromaClientConfigArgs, WhereArgs};
-use crate::{retry_transient, Result, RuChatError};
+use crate::{Result, RuChatError, retry_transient};
 use clap::Parser;
 use log::info;
 use serde_json::Value;
@@ -61,7 +63,10 @@ impl ChromaDeleteArgs {
             // match client-side first (a `get`, scoped to `ids` if given, with metadata forced
             // into the response so there's something to evaluate), then delete that explicit
             // ID list instead of passing `where` straight through.
-            if where_clause.as_ref().is_some_and(where_needs_client_side_eval) {
+            if where_clause
+                .as_ref()
+                .is_some_and(where_needs_client_side_eval)
+            {
                 let w = where_clause.as_ref().unwrap().clone();
                 let include = Some(with_metadata_included(None));
                 let mut get_result = retry_transient!(async {

@@ -186,9 +186,8 @@ pub(crate) fn parse_tool_call(
     output: &str,
 ) -> std::result::Result<StructuredToolCall, ToolParseError> {
     static RE: OnceLock<regex::Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| {
-        regex::Regex::new(r"(?is)```(?:tool_call|json)\s*\n(.*?)\n```").unwrap()
-    });
+    let re =
+        RE.get_or_init(|| regex::Regex::new(r"(?is)```(?:tool_call|json)\s*\n(.*?)\n```").unwrap());
 
     if let Some(caps) = re.captures(output) {
         let json_str = caps.get(1).ok_or(ToolParseError::NotFound)?.as_str();

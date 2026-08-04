@@ -42,9 +42,10 @@ fn walk_files(root: &Path, exts: &[&str], out: &mut Vec<PathBuf>) -> std::io::Re
             }
             walk_files(&path, exts, out)?;
         } else if let Some(ext) = path.extension().and_then(|e| e.to_str())
-            && exts.contains(&ext) {
-                out.push(path);
-            }
+            && exts.contains(&ext)
+        {
+            out.push(path);
+        }
     }
     Ok(())
 }
@@ -181,7 +182,10 @@ fn chunk_by_paragraph(
         .enumerate()
         .map(|(i, (start, end))| {
             let mut m: HashMap<String, UpdateMetadataValue> = HashMap::new();
-            m.insert("file".into(), UpdateMetadataValue::Str(file_rel.to_string()));
+            m.insert(
+                "file".into(),
+                UpdateMetadataValue::Str(file_rel.to_string()),
+            );
             m.insert(
                 "language".into(),
                 UpdateMetadataValue::Str(language.to_string()),
@@ -195,7 +199,10 @@ fn chunk_by_paragraph(
                 UpdateMetadataValue::Str("paragraph".to_string()),
             );
             m.insert("start".into(), UpdateMetadataValue::Int(start as i64));
-            m.insert("end".into(), UpdateMetadataValue::Int(end.max(start) as i64));
+            m.insert(
+                "end".into(),
+                UpdateMetadataValue::Int(end.max(start) as i64),
+            );
             m
         })
         .collect()
@@ -444,9 +451,8 @@ impl IndexArgs {
                         }
                     };
 
-                    let language = language_for_ext(
-                        path.extension().and_then(|e| e.to_str()).unwrap_or(""),
-                    );
+                    let language =
+                        language_for_ext(path.extension().and_then(|e| e.to_str()).unwrap_or(""));
                     let total_lines = text.lines().count();
 
                     let tags = match run_ctags_json(path).await {
@@ -594,9 +600,18 @@ mod tests {
         assert_eq!(bounds, vec![(1, 43), (45, 54)]);
 
         for m in &items {
-            assert_eq!(m.get("kind"), Some(&UpdateMetadataValue::Str("paragraph".into())));
-            assert_eq!(m.get("file"), Some(&UpdateMetadataValue::Str("notes.txt".into())));
-            assert_eq!(m.get("language"), Some(&UpdateMetadataValue::Str("text".into())));
+            assert_eq!(
+                m.get("kind"),
+                Some(&UpdateMetadataValue::Str("paragraph".into()))
+            );
+            assert_eq!(
+                m.get("file"),
+                Some(&UpdateMetadataValue::Str("notes.txt".into()))
+            );
+            assert_eq!(
+                m.get("language"),
+                Some(&UpdateMetadataValue::Str("text".into()))
+            );
         }
     }
 
@@ -624,6 +639,9 @@ mod tests {
             other => panic!("expected Int start/end, got {other:?}"),
         };
         let sliced = lines[(start - 1)..end].join("\n");
-        assert_eq!(sliced, "p5l1\np5l2\np5l3\np5l4\np5l5\np5l6\np5l7\np5l8\np5l9\np5l10");
+        assert_eq!(
+            sliced,
+            "p5l1\np5l2\np5l3\np5l4\np5l5\np5l6\np5l7\np5l8\np5l9\np5l10"
+        );
     }
 }

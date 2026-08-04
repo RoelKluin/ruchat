@@ -4,12 +4,12 @@ mod model;
 pub(super) mod server;
 use crate::Result;
 use clap::Parser;
-use ollama_rs::generation::completion::request::GenerationRequest;
 use ollama_rs::Ollama;
+use ollama_rs::generation::completion::request::GenerationRequest;
 use serde::Deserialize;
 use serde_json::Value;
 
-pub(crate) use model::{get_dynamic_history_limit, ModelArgs};
+pub(crate) use model::{ModelArgs, get_dynamic_history_limit};
 pub(crate) use server::ServerArgs;
 
 #[derive(Parser, Debug, Clone, Default, PartialEq, Deserialize)]
@@ -64,10 +64,7 @@ impl OllamaArgs {
     /// unlike `init`'s `get_model`, which validates against a live Ollama server via
     /// `list_local_models`. Used by `EmbedArgs::embed_model_name` (`core/embed.rs`).
     pub(crate) fn model_name_or(&self, default: &str) -> String {
-        self.model
-            .first_model_name()
-            .unwrap_or(default)
-            .to_string()
+        self.model.first_model_name().unwrap_or(default).to_string()
     }
     /// Subcommand to remove a model from the local Ollama instance.
     ///

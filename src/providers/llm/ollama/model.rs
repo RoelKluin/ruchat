@@ -1,8 +1,8 @@
 use crate::options::merge_options_json;
 use crate::{Result, RuChatError};
 use clap::Parser;
-use ollama_rs::generation::completion::request::GenerationRequest;
 use ollama_rs::Ollama;
+use ollama_rs::generation::completion::request::GenerationRequest;
 use serde_json::Value;
 
 pub(crate) fn get_dynamic_history_limit(model_name: &str) -> u64 {
@@ -328,13 +328,22 @@ mod build_generation_request_tests {
     // way an explicit `Some("")` already did.
     #[test]
     fn resolve_model_arg_falls_back_to_a_real_default_when_nothing_was_given() {
-        assert_eq!(resolve_model_arg(None, "all-minilm:l6-v2"), Some("all-minilm:l6-v2"));
-        assert_eq!(resolve_model_arg(Some(""), "all-minilm:l6-v2"), Some("all-minilm:l6-v2"));
+        assert_eq!(
+            resolve_model_arg(None, "all-minilm:l6-v2"),
+            Some("all-minilm:l6-v2")
+        );
+        assert_eq!(
+            resolve_model_arg(Some(""), "all-minilm:l6-v2"),
+            Some("all-minilm:l6-v2")
+        );
     }
 
     #[test]
     fn resolve_model_arg_prefers_an_explicit_value_over_the_default() {
-        assert_eq!(resolve_model_arg(Some("qwen2.5-coder:14b"), "all-minilm:l6-v2"), Some("qwen2.5-coder:14b"));
+        assert_eq!(
+            resolve_model_arg(Some("qwen2.5-coder:14b"), "all-minilm:l6-v2"),
+            Some("qwen2.5-coder:14b")
+        );
     }
 
     // `delete_model`/`pull` pass `default = ""` deliberately — there's no sensible model to
@@ -346,4 +355,3 @@ mod build_generation_request_tests {
         assert_eq!(resolve_model_arg(Some(""), ""), None);
     }
 }
-

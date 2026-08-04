@@ -26,7 +26,9 @@ pub(crate) async fn summarize_retrieved_documents(
     docs: &str,
 ) -> Result<String> {
     if docs.trim().is_empty() {
-        return Err(RuChatError::Is("empty retrieved documents, nothing to summarize".into()));
+        return Err(RuChatError::Is(
+            "empty retrieved documents, nothing to summarize".into(),
+        ));
     }
     let system = "You are compressing retrieved search results from a code/documentation \
         vector database before they reach a coding agent's prompt, to save tokens. The results \
@@ -58,7 +60,9 @@ pub(crate) async fn summarize_retrieved_documents(
 
     let generated = generated.trim().to_string();
     if generated.is_empty() {
-        Err(RuChatError::Is("LLM returned an empty document summary".into()))
+        Err(RuChatError::Is(
+            "LLM returned an empty document summary".into(),
+        ))
     } else {
         Ok(generated)
     }
@@ -71,12 +75,17 @@ mod tests {
 
     #[tokio::test]
     async fn summarize_retrieved_documents_returns_the_trimmed_llm_response() {
-        let ollama = FakeLlmClient::new(vec!["  Condensed: fn foo() -> Result<()> lives in \
-            src/lib.rs.  "]);
+        let ollama = FakeLlmClient::new(vec![
+            "  Condensed: fn foo() -> Result<()> lives in \
+            src/lib.rs.  ",
+        ]);
         let summary = summarize_retrieved_documents(&ollama, "any-model", "find foo", "raw docs")
             .await
             .unwrap();
-        assert_eq!(summary, "Condensed: fn foo() -> Result<()> lives in src/lib.rs.");
+        assert_eq!(
+            summary,
+            "Condensed: fn foo() -> Result<()> lives in src/lib.rs."
+        );
     }
 
     #[tokio::test]

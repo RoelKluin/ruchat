@@ -132,7 +132,11 @@ mod tests {
         let mut ctx = Context::new("fix the flaky test".to_string());
         ctx.round = 3;
         ctx.trace_index = 7;
-        ctx.push_turn(TurnKind::Plan, "Architect", "Plan: do the thing.".to_string());
+        ctx.push_turn(
+            TurnKind::Plan,
+            "Architect",
+            "Plan: do the thing.".to_string(),
+        );
         ctx.pending_patches.push(PendingPatch {
             path: "src/lib.rs".to_string(),
             original: "original content".to_string(),
@@ -168,7 +172,12 @@ mod tests {
         let result = Checkpoint::load(&path).await;
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("no checkpoint found"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("no checkpoint found")
+        );
     }
 
     #[tokio::test]
@@ -180,7 +189,12 @@ mod tests {
         let result = Checkpoint::load(&path).await;
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not a valid checkpoint"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("not a valid checkpoint")
+        );
     }
 
     #[tokio::test]
@@ -193,7 +207,10 @@ mod tests {
 
         Checkpoint::clear(&path).await;
 
-        assert!(!path.exists(), "checkpoint file should be gone after clear()");
+        assert!(
+            !path.exists(),
+            "checkpoint file should be gone after clear()"
+        );
     }
 
     #[tokio::test]

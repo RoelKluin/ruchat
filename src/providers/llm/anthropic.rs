@@ -2,8 +2,8 @@ pub(crate) mod client;
 pub(crate) mod sse;
 
 use crate::{Result, RuChatError};
-pub(crate) use client::AnthropicClient;
 use clap::Parser;
+pub(crate) use client::AnthropicClient;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -37,7 +37,11 @@ pub(crate) struct AnthropicArgs {
 
     /// Maximum tokens Claude may generate for one response — required by the Messages API
     /// (unlike Ollama, which has no equivalent mandatory cap).
-    #[arg(long, default_value_t = 4096, help_heading = "Anthropic (Claude) Configuration")]
+    #[arg(
+        long,
+        default_value_t = 4096,
+        help_heading = "Anthropic (Claude) Configuration"
+    )]
     anthropic_max_tokens: u32,
 
     #[arg(long, help_heading = "Anthropic (Claude) Configuration")]
@@ -138,7 +142,12 @@ mod tests {
         };
         let result = args.build_client(&json!({}));
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("no Anthropic API key"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("no Anthropic API key")
+        );
     }
 
     #[test]

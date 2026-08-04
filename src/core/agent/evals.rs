@@ -21,11 +21,11 @@
 //! signal to look at the relevant `agent_role/*.md` template first, same as any other real-run
 //! bug report in this project's history.
 
+use super::Agent;
 use super::json_extract::strip_json_fences;
 use super::types::{Context, TurnKind};
-use super::Agent;
 use ollama_rs::Ollama;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
 fn eval_model() -> String {
@@ -89,7 +89,10 @@ async fn agent_eval_validator_rejects_a_narrative_walkthrough() {
     let verdict: Value = serde_json::from_str(stripped).unwrap_or_else(|e| {
         panic!("Validator did not return valid JSON: {e}\nraw response:\n{raw}")
     });
-    let verdict_str = verdict["verdict"].as_str().unwrap_or_default().to_uppercase();
+    let verdict_str = verdict["verdict"]
+        .as_str()
+        .unwrap_or_default()
+        .to_uppercase();
     assert_eq!(
         verdict_str, "REJECTED",
         "expected the Validator to reject a narrative walkthrough with no tool call, got: {raw}"
@@ -140,7 +143,11 @@ async fn agent_eval_architect_does_not_repeat_a_choice_the_real_content_disprove
     ctx.round = 1;
     ctx.push_turn(TurnKind::Plan, "Architect", wrong_plan.to_string());
     ctx.push_turn(TurnKind::Implementation, "Worker", bad_diff.to_string());
-    ctx.push_turn(TurnKind::Rejection, "ApplyPatch", real_content_rejection.to_string());
+    ctx.push_turn(
+        TurnKind::Rejection,
+        "ApplyPatch",
+        real_content_rejection.to_string(),
+    );
     ctx.round = 2;
 
     let new_plan = run_eval("architect", &mut ctx).await;

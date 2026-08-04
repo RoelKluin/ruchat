@@ -186,10 +186,7 @@ fn normalize_diff_hunk_lines(diff: &str) -> String {
             in_hunk = false;
         } else if trimmed.starts_with("@@") {
             in_hunk = true;
-        } else if in_hunk
-            && !trimmed.is_empty()
-            && !trimmed.starts_with([' ', '+', '-', '\\'])
-        {
+        } else if in_hunk && !trimmed.is_empty() && !trimmed.starts_with([' ', '+', '-', '\\']) {
             out.push(' ');
         }
         out.push_str(line);
@@ -419,15 +416,12 @@ impl Validation {
         let mut check_cmd = Command::new("cargo");
         check_cmd.args(["check", "--message-format=json"]);
         crate::orchestrator::cargo::limit_resources(&mut check_cmd, 60);
-        let check = tokio::time::timeout(
-            Duration::from_secs(60),
-            async {
-                tokio::select! {
-                    out = check_cmd.output() => Ok(out),
-                    _ = cancel.cancelled() => Err(()),
-                }
-            },
-        )
+        let check = tokio::time::timeout(Duration::from_secs(60), async {
+            tokio::select! {
+                out = check_cmd.output() => Ok(out),
+                _ = cancel.cancelled() => Err(()),
+            }
+        })
         .await;
         let (compiled, parsed_diagnostics, mut diagnostics) = match check {
             Ok(Ok(Ok(o))) => {
@@ -455,15 +449,12 @@ impl Validation {
             let mut test_cmd = Command::new("cargo");
             test_cmd.args(["test", "--", "--nocapture"]);
             crate::orchestrator::cargo::limit_resources(&mut test_cmd, 120);
-            let test = tokio::time::timeout(
-                Duration::from_secs(120),
-                async {
-                    tokio::select! {
-                        out = test_cmd.output() => Ok(out),
-                        _ = cancel.cancelled() => Err(()),
-                    }
-                },
-            )
+            let test = tokio::time::timeout(Duration::from_secs(120), async {
+                tokio::select! {
+                    out = test_cmd.output() => Ok(out),
+                    _ = cancel.cancelled() => Err(()),
+                }
+            })
             .await;
             match test {
                 Ok(Ok(Ok(o))) => {
@@ -529,7 +520,12 @@ mod tests {
             compiled: true,
             tests_passed: false,
             diagnostics: "test assertion_failed panicked".to_string(),
-            parsed_diagnostics: vec![diag("warning", "unused variable: `x`", Some("src/bar.rs"), Some(7))],
+            parsed_diagnostics: vec![diag(
+                "warning",
+                "unused variable: `x`",
+                Some("src/bar.rs"),
+                Some(7),
+            )],
         };
         let msg = report.rejection_message();
         assert!(msg.contains("src/bar.rs:7:1: warning: unused variable"));
@@ -544,7 +540,10 @@ mod tests {
             diagnostics: "cargo check timed out after 60s".to_string(),
             parsed_diagnostics: Vec::new(),
         };
-        assert_eq!(report.rejection_message(), "cargo check timed out after 60s");
+        assert_eq!(
+            report.rejection_message(),
+            "cargo check timed out after 60s"
+        );
     }
 
     #[test]
@@ -677,10 +676,7 @@ mod tests {
         let planned = vec!["src/foo.rs".to_string()];
         assert!(file_in_scope("src/foo.rs", &planned));
         // Plan named just the basename, target resolved with a directory prefix.
-        assert!(file_in_scope(
-            "src/foo.rs",
-            &["foo.rs".to_string()]
-        ));
+        assert!(file_in_scope("src/foo.rs", &["foo.rs".to_string()]));
         // Plan named a longer path than the diff header's target.
         assert!(file_in_scope("foo.rs", &["src/foo.rs".to_string()]));
         assert!(!file_in_scope("src/bar.rs", &planned));

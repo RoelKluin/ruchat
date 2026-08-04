@@ -1,6 +1,6 @@
+use crate::agent::Team;
 use crate::agent::llm_client::LlmClient;
 use crate::agent::pipeline::AgentPipeline;
-use crate::agent::Team;
 use crate::io::Io;
 use crate::ollama::ServerArgs;
 use crate::orchestrator::Orchestrator;

@@ -1,9 +1,11 @@
-use crate::chroma::r#where::{filter_get_response, where_needs_client_side_eval, with_metadata_included};
+use crate::chroma::r#where::{
+    filter_get_response, where_needs_client_side_eval, with_metadata_included,
+};
 use crate::chroma::{
     ChromaClientConfigArgs, ChromaCollectionConfigArgs, ChromaResponse, IncludeArgs, OutputArgs,
     WhereArgs,
 };
-use crate::{retry_transient, Result, RuChatError};
+use crate::{Result, RuChatError, retry_transient};
 use clap::Parser;
 use serde_json::Value;
 

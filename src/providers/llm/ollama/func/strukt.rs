@@ -1,6 +1,6 @@
+use crate::Result;
 use crate::io::Io;
 use crate::ollama::OllamaArgs;
-use crate::Result;
 use ollama_rs::models::ModelOptions;
 use ollama_rs::{
     coordinator::Coordinator,

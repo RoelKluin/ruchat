@@ -1,5 +1,5 @@
 use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs};
-use crate::{retry_transient, Result, RuChatError};
+use crate::{Result, RuChatError, retry_transient};
 use clap::Parser;
 use log::info;
 use serde_json::Value;

@@ -1,24 +1,24 @@
-pub(crate) mod manager;
 #[cfg(test)]
 mod evals;
 pub(crate) mod event;
 pub(crate) mod json_extract;
 pub(crate) mod llm_client;
+pub(crate) mod manager;
 pub(crate) mod pipeline;
 pub(crate) mod protocol;
 pub(crate) mod role;
-pub(crate) mod templates;
 pub(crate) mod team;
+pub(crate) mod templates;
 pub(crate) mod tokens;
 pub(crate) mod tools;
 pub(crate) mod types;
 
 use crate::core::embed::{EmbedArgs, UpsertMode};
 use crate::core::orchestrator::TaskType;
-use event::{send_event, AgentEvent, StreamItem};
 use crate::providers::llm::ollama::get_dynamic_history_limit;
 use crate::providers::vector::chroma::query::Query;
 use crate::{Result, RuChatError, options::get_options};
+use event::{AgentEvent, StreamItem, send_event};
 use llm_client::{LlmClient, VectorStore};
 use ollama_rs::generation::chat::ChatMessage;
 use ollama_rs::models::ModelOptions;
@@ -70,7 +70,7 @@ impl Agent {
                 options,
                 agent_config,
                 embed_args,
-                cfg
+                cfg,
             })
         } else if required {
             Err(RuChatError::MissingAgent(role.to_string()))
@@ -79,9 +79,12 @@ impl Agent {
         }
     }
     pub(crate) fn remove_str(&mut self, key: &str) -> Result<String> {
-        let v = self.agent_config.remove(key).ok_or(RuChatError::Is(format!(
-            "No {key} to remove in agent config"
-        )))?;
+        let v = self
+            .agent_config
+            .remove(key)
+            .ok_or(RuChatError::Is(format!(
+                "No {key} to remove in agent config"
+            )))?;
         if let Some(s) = v.as_str() {
             Ok(s.to_string())
         } else if v.is_object() {
@@ -163,7 +166,10 @@ impl Agent {
         // anything the banner didn't already. The model each role uses is now summarized once,
         // at the very start of the run — see `Orchestrator::run_stage_machine`.
         ctx.trace(tx, String::new()).await;
-        let messages = vec![ChatMessage::system(system_text), ChatMessage::user(user_text)];
+        let messages = vec![
+            ChatMessage::system(system_text),
+            ChatMessage::user(user_text),
+        ];
 
         if let Ok(msg) = self.get_str("status_msg") {
             send_event(tx, AgentEvent::StatusUpdate(msg.to_string())).await?;

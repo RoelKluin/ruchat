@@ -1,5 +1,5 @@
 use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs};
-use crate::{retry_transient, Result, RuChatError};
+use crate::{Result, RuChatError, retry_transient};
 use chroma_types::Metadata;
 use clap::Parser;
 use log::info;

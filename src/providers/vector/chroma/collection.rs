@@ -1,4 +1,4 @@
-use crate::{retry_transient, Result, RuChatError};
+use crate::{Result, RuChatError, retry_transient};
 use chroma::types::{Metadata, Schema};
 use chroma::{ChromaCollection, ChromaHttpClient};
 use clap::Parser;

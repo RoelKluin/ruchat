@@ -1,5 +1,5 @@
 use crate::chroma::ChromaClientConfigArgs;
-use crate::{retry_transient, Result, RuChatError};
+use crate::{Result, RuChatError, retry_transient};
 use chroma::types::{Metadata, MetadataValue};
 use clap::Parser;
 use serde::Deserialize;

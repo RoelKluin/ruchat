@@ -23,10 +23,10 @@ pub(crate) use collection::ChromaCollectionConfigArgs;
 pub(crate) use include::IncludeArgs;
 use log::{info, warn};
 pub(crate) use metadata::{MetadataArgs, UpdateMetadataArrayArgs};
-pub(crate) use r#where::WhereArgs;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
+pub(crate) use r#where::WhereArgs;
 
 #[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -100,7 +100,7 @@ impl OutputArgs {
                         return Err(RuChatError::Is(format!(
                             "Invalid output format: {}",
                             format_str
-                        )))
+                        )));
                     }
                 };
             } else {
@@ -476,8 +476,14 @@ mod tests {
         m.insert("name".to_string(), MetadataValue::Str("ask".to_string()));
         m.insert("start".to_string(), MetadataValue::Int(1));
         let rendered = format_metadata(&m);
-        assert!(!rendered.contains("Str("), "should not contain Rust Debug enum syntax: {rendered}");
-        assert!(!rendered.contains("Int("), "should not contain Rust Debug enum syntax: {rendered}");
+        assert!(
+            !rendered.contains("Str("),
+            "should not contain Rust Debug enum syntax: {rendered}"
+        );
+        assert!(
+            !rendered.contains("Int("),
+            "should not contain Rust Debug enum syntax: {rendered}"
+        );
         assert!(rendered.contains("\"ask\""));
         assert!(rendered.contains("1"));
     }
@@ -498,7 +504,11 @@ mod tests {
             rendered.contains("...(truncated,"),
             "expected a truncation marker, got: {rendered}"
         );
-        assert!(rendered.len() < 500, "rendered value should be capped, got {} chars: {rendered}", rendered.len());
+        assert!(
+            rendered.len() < 500,
+            "rendered value should be capped, got {} chars: {rendered}",
+            rendered.len()
+        );
     }
 
     #[test]

@@ -313,7 +313,10 @@ fn extract_operator(tokens: &[Token], pos: &mut usize, key: &str) -> Result<Stri
             *pos += 1;
             Ok(op)
         }
-        _ => Err(RuChatError::InternalError(format!("Invalid operator '{}'", first))),
+        _ => Err(RuChatError::InternalError(format!(
+            "Invalid operator '{}'",
+            first
+        ))),
     }
 }
 
@@ -450,8 +453,14 @@ pub(crate) fn where_needs_client_side_eval(w: &Where) -> bool {
 pub(crate) fn metadata_matches(w: &Where, metadata: &Metadata) -> bool {
     match w {
         Where::Composite(c) => match c.operator {
-            BooleanOperator::And => c.children.iter().all(|child| metadata_matches(child, metadata)),
-            BooleanOperator::Or => c.children.iter().any(|child| metadata_matches(child, metadata)),
+            BooleanOperator::And => c
+                .children
+                .iter()
+                .all(|child| metadata_matches(child, metadata)),
+            BooleanOperator::Or => c
+                .children
+                .iter()
+                .any(|child| metadata_matches(child, metadata)),
         },
         Where::Document(_) => true,
         Where::Metadata(expr) => metadata_expr_matches(expr, metadata),
@@ -492,14 +501,20 @@ fn value_contains(actual: &MetadataValue, needle: &MetadataValue) -> bool {
     }
 }
 
-fn primitive_matches(op: &PrimitiveOperator, actual: &MetadataValue, expected: &MetadataValue) -> bool {
+fn primitive_matches(
+    op: &PrimitiveOperator,
+    actual: &MetadataValue,
+    expected: &MetadataValue,
+) -> bool {
     use std::cmp::Ordering;
     let ord = compare_metadata_values(actual, expected);
     match op {
         PrimitiveOperator::Equal => ord == Some(Ordering::Equal),
         PrimitiveOperator::NotEqual => ord != Some(Ordering::Equal),
         PrimitiveOperator::GreaterThan => ord == Some(Ordering::Greater),
-        PrimitiveOperator::GreaterThanOrEqual => matches!(ord, Some(Ordering::Greater | Ordering::Equal)),
+        PrimitiveOperator::GreaterThanOrEqual => {
+            matches!(ord, Some(Ordering::Greater | Ordering::Equal))
+        }
         PrimitiveOperator::LessThan => ord == Some(Ordering::Less),
         PrimitiveOperator::LessThanOrEqual => matches!(ord, Some(Ordering::Less | Ordering::Equal)),
     }
@@ -540,7 +555,9 @@ fn set_matches(op: &SetOperator, actual: &MetadataValue, set: &MetadataSetValue)
 /// asked for, just with metadata added if missing. Shared by every Chroma read path that can
 /// hit `where_needs_client_side_eval` (`query.rs`, `get.rs`, `retrieve.rs`).
 pub(crate) fn with_metadata_included(include: Option<IncludeList>) -> IncludeList {
-    let mut list = include.map(|l| l.0).unwrap_or_else(|| IncludeList::default_query().0);
+    let mut list = include
+        .map(|l| l.0)
+        .unwrap_or_else(|| IncludeList::default_query().0);
     if !list.contains(&Include::Metadata) {
         list.push(Include::Metadata);
     }
@@ -563,7 +580,12 @@ pub(crate) fn select_indices<T: Clone>(v: &[T], indices: &[usize]) -> Vec<T> {
 /// fetch with no server-side offset/limit of its own when this path is taken (see `get.rs`/
 /// `retrieve.rs`'s `execute_get`), or rows that would've matched after filtering could already
 /// be cut before this ever sees them.
-pub(crate) fn filter_get_response(r: &mut GetResponse, w: &Where, offset: usize, limit: Option<usize>) {
+pub(crate) fn filter_get_response(
+    r: &mut GetResponse,
+    w: &Where,
+    offset: usize,
+    limit: Option<usize>,
+) {
     let keep_indices: Vec<usize> = (0..r.ids.len())
         .filter(|&j| {
             r.metadatas
@@ -834,8 +856,14 @@ mod tests {
             map_sql_to_document_op("CONTAINS").unwrap(),
             DocumentOperator::Contains
         );
-        assert_eq!(map_sql_to_document_op("LIKE").unwrap(), DocumentOperator::Contains);
-        assert_eq!(map_sql_to_document_op("=").unwrap(), DocumentOperator::Contains);
+        assert_eq!(
+            map_sql_to_document_op("LIKE").unwrap(),
+            DocumentOperator::Contains
+        );
+        assert_eq!(
+            map_sql_to_document_op("=").unwrap(),
+            DocumentOperator::Contains
+        );
         assert_eq!(
             map_sql_to_document_op("NOTCONTAINS").unwrap(),
             DocumentOperator::NotContains
@@ -844,8 +872,14 @@ mod tests {
             map_sql_to_document_op("NOTLIKE").unwrap(),
             DocumentOperator::NotContains
         );
-        assert_eq!(map_sql_to_document_op("!=").unwrap(), DocumentOperator::NotContains);
-        assert_eq!(map_sql_to_document_op("REGEX").unwrap(), DocumentOperator::Regex);
+        assert_eq!(
+            map_sql_to_document_op("!=").unwrap(),
+            DocumentOperator::NotContains
+        );
+        assert_eq!(
+            map_sql_to_document_op("REGEX").unwrap(),
+            DocumentOperator::Regex
+        );
         assert_eq!(
             map_sql_to_document_op("NOTREGEX").unwrap(),
             DocumentOperator::NotRegex
@@ -1095,7 +1129,10 @@ mod tests {
         let args = WhereArgs {
             r#where: Some("key1 = 'value'".to_string()),
         };
-        assert_eq!(args.parse().unwrap(), Some(parse_where("key1 = 'value'").unwrap()));
+        assert_eq!(
+            args.parse().unwrap(),
+            Some(parse_where("key1 = 'value'").unwrap())
+        );
     }
 
     #[test]
@@ -1163,15 +1200,27 @@ mod tests {
     #[test]
     fn metadata_matches_does_real_substring_matching_on_a_scalar_string_field() {
         let w = parse_where("file CONTAINS 'cli'").unwrap();
-        assert!(metadata_matches(&w, &metadata_str(&[("file", "src/cli/args.rs")])));
-        assert!(!metadata_matches(&w, &metadata_str(&[("file", "src/tui/io.rs")])));
+        assert!(metadata_matches(
+            &w,
+            &metadata_str(&[("file", "src/cli/args.rs")])
+        ));
+        assert!(!metadata_matches(
+            &w,
+            &metadata_str(&[("file", "src/tui/io.rs")])
+        ));
     }
 
     #[test]
     fn metadata_matches_not_contains_negates_the_substring_check() {
         let w = parse_where("file NOT CONTAINS 'cli'").unwrap();
-        assert!(!metadata_matches(&w, &metadata_str(&[("file", "src/cli/args.rs")])));
-        assert!(metadata_matches(&w, &metadata_str(&[("file", "src/tui/io.rs")])));
+        assert!(!metadata_matches(
+            &w,
+            &metadata_str(&[("file", "src/cli/args.rs")])
+        ));
+        assert!(metadata_matches(
+            &w,
+            &metadata_str(&[("file", "src/tui/io.rs")])
+        ));
     }
 
     #[test]
@@ -1261,7 +1310,8 @@ mod tests {
     #[test]
     fn filter_get_response_keeps_only_matching_rows() {
         let w = parse_where("file CONTAINS 'cli'").unwrap();
-        let mut r = get_response_with_files(&["src/cli/args.rs", "src/tui/io.rs", "src/cli/prompt.rs"]);
+        let mut r =
+            get_response_with_files(&["src/cli/args.rs", "src/tui/io.rs", "src/cli/prompt.rs"]);
         filter_get_response(&mut r, &w, 0, None);
         assert_eq!(r.ids, vec!["id0".to_string(), "id2".to_string()]);
     }

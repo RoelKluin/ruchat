@@ -36,9 +36,7 @@ pub(crate) fn parse_event(event_type: &str, data_json: &str) -> Result<SseEffect
     match event_type {
         "content_block_delta" => {
             let parsed: ContentBlockDeltaEvent = serde_json::from_str(data_json).map_err(|e| {
-                RuChatError::AnthropicError(format!(
-                    "malformed content_block_delta event: {e}"
-                ))
+                RuChatError::AnthropicError(format!("malformed content_block_delta event: {e}"))
             })?;
             if parsed.delta.kind == "text_delta" && !parsed.delta.text.is_empty() {
                 Ok(SseEffect::TextDelta(parsed.delta.text))
@@ -79,9 +77,18 @@ mod tests {
     fn unrecognized_event_types_are_ignored() {
         for (event_type, data) in [
             ("message_start", r#"{"type":"message_start","message":{}}"#),
-            ("content_block_start", r#"{"type":"content_block_start","index":0}"#),
-            ("content_block_stop", r#"{"type":"content_block_stop","index":0}"#),
-            ("message_delta", r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"}}"#),
+            (
+                "content_block_start",
+                r#"{"type":"content_block_start","index":0}"#,
+            ),
+            (
+                "content_block_stop",
+                r#"{"type":"content_block_stop","index":0}"#,
+            ),
+            (
+                "message_delta",
+                r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"}}"#,
+            ),
             ("ping", r#"{"type":"ping"}"#),
         ] {
             assert_eq!(

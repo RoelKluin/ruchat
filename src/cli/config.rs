@@ -9,7 +9,12 @@ use tokio::fs;
 #[derive(Parser, Debug, Clone, Default, PartialEq, Deserialize)]
 pub(crate) struct ConfigArgs {
     /// Path to config file (JSON). Defaults to ~/.config/ruchat/config.json or ./ruchat.json
-    #[arg(long, env = "RUCHAT_CONFIG", help_heading = "Configuration", global=true)]
+    #[arg(
+        long,
+        env = "RUCHAT_CONFIG",
+        help_heading = "Configuration",
+        global = true
+    )]
     config: Option<PathBuf>,
 
     /// Profile name inside config (default: "default")
@@ -39,9 +44,10 @@ impl ConfigArgs {
             .map_err(|e| RuChatError::InternalError(format!("Invalid JSON in {path:?}: {e}")))?;
 
         if let Some(profiles) = full.get("profiles").and_then(|p| p.as_object())
-            && let Some(profile) = profiles.get(&self.profile) {
-                return Ok(profile.clone());
-            }
+            && let Some(profile) = profiles.get(&self.profile)
+        {
+            return Ok(profile.clone());
+        }
         Ok(full)
     }
 

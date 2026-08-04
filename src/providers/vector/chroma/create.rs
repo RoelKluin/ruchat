@@ -1,5 +1,5 @@
-use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs, MetadataArgs};
 use crate::Result;
+use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs, MetadataArgs};
 use clap::Parser;
 use serde_json::Value;
 

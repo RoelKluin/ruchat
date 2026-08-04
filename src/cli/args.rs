@@ -1,3 +1,4 @@
+use crate::Result;
 use crate::agent::manager::{Manager, ManagerArgs};
 use crate::chroma::create::ChromaCreateArgs;
 use crate::chroma::delete::ChromaDeleteArgs;
@@ -12,13 +13,12 @@ use crate::chroma::search::SearchArgs;
 use crate::cli::config::ConfigArgs;
 use crate::core::embed::EmbedPromptArgs;
 use crate::core::index::IndexArgs;
+use crate::ollama::OllamaArgs;
+use crate::ollama::ServerArgs;
 use crate::ollama::ask::AskArgs;
 use crate::ollama::func::func;
 use crate::ollama::func::func_struct;
-use crate::ollama::OllamaArgs;
-use crate::ollama::ServerArgs;
 use crate::serde::load_merged_config;
-use crate::Result;
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
 

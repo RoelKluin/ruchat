@@ -148,7 +148,9 @@ async fn generate_commit_message(
 
     let generated = generated.trim().to_string();
     if generated.is_empty() {
-        Err(RuChatError::Is("LLM returned an empty commit message".into()))
+        Err(RuChatError::Is(
+            "LLM returned an empty commit message".into(),
+        ))
     } else {
         Ok(wrap_commit_message_body(&generated))
     }

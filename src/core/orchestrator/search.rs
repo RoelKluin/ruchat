@@ -107,7 +107,10 @@ async fn tracked_rust_files() -> Result<Vec<String>> {
 /// `tags_path` as a parameter (rather than hardcoding `TAGS_FILE`) purely for testability —
 /// tests point it at a tempdir instead of the real repo-root `tags` file.
 async fn tags_are_stale(tags_path: &str, files: &[String]) -> bool {
-    let tags_mtime = match tokio::fs::metadata(tags_path).await.and_then(|m| m.modified()) {
+    let tags_mtime = match tokio::fs::metadata(tags_path)
+        .await
+        .and_then(|m| m.modified())
+    {
         Ok(t) => t,
         Err(_) => return true, // missing (or mtime unavailable) — treat as stale
     };
@@ -146,12 +149,15 @@ async fn regenerate_tags(tags_path: &str, files: &[String]) -> Result<()> {
 
     // Written and dropped before `wait()` so ctags sees EOF on stdin instead of hanging.
     {
-        let mut stdin = child.stdin.take().ok_or_else(|| {
-            RuChatError::InternalError("failed to open ctags stdin".to_string())
-        })?;
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| RuChatError::InternalError("failed to open ctags stdin".to_string()))?;
         tokio::io::AsyncWriteExt::write_all(&mut stdin, file_list.as_bytes())
             .await
-            .map_err(|e| RuChatError::InternalError(format!("failed to write to ctags stdin: {e}")))?;
+            .map_err(|e| {
+                RuChatError::InternalError(format!("failed to write to ctags stdin: {e}"))
+            })?;
     }
 
     let status = tokio::time::timeout(std::time::Duration::from_secs(30), child.wait())
@@ -247,10 +253,18 @@ mod tests {
     async fn ripgrep_still_finds_real_matches_within_the_repo() {
         // Confirms the containment fix didn't break the ordinary in-repo case — this file
         // itself contains its own function name.
-        let result = ripgrep("fn ripgrep", Some("src/core/orchestrator/search.rs"), None, None)
-            .await
-            .unwrap();
-        assert!(result.contains("ripgrep"), "expected a real match, got: {result:?}");
+        let result = ripgrep(
+            "fn ripgrep",
+            Some("src/core/orchestrator/search.rs"),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(
+            result.contains("ripgrep"),
+            "expected a real match, got: {result:?}"
+        );
     }
 
     #[tokio::test]

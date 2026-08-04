@@ -1,35 +1,35 @@
-pub(crate) mod git;
-pub(crate) mod fs;
-pub(crate) mod search;
-pub(crate) mod scope;
 pub(crate) mod cargo;
 pub(crate) mod checkpoint;
 pub(crate) mod doc_summary;
+pub(crate) mod fs;
+pub(crate) mod git;
 pub(crate) mod run_summary;
+pub(crate) mod scope;
+pub(crate) mod search;
 pub(super) mod task;
 
-use crate::agent::event::{StreamItem, AgentEvent};
+use crate::agent::Agent;
+use crate::agent::event::{AgentEvent, StreamItem};
 use crate::agent::protocol::Validation;
 use crate::agent::tools::{self, ToolName};
 use crate::agent::types::{Context, TurnKind};
-use crate::agent::Agent;
 use crate::providers::vector::chroma::ChromaClientConfigArgs;
 use crate::{Result, RuChatError};
 use serde_json::Value;
 pub(super) use task::TaskType;
 use tokio::sync::mpsc;
-use tokio_util::sync::CancellationToken;
-use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::Stream;
+use tokio_stream::wrappers::ReceiverStream;
+use tokio_util::sync::CancellationToken;
 // Define what the UI receives
 pub type OrchestratorResult = Result<StreamItem>;
-use crate::providers::vector::chroma::query::Query;
 use super::agent::json_extract::strip_json_fences;
+use crate::agent::llm_client::{LlmClient, VectorStore};
+use crate::providers::vector::chroma::query::Query;
+use crate::retry_transient;
 use git::commit_feature_branch;
 use serde::Deserialize;
-use crate::retry_transient;
 use std::sync::Arc;
-use crate::agent::llm_client::{LlmClient, VectorStore};
 
 // Serialize/Deserialize: `Stage` is one of the fields `checkpoint.rs` persists across a
 // resumable run — see that module for the full "Resumable/crash-resilient runs" mechanism.
@@ -156,7 +156,15 @@ impl Orchestrator {
         )
         .await
         .ok();
-        let scoper = Agent::new(&mut orchestrator_config, "Scoper", false, task_type, cfg.clone()).await.ok();
+        let scoper = Agent::new(
+            &mut orchestrator_config,
+            "Scoper",
+            false,
+            task_type,
+            cfg.clone(),
+        )
+        .await
+        .ok();
 
         let mut critics = Vec::new();
         if let Some(critic_list) = orchestrator_config
@@ -314,9 +322,11 @@ impl Orchestrator {
         let task_cancel = cancel.clone();
         tokio::spawn(async move {
             let result = if let Some(path) = debug_sequence {
-                self.debug_stage_machine(goal, path, tx.clone(), task_cancel, breakpoints).await
+                self.debug_stage_machine(goal, path, tx.clone(), task_cancel, breakpoints)
+                    .await
             } else {
-                self.run_stage_machine(goal, tx.clone(), task_cancel, resume, approve_commit).await
+                self.run_stage_machine(goal, tx.clone(), task_cancel, resume, approve_commit)
+                    .await
             };
             if let Err(e) = result
                 && !matches!(e, RuChatError::Cancelled)
@@ -444,8 +454,7 @@ impl Orchestrator {
             return docs;
         }
         let model = summarizer.get_str("model").unwrap_or("");
-        match doc_summary::summarize_retrieved_documents(&self.chat, model, &ctx.goal, &docs)
-            .await
+        match doc_summary::summarize_retrieved_documents(&self.chat, model, &ctx.goal, &docs).await
         {
             Ok(summary) => {
                 let after = crate::agent::tokens::count_tokens(&summary);
@@ -513,7 +522,9 @@ impl Orchestrator {
                     Err(e2) => {
                         ctx.trace(
                             tx,
-                            format!("Librarian still not valid JSON after retry ({e2}) — skipping RAG"),
+                            format!(
+                                "Librarian still not valid JSON after retry ({e2}) — skipping RAG"
+                            ),
                         )
                         .await;
                     }
@@ -528,7 +539,10 @@ impl Orchestrator {
         // down for this one on-demand retrieval must not kill Architect/Worker/Test/Commit, none
         // of which need RAG context to function — degrade gracefully instead, mirroring
         // `recall_prior_memories`'s same stance for the deterministic pre-run recall.
-        match librarian.retrieve_and_generate(client, &self.embed, q).await {
+        match librarian
+            .retrieve_and_generate(client, &self.embed, q)
+            .await
+        {
             Ok(docs) => {
                 let docs = self.maybe_summarize_retrieved_docs(docs, ctx, tx).await;
                 ctx.push_turn(TurnKind::Retrieval, "Librarian", docs);
@@ -569,7 +583,11 @@ impl Orchestrator {
     /// run: an empty/missing collection (e.g. the very first run, before anything has ever been
     /// memorized) is the normal case, not an error, so a query failure is traced and swallowed
     /// rather than propagated.
-    async fn recall_prior_memories(&self, ctx: &mut Context, tx: &mpsc::Sender<OrchestratorResult>) {
+    async fn recall_prior_memories(
+        &self,
+        ctx: &mut Context,
+        tx: &mpsc::Sender<OrchestratorResult>,
+    ) {
         let Some(client) = self.client.as_ref() else {
             return;
         };
@@ -623,7 +641,10 @@ impl Orchestrator {
     /// the model there added noise without new information.
     fn model_summary(&self) -> String {
         let mut parts = vec![
-            format!("Architect={}", self.architect.get_str("model").unwrap_or("?")),
+            format!(
+                "Architect={}",
+                self.architect.get_str("model").unwrap_or("?")
+            ),
             format!("Worker={}", self.worker.get_str("model").unwrap_or("?")),
         ];
         if let Some(a) = self.scoper.as_ref() {
@@ -674,7 +695,9 @@ impl Orchestrator {
         // resume` reloads the last-completed stage's checkpoint instead — `goal` above is
         // ignored in that case, since resuming continues the *same* task, not a new one.
         let (mut ctx, mut stage) = if resume {
-            checkpoint::Checkpoint::load(std::path::Path::new(checkpoint::CHECKPOINT_PATH)).await?.into_context_and_stage()
+            checkpoint::Checkpoint::load(std::path::Path::new(checkpoint::CHECKPOINT_PATH))
+                .await?
+                .into_context_and_stage()
         } else {
             (Context::new(goal), Stage::Scope)
         };
@@ -720,12 +743,18 @@ impl Orchestrator {
                 Stage::Done => {
                     // A deliberate, recorded outcome — not a crash — so there's nothing left to
                     // `--resume`; see `checkpoint.rs::Checkpoint::clear`'s doc comment.
-                    checkpoint::Checkpoint::clear(std::path::Path::new(checkpoint::CHECKPOINT_PATH)).await;
+                    checkpoint::Checkpoint::clear(std::path::Path::new(
+                        checkpoint::CHECKPOINT_PATH,
+                    ))
+                    .await;
                     let _ = tx.send(Ok(StreamItem::Event(AgentEvent::Done))).await;
                     break;
                 }
                 Stage::Escalate(reason) => {
-                    checkpoint::Checkpoint::clear(std::path::Path::new(checkpoint::CHECKPOINT_PATH)).await;
+                    checkpoint::Checkpoint::clear(std::path::Path::new(
+                        checkpoint::CHECKPOINT_PATH,
+                    ))
+                    .await;
                     ctx.trace(&tx, format!("ESCALATED: {reason}")).await;
                     break;
                 }
@@ -737,18 +766,24 @@ impl Orchestrator {
                     // receiver here is already handled by `cancel` on the next loop iteration,
                     // so there's nothing more useful to do with a send error than ignore it.
                     let pct = progress_pct(ctx.round, max_iterations);
-                    let _ = tx.send(Ok(StreamItem::Event(AgentEvent::Progress(pct)))).await;
+                    let _ = tx
+                        .send(Ok(StreamItem::Event(AgentEvent::Progress(pct))))
+                        .await;
                     if ctx.round > max_iterations {
                         Stage::Escalate("max iterations reached without acceptance".into())
                     } else {
                         retry_transient!(self.architect.query_stream(&self.chat, ctx, &tx))?;
-                        if let Some(prev) = &last_architect_output && prev == &ctx.output {
+                        if let Some(prev) = &last_architect_output
+                            && prev == &ctx.output
+                        {
                             ctx.push_turn(
                                 TurnKind::Rejection,
                                 "Orchestrator",
                                 "Architect repeated identical plan with no new information — likely stalled, escalating".into(),
                             );
-                            Stage::Escalate("Architect stalled: repeated identical output across rounds".into())
+                            Stage::Escalate(
+                                "Architect stalled: repeated identical output across rounds".into(),
+                            )
                         } else {
                             last_architect_output = Some(ctx.output.clone());
                             // Without this, context_view() never finds a Plan
@@ -774,10 +809,18 @@ impl Orchestrator {
                     if let Ok(call) = tools::parse_tool_call(&ctx.output)
                         && matches!(
                             call.tool,
-                            ToolName::Retrieve | ToolName::GitLog | ToolName::GitBlame
-                            | ToolName::GitDiff | ToolName::GitSearchHistory | ToolName::ReadFile
-                            | ToolName::ListDir | ToolName::Ripgrep | ToolName::ReadTags
-                            | ToolName::CargoCheck | ToolName::CargoClippy | ToolName::CargoDupes
+                            ToolName::Retrieve
+                                | ToolName::GitLog
+                                | ToolName::GitBlame
+                                | ToolName::GitDiff
+                                | ToolName::GitSearchHistory
+                                | ToolName::ReadFile
+                                | ToolName::ListDir
+                                | ToolName::Ripgrep
+                                | ToolName::ReadTags
+                                | ToolName::CargoCheck
+                                | ToolName::CargoClippy
+                                | ToolName::CargoDupes
                         )
                         && retrieve_budget > 0
                     {
@@ -820,18 +863,23 @@ impl Orchestrator {
                                     "Tool result is above. You've used this round's one \
                                     information-lookup — you must now emit exactly one \
                                     apply_patch (or memorize) tool_call. Do not call another \
-                                    read-only tool.".into(),
+                                    read-only tool."
+                                        .into(),
                                 );
                             }
                         }
                         retry_transient!(self.worker.query_stream(&self.chat, ctx, &tx))?;
-                        if let Some(prev) = &last_worker_output && prev == &ctx.output {
+                        if let Some(prev) = &last_worker_output
+                            && prev == &ctx.output
+                        {
                             ctx.push_turn(
                                 TurnKind::Rejection,
                                 "Orchestrator",
                                 "Worker repeated identical plan with no new information — likely stalled, escalating".into(),
                             );
-                            stage = Stage::Escalate("Worker stalled: repeated identical output across rounds".into());
+                            stage = Stage::Escalate(
+                                "Worker stalled: repeated identical output across rounds".into(),
+                            );
                             continue;
                         }
                         last_worker_output = Some(ctx.output.clone());
@@ -992,15 +1040,24 @@ impl Orchestrator {
                                 "Orchestrator",
                                 "Scope stage produced no retrieved information — forcing a repo listing before planning".into(),
                             );
-                            let listing = crate::orchestrator::fs::list_dir(".").await.unwrap_or_default();
+                            let listing = crate::orchestrator::fs::list_dir(".")
+                                .await
+                                .unwrap_or_default();
                             ctx.push_turn(TurnKind::Retrieval, "Orchestrator", listing);
                         }
                         Stage::Plan
                     } else {
                         scope_round += 1;
                         let stage = self.run_scope_stage(ctx, &tx).await?;
-                        if let Some(prev) = &last_scope_output && prev == &ctx.output {
-                            ctx.trace(&tx, "Scoper repeated identical output — forcing progression to Plan".into()).await;
+                        if let Some(prev) = &last_scope_output
+                            && prev == &ctx.output
+                        {
+                            ctx.trace(
+                                &tx,
+                                "Scoper repeated identical output — forcing progression to Plan"
+                                    .into(),
+                            )
+                            .await;
                             Stage::Plan
                         } else {
                             last_scope_output = Some(ctx.output.clone());
@@ -1012,7 +1069,12 @@ impl Orchestrator {
             // `Stage::Done`/`Stage::Escalate` both `break` above, before reaching here — this
             // only ever runs for a genuine, non-terminal transition, which is exactly "after
             // each stage transition" per the checkpoint's own scoping.
-            checkpoint::Checkpoint::save(ctx, &stage, std::path::Path::new(checkpoint::CHECKPOINT_PATH)).await;
+            checkpoint::Checkpoint::save(
+                ctx,
+                &stage,
+                std::path::Path::new(checkpoint::CHECKPOINT_PATH),
+            )
+            .await;
         }
         ctx.trace(&tx, String::new()).await;
         self.finalize_trace(ctx, &tx, success).await;
@@ -1026,7 +1088,12 @@ impl Orchestrator {
     /// empty response), the run is still archived, just with a placeholder note instead of a
     /// real summary — a diagnostic nicety failing must never mask or replace the original
     /// outcome, nor leave the run's trace file orphaned outside both archive directories.
-    async fn finalize_trace(&self, ctx: &Context, tx: &mpsc::Sender<OrchestratorResult>, success: bool) {
+    async fn finalize_trace(
+        &self,
+        ctx: &Context,
+        tx: &mpsc::Sender<OrchestratorResult>,
+        success: bool,
+    ) {
         let model = self
             .orchestrator_config
             .get("failure_analysis_model")
@@ -1051,7 +1118,11 @@ impl Orchestrator {
         } else {
             ctx.finalize_failure_trace(&summary).await;
         }
-        let prefix = if success { "Run succeeded" } else { "Run did not succeed" };
+        let prefix = if success {
+            "Run succeeded"
+        } else {
+            "Run did not succeed"
+        };
         let _ = tx
             .send(Ok(StreamItem::Event(AgentEvent::Trace(format!(
                 "{prefix}: {summary}"
@@ -1103,9 +1174,7 @@ impl Orchestrator {
                         TurnKind::Plan
                     }
                     "Worker" => {
-                        self.worker
-                            .query_stream(&self.chat, &mut ctx, &tx)
-                            .await?;
+                        self.worker.query_stream(&self.chat, &mut ctx, &tx).await?;
                         TurnKind::Implementation
                     }
                     "Validator" => {
@@ -1114,8 +1183,7 @@ impl Orchestrator {
                             .ok_or(RuChatError::Is("Validator not enabled".into()))?
                             .query_stream(&self.chat, &mut ctx, &tx)
                             .await?;
-                        let reason = strip_json_fences(&ctx.output)
-                            .to_string();
+                        let reason = strip_json_fences(&ctx.output).to_string();
                         ctx.trace(&tx, format!("[REJECTED] {reason}")).await;
                         TurnKind::Rejection
                     }
@@ -1146,8 +1214,7 @@ impl Orchestrator {
                             .ok_or(RuChatError::Is("Critic index out of bounds".into()))?
                             .query_stream(&self.chat, &mut ctx, &tx)
                             .await?;
-                        let reason = strip_json_fences(&ctx.output)
-                            .to_string();
+                        let reason = strip_json_fences(&ctx.output).to_string();
                         ctx.trace(&tx, format!("[REJECTED] {reason}")).await;
                         TurnKind::Rejection
                     }
@@ -1242,14 +1309,22 @@ impl Orchestrator {
                 Ok(())
             }
             ToolName::GitBlame => {
-                let path = call.args.get("path").and_then(|v| v.as_str()).unwrap_or_default();
+                let path = call
+                    .args
+                    .get("path")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
                 let out = git::git_blame(path).await?;
                 ctx.push_turn(TurnKind::Retrieval, "GitBlame", out);
                 Ok(())
             }
             ToolName::GitDiff => {
                 let path = opt_str(&call.args, "path");
-                let staged = call.args.get("staged").and_then(|v| v.as_bool()).unwrap_or(false);
+                let staged = call
+                    .args
+                    .get("staged")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 let out = git::git_diff(path, staged).await?;
                 ctx.push_turn(TurnKind::Retrieval, "GitDiff", out);
                 Ok(())
@@ -1258,15 +1333,27 @@ impl Orchestrator {
                 let pattern = call.args["pattern"].as_str().unwrap_or_default();
                 let mode = call.args["mode"].as_str().unwrap_or("message");
                 let path = opt_str(&call.args, "path");
-                let max_count = call.args.get("max_count").and_then(|v| v.as_u64()).map(|v| v as u32);
+                let max_count = call
+                    .args
+                    .get("max_count")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as u32);
                 let out = git::git_search_history(pattern, mode, path, max_count).await?;
                 ctx.push_turn(TurnKind::Retrieval, "GitSearchHistory", out);
                 Ok(())
             }
             ToolName::ReadFile => {
                 let path = call.args["path"].as_str().unwrap_or_default();
-                let start = call.args.get("start").and_then(|v| v.as_u64()).map(|v| v as u32);
-                let end = call.args.get("end").and_then(|v| v.as_u64()).map(|v| v as u32);
+                let start = call
+                    .args
+                    .get("start")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as u32);
+                let end = call
+                    .args
+                    .get("end")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as u32);
                 let out = crate::orchestrator::fs::read_file(path, start, end).await?;
                 ctx.push_turn(TurnKind::Retrieval, "ReadFile", out);
                 Ok(())
@@ -1281,8 +1368,13 @@ impl Orchestrator {
                 let pattern = call.args["pattern"].as_str().unwrap_or_default();
                 let path = opt_str(&call.args, "path");
                 let glob = opt_str(&call.args, "glob");
-                let max_count = call.args.get("max_count").and_then(|v| v.as_u64()).map(|v| v as u32);
-                let out = crate::orchestrator::search::ripgrep(pattern, path, glob, max_count).await?;
+                let max_count = call
+                    .args
+                    .get("max_count")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as u32);
+                let out =
+                    crate::orchestrator::search::ripgrep(pattern, path, glob, max_count).await?;
                 ctx.push_turn(TurnKind::Retrieval, "Ripgrep", out);
                 Ok(())
             }
@@ -1333,7 +1425,10 @@ impl Orchestrator {
         loop {
             let is_apply_patch = matches!(
                 tools::parse_tool_call(&ctx.output),
-                Ok(tools::StructuredToolCall { tool: ToolName::ApplyPatch, .. })
+                Ok(tools::StructuredToolCall {
+                    tool: ToolName::ApplyPatch,
+                    ..
+                })
             );
             match self.worker.execute_and_verify(ctx).await? {
                 Validation::Failure(err) => {
@@ -1485,7 +1580,9 @@ const NO_TOOL_CALL_REJECTION: &str = "refused: no recognized tool_call found any
 /// pathspec outright rather than treating it as "no restriction" — this
 /// normalizes that before it ever reaches them.
 fn opt_str<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
-    args.get(key).and_then(|v| v.as_str()).filter(|s| !s.is_empty())
+    args.get(key)
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
 }
 
 /// Catches values the model copied from prompt scaffolding instead of
@@ -1642,7 +1739,10 @@ mod tests {
             ))
         });
 
-        assert!(result.is_err(), "malformed chroma_client JSON should still be rejected");
+        assert!(
+            result.is_err(),
+            "malformed chroma_client JSON should still be rejected"
+        );
         let logged = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
         assert!(
             !logged.contains(secret),
@@ -1699,7 +1799,11 @@ mod tests {
         // No FILES: line at all (or a plan the parser found none in) — the common/legacy case.
         // Must behave exactly like the single-patch-per-round flow this loop replaced.
         let mut ctx = Context::new("goal".to_string());
-        ctx.push_turn(TurnKind::Plan, "Architect", "just do it, no files line".to_string());
+        ctx.push_turn(
+            TurnKind::Plan,
+            "Architect",
+            "just do it, no files line".to_string(),
+        );
         ctx.record_patch("src/foo.rs".to_string(), "original".to_string());
         assert!(!should_continue_patch_loop(&ctx, 2));
     }
@@ -1819,9 +1923,9 @@ mod tests {
         match event.expect("expected Ok") {
             StreamItem::Event(AgentEvent::Trace(msg)) => {
                 assert!(msg.starts_with("Run did not succeed:"));
-                assert!(msg.contains(
-                    "Worker kept repeating itself and never produced a valid patch"
-                ));
+                assert!(
+                    msg.contains("Worker kept repeating itself and never produced a valid patch")
+                );
             }
             other => panic!("expected a Trace event, got {other:?}"),
         }
@@ -1890,8 +1994,7 @@ mod tests {
     // stage: CargoClippy" debug dump. This exercises that same code path — CargoClippy isn't
     // handled specially in `execute_and_verify`, so no real subprocess ever runs here.
     #[tokio::test]
-    async fn implement_patch_loop_rejects_a_second_read_only_tool_call_with_actionable_guidance()
-    {
+    async fn implement_patch_loop_rejects_a_second_read_only_tool_call_with_actionable_guidance() {
         let mut orchestrator = build_test_orchestrator(base_config(), vec![], None).await;
         let mut ctx = Context::new("goal".to_string());
         ctx.output = "```tool_call\n{\"tool\": \"cargo_clippy\"}\n```".to_string();
@@ -1908,7 +2011,11 @@ mod tests {
             .iter()
             .find(|t| t.kind == TurnKind::Rejection)
             .expect("a repeated read-only tool call should be rejected");
-        assert!(rejection.content.contains("already used this round's one information-lookup"));
+        assert!(
+            rejection
+                .content
+                .contains("already used this round's one information-lookup")
+        );
         assert!(rejection.content.contains("apply_patch"));
     }
 
@@ -1953,14 +2060,20 @@ mod tests {
     #[test]
     fn is_approval_yes_accepts_only_an_exact_y_or_yes() {
         for accepted in ["y", "Y", "yes", "Yes", " y ", "y\n"] {
-            assert!(is_approval_yes(accepted), "expected {accepted:?} to be approval");
+            assert!(
+                is_approval_yes(accepted),
+                "expected {accepted:?} to be approval"
+            );
         }
     }
 
     #[test]
     fn is_approval_yes_rejects_everything_else_including_blank() {
         for rejected in ["n", "N", "no", "", "  ", "YES", "sure", "yep"] {
-            assert!(!is_approval_yes(rejected), "expected {rejected:?} to be rejection");
+            assert!(
+                !is_approval_yes(rejected),
+                "expected {rejected:?} to be rejection"
+            );
         }
     }
 
@@ -2370,7 +2483,10 @@ mod tests {
             .maybe_summarize_retrieved_docs(large_docs.clone(), &mut ctx, &tx)
             .await;
 
-        assert_eq!(result, large_docs, "no Summarizer configured -> pass through unchanged");
+        assert_eq!(
+            result, large_docs,
+            "no Summarizer configured -> pass through unchanged"
+        );
     }
 
     #[tokio::test]
@@ -2409,7 +2525,10 @@ mod tests {
             .maybe_summarize_retrieved_docs(large_docs.clone(), &mut ctx, &tx)
             .await;
 
-        assert_eq!(result, "Condensed: fn foo() lives in src/lib.rs; rest was boilerplate metadata.");
+        assert_eq!(
+            result,
+            "Condensed: fn foo() lives in src/lib.rs; rest was boilerplate metadata."
+        );
         assert_ne!(result, large_docs);
     }
 
@@ -2429,7 +2548,10 @@ mod tests {
             .maybe_summarize_retrieved_docs(large_docs.clone(), &mut ctx, &tx)
             .await;
 
-        assert_eq!(result, large_docs, "a failed summarization must fall back to the raw docs");
+        assert_eq!(
+            result, large_docs,
+            "a failed summarization must fall back to the raw docs"
+        );
     }
 
     #[tokio::test]
@@ -2525,7 +2647,11 @@ mod tests {
         // What must hold regardless: each critic is clearly labeled, and each trace contains
         // exactly one critic's response, never both spliced together and never neither.
         assert!(traces.iter().any(|t| t.starts_with("[Critic 'Security']:")));
-        assert!(traces.iter().any(|t| t.starts_with("[Critic 'Performance']:")));
+        assert!(
+            traces
+                .iter()
+                .any(|t| t.starts_with("[Critic 'Performance']:"))
+        );
         for t in &traces {
             let has_security_text = t.contains("No issues found.");
             let has_performance_text = t.contains("Looks efficient.");
@@ -2548,7 +2674,8 @@ mod tests {
     #[tokio::test]
     async fn run_critics_parallel_records_an_approving_review_as_a_system_turn() {
         let mut config = base_config();
-        config["Critics"] = json!([{ "model": "fake", "name": "Security", "task": "security review" }]);
+        config["Critics"] =
+            json!([{ "model": "fake", "name": "Security", "task": "security review" }]);
         let mut orchestrator =
             build_test_orchestrator(config, vec!["No issues found.\nAPPROVED"], None).await;
         let mut ctx = Context::new("goal".to_string());
@@ -2581,12 +2708,9 @@ mod tests {
     async fn run_scope_stage_records_its_raw_output_even_with_empty_notes() {
         let mut config = base_config();
         config["Scoper"] = json!({ "model": "fake" });
-        let mut orchestrator = build_test_orchestrator(
-            config,
-            vec![r#"{"verdict": "READY", "notes": ""}"#],
-            None,
-        )
-        .await;
+        let mut orchestrator =
+            build_test_orchestrator(config, vec![r#"{"verdict": "READY", "notes": ""}"#], None)
+                .await;
         let mut ctx = Context::new("goal".to_string());
         let (tx, _rx) = mpsc::channel(100);
 

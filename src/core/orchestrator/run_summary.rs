@@ -95,7 +95,9 @@ async fn generate_run_summary(
 
     let generated = generated.trim().to_string();
     if generated.is_empty() {
-        Err(RuChatError::Is(format!("LLM returned an empty {label} summary")))
+        Err(RuChatError::Is(format!(
+            "LLM returned an empty {label} summary"
+        )))
     } else {
         // A backstop for the prompt's own formatting instructions, same reasoning as
         // `git::wrap_commit_message_body`: models don't reliably honor exact line-length
@@ -117,8 +119,10 @@ mod tests {
 
     #[tokio::test]
     async fn generate_failure_summary_returns_the_trimmed_llm_response() {
-        let ollama = FakeLlmClient::new(vec!["  Worker kept hallucinating a function \
-            signature; every patch failed to apply.  "]);
+        let ollama = FakeLlmClient::new(vec![
+            "  Worker kept hallucinating a function \
+            signature; every patch failed to apply.  ",
+        ]);
         let summary = generate_failure_summary(&ollama, "any-model", "fix a bug", "some trace")
             .await
             .unwrap();
@@ -138,8 +142,8 @@ mod tests {
     #[tokio::test]
     async fn generate_failure_summary_errors_on_an_empty_llm_response() {
         let ollama = FakeLlmClient::new(vec!["   "]);
-        let result = generate_failure_summary(&ollama, "any-model", "fix a bug", "some trace")
-            .await;
+        let result =
+            generate_failure_summary(&ollama, "any-model", "fix a bug", "some trace").await;
         assert!(result.is_err());
     }
 

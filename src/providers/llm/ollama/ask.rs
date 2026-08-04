@@ -74,7 +74,12 @@ pub(crate) struct AskArgs {
     critic: Vec<String>,
 
     /// Path to a single JSON file defining debug sequence + context imputations.
-    #[arg(long, hide_short_help = true, hide_long_help = false, help_heading = "Debugging")]
+    #[arg(
+        long,
+        hide_short_help = true,
+        hide_long_help = false,
+        help_heading = "Debugging"
+    )]
     debug_sequence: Option<String>,
 
     /// With --debug-sequence: pause for interactive inspection after every role in the
@@ -242,7 +247,7 @@ impl AskArgs {
     /// # Returns
     ///
     /// A `Result` indicating success or failure.
-    pub(crate) async fn ask(&self,cfg: &Value) -> Result<()> {
+    pub(crate) async fn ask(&self, cfg: &Value) -> Result<()> {
         let mut cio = Io::new();
         // `--resume` ignores the prompt entirely (the checkpoint's own goal is what continues)
         // — skip prompt resolution altogether rather than blocking on interactive stdin for a
@@ -366,9 +371,8 @@ mod tests {
         let secret = "super-secret-chroma-token-xyz";
         // Deliberately malformed (unterminated object) so parsing fails, with the secret
         // embedded in the string that would have been logged pre-fix.
-        let malformed = format!(
-            r#"{{"Librarian":{{"chroma_client":"{{\"chroma_token\":\"{secret}\"}}"}}"#
-        );
+        let malformed =
+            format!(r#"{{"Librarian":{{"chroma_client":"{{\"chroma_token\":\"{secret}\"}}"}}"#);
         let args = AskArgs {
             agentic: Some(malformed),
             ..Default::default()
