@@ -237,3 +237,11 @@ across files:
 - Codebase context → query the chromadb MCP tool for relevant snippets instead of re-reading whole files.
 - Reserve your own (Sonnet) reasoning for: borrow-checker/lifetime issues, architecture, concurrency bugs, anything in the agent-loop core.
 - Escalate to Opus only after Sonnet has made a real attempt and hit a wall — not as a first resort.
+
+## Parallel dispatch
+The Tesla-backed light model (ollama-light) is slow per-task but frees the 3090
+for heavy work. When a task involves both a substantial coding change AND
+independent auxiliary work (build log summarization, test scaffolding, docstrings,
+doc updates), dispatch them as separate Task calls in the same turn — do not wait
+for the heavy task to finish before starting the light one. Only sequence them if
+the light task depends on the heavy task's output.
