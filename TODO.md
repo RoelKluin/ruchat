@@ -83,11 +83,25 @@ live-run evidence attached, not just remove the bullet.
         long unattended `ruchat pipe` verification in the background without asking first — see the maintainer's
         own instruction, now saved as standing guidance). Do not claim this contributor is resolved without a real
         live run's evidence; ask the maintainer before starting one.
-    - The Worker-recalls-a-read-only-tool-twice contributor (rounds 1-2 of the same trace) is also still open, not
-      attempted this session.
+    - **Double-read-only-tool-call contributor: fixed in code and unit-tested, live verification still outstanding
+      (2026-08-04).** `Stage::Implement` (`src/core/orchestrator.rs`) previously gave the Worker exactly one budgeted
+      read-only lookup, one explicit reminder, one reask — if the reask *also* called a read-only tool (the same one
+      or a different one), it fell straight through to `execute_and_verify`'s rejection and burned the entire round,
+      forcing a full Architect re-plan next round for what's usually just the model mechanically repeating a
+      just-completed action. Added one more bounded, in-round nudge-and-reask first: does not re-spend
+      `retrieve_budget` or re-run the tool (its result is already in context), just a sharper final reminder and one
+      more reask, before falling through to the existing rejection exactly as before if it still doesn't work — a
+      strictly bounded second chance, not a new way to loop. New `is_read_only_worker_tool` predicate factors the
+      tool-name list out of the two now-duplicated call sites so they can't drift apart; 2 new tests confirm it
+      covers every budgeted lookup tool and excludes `apply_patch`/`memorize`. 290 lib tests pass, clippy clean, fmt
+      clean.
+      - **Not yet live-verified**, same reason as the missing-header contributor above — the maintainer will run
+        the live verification themselves this time (`RUCHAT_BIN=./target/debug/ruchat bash
+        scripts/refactoring_examples.sh run fix_one_clippy_lint`, after `cargo build --bin ruchat`) rather than an
+        unattended background run. Do not claim this contributor is resolved without that evidence.
     - **Net assessment: meaningfully improved, not resolved.** The single most severe issue (runs dying almost
-      instantly, well short of their configured budget) is fixed and live-confirmed; the missing-header contributor
-      is fixed in code but not yet live-confirmed; the double-read-only-tool-call contributor is untouched. The
+      instantly, well short of their configured budget) is fixed and live-confirmed; both the missing-header and
+      double-read-only-tool-call contributors are fixed in code and unit-tested but not yet live-confirmed. The
       overall "does a real agentic run actually land a committed change" question is still open — keep this section
       until a live run actually succeeds end-to-end, not just uses its full budget.
 

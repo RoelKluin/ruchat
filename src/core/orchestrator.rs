@@ -818,21 +818,7 @@ impl Orchestrator {
                     retry_transient!(self.worker.query_stream(&self.chat, ctx, &tx))?;
 
                     if let Ok(call) = tools::parse_tool_call(&ctx.output)
-                        && matches!(
-                            call.tool,
-                            ToolName::Retrieve
-                                | ToolName::GitLog
-                                | ToolName::GitBlame
-                                | ToolName::GitDiff
-                                | ToolName::GitSearchHistory
-                                | ToolName::ReadFile
-                                | ToolName::ListDir
-                                | ToolName::Ripgrep
-                                | ToolName::ReadTags
-                                | ToolName::CargoCheck
-                                | ToolName::CargoClippy
-                                | ToolName::CargoDupes
-                        )
+                        && is_read_only_worker_tool(&call.tool)
                         && retrieve_budget > 0
                     {
                         retrieve_budget -= 1;
@@ -879,15 +865,38 @@ impl Orchestrator {
                                 );
                             }
                         }
-                        // No separate identical-output hard-escalate here (there used to be
-                        // one): if the Worker calls a read-only tool again despite the reminder
-                        // above, `execute_and_verify`'s `other =>` arm (agent.rs) already gives
-                        // it a specific, actionable rejection and a fresh `Stage::Retry` round —
-                        // strictly better than killing the run outright, since it actually uses
-                        // the configured `max_iterations` budget instead of abandoning most of
-                        // it. See the matching change to the Architect's repeat-check above and
-                        // TODO.md's pinned reliability item for the measured evidence.
                         retry_transient!(self.worker.query_stream(&self.chat, ctx, &tx))?;
+
+                        // Bounded second chance, in-round: real traces (see TODO.md's pinned
+                        // reliability item) show the Worker very often ignoring the reminder
+                        // above and calling a read-only tool again anyway (a mechanical local-
+                        // model mistake — repeating a just-completed action) — which used to
+                        // fall straight through to `execute_and_verify`'s rejection below and
+                        // burn the *entire* round on it. One more sharper nudge-and-reask first:
+                        // does NOT re-spend `retrieve_budget` or re-run the tool (its result is
+                        // already in context, rerunning it adds nothing) — just a stronger,
+                        // final reminder. If the Worker still won't switch after this, the
+                        // existing `execute_and_verify` "called X again" rejection (agent.rs)
+                        // takes over exactly as before and the round is spent via the normal
+                        // `Stage::Retry` path — bounded, not an infinite loop.
+                        if let Ok(repeat_call) = tools::parse_tool_call(&ctx.output)
+                            && is_read_only_worker_tool(&repeat_call.tool)
+                        {
+                            ctx.push_turn(TurnKind::Implementation, "Worker", ctx.output.clone());
+                            ctx.push_turn(
+                                TurnKind::System,
+                                "Orchestrator",
+                                format!(
+                                    "You called '{:?}' again — its result is already shown \
+                                    above, calling it again will not run it a second time and \
+                                    will not add anything new. This is your last chance this \
+                                    round: emit exactly one apply_patch (or memorize) \
+                                    tool_call now, with no other tool calls.",
+                                    repeat_call.tool
+                                ),
+                            );
+                            retry_transient!(self.worker.query_stream(&self.chat, ctx, &tx))?;
+                        }
                     }
                     ctx.push_turn(TurnKind::Implementation, "Worker", ctx.output.clone());
                     self.run_implement_patch_loop(ctx, &tx).await?
@@ -1585,6 +1594,28 @@ const NO_TOOL_CALL_REJECTION: &str = "refused: no recognized tool_call found any
     narrative walkthrough, an explanation of what you would do, or any other prose without an \
     actual tool_call accomplishes nothing on its own.";
 
+/// Read-only tools the Worker may call once per run as a budgeted information-lookup
+/// (`retrieve_budget`) — every other Worker tool call must be `apply_patch`/`memorize`. Pulled
+/// out as its own predicate so `Stage::Implement`'s first-call check and its second-chance check
+/// (see the nudge-and-reask loop below) can't drift apart into two different tool lists.
+fn is_read_only_worker_tool(tool: &ToolName) -> bool {
+    matches!(
+        tool,
+        ToolName::Retrieve
+            | ToolName::GitLog
+            | ToolName::GitBlame
+            | ToolName::GitDiff
+            | ToolName::GitSearchHistory
+            | ToolName::ReadFile
+            | ToolName::ListDir
+            | ToolName::Ripgrep
+            | ToolName::ReadTags
+            | ToolName::CargoCheck
+            | ToolName::CargoClippy
+            | ToolName::CargoDupes
+    )
+}
+
 /// Treats an explicit empty string the same as an omitted optional field.
 /// Models reliably emit `"path": ""` instead of leaving an optional arg out
 /// entirely, and downstream commands (e.g. `git log -- ""`) reject an empty
@@ -1803,6 +1834,35 @@ mod tests {
             "Architect": { "model": "fake" },
             "Worker": { "model": "fake" },
         })
+    }
+
+    #[test]
+    fn is_read_only_worker_tool_covers_every_budgeted_lookup_tool() {
+        for tool in [
+            ToolName::Retrieve,
+            ToolName::GitLog,
+            ToolName::GitBlame,
+            ToolName::GitDiff,
+            ToolName::GitSearchHistory,
+            ToolName::ReadFile,
+            ToolName::ListDir,
+            ToolName::Ripgrep,
+            ToolName::ReadTags,
+            ToolName::CargoCheck,
+            ToolName::CargoClippy,
+            ToolName::CargoDupes,
+        ] {
+            assert!(
+                is_read_only_worker_tool(&tool),
+                "{tool:?} should be a budgeted read-only lookup tool"
+            );
+        }
+    }
+
+    #[test]
+    fn is_read_only_worker_tool_excludes_the_write_tools() {
+        assert!(!is_read_only_worker_tool(&ToolName::ApplyPatch));
+        assert!(!is_read_only_worker_tool(&ToolName::Memorize));
     }
 
     #[test]
