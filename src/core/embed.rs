@@ -1,10 +1,10 @@
+use crate::agent::llm_client::{VectorCollection, VectorStore};
 use crate::chroma::{ChromaClientConfigArgs, ChromaCollectionConfigArgs, UpdateMetadataArrayArgs};
 use crate::ollama::OllamaArgs;
-use crate::{retry_transient, Result, RuChatError};
+use crate::sqlite_vec::SqliteVecClientConfigArgs;
+use crate::{Result, RuChatError, VectorProvider};
 use chroma::types::UpdateMetadataValue;
 use chroma::types::{Metadata, MetadataValue, UpdateMetadata};
-use chroma::ChromaCollection;
-use chroma::ChromaHttpClient;
 use chrono::Utc;
 use clap::{Parser, ValueEnum};
 use log::info;
@@ -15,6 +15,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::result::Result as StdResult;
+use std::sync::Arc;
 use uuid::Builder;
 
 /// The mode of operation for record synchronization.
@@ -39,6 +40,14 @@ pub(crate) struct EmbedArgs {
 
     #[command(flatten)]
     client_config: ChromaClientConfigArgs,
+
+    #[command(flatten)]
+    sqlite_vec_client_config: SqliteVecClientConfigArgs,
+
+    /// Which vector-store backend this `EmbedArgs` writes to/reads from —
+    /// Chroma (default) or a local SQLite-vec file (`--sqlite-vec-path`).
+    #[arg(long, value_enum, default_value_t = VectorProvider::Chroma, help_heading = "Vector Store")]
+    vector_provider: VectorProvider,
 
     #[command(flatten)]
     collection_config: ChromaCollectionConfigArgs,
@@ -81,11 +90,44 @@ impl EmbedArgs {
         self.ollama_args.model_name_or("all-minilm:l6-v2")
     }
 
-    /// An independent Chroma client for this `EmbedArgs`'s own `client_config` — mirrors
-    /// `Orchestrator::new`'s Librarian client construction, but for the memorize-only path that
-    /// has no Librarian to borrow one from.
-    pub(crate) async fn client(&self, cfg: &Value) -> Result<ChromaHttpClient> {
-        Ok(self.client_config.create_client(cfg).await?)
+    /// An independent vector-store read client for this `EmbedArgs`'s own configured backend —
+    /// mirrors `Orchestrator::new`'s Librarian client construction, but for the memorize-only
+    /// path that has no Librarian to borrow one from. Respects `vector_provider` the same way
+    /// `resolve_collection` (the write side) does, so a memorize-only run configured for
+    /// SQLite-vec can actually recall what it wrote.
+    pub(crate) async fn client(&self, cfg: &Value) -> Result<Arc<dyn VectorStore>> {
+        match self.vector_provider {
+            VectorProvider::Chroma => {
+                Ok(Arc::new(self.client_config.create_client(cfg).await?) as Arc<dyn VectorStore>)
+            }
+            VectorProvider::SqliteVec => Ok(Arc::new(
+                self.sqlite_vec_client_config.create_client().await?,
+            ) as Arc<dyn VectorStore>),
+        }
+    }
+
+    /// Resolves the collection this `EmbedArgs` writes to, as a `Box<dyn VectorCollection>` —
+    /// the one place `vector_provider` is branched on for the write path, so
+    /// `embed_with_metadata_items`/`embed_raw_items`/`embed_chunks` stay backend-agnostic below
+    /// this point. Chroma needs an explicit get-or-create-free `get_collection` (unchanged
+    /// behavior); SQLite-vec has no separate "collection must already exist" concept — tables
+    /// are created lazily on first write (see `SqliteVecCollection::ensure_schema`), so opening
+    /// one here never fails just because it's new.
+    async fn resolve_collection(&self, cfg: &Value) -> Result<Box<dyn VectorCollection>> {
+        match self.vector_provider {
+            VectorProvider::Chroma => {
+                let client = self.client_config.create_client(cfg).await?;
+                let collection = self.collection_config.get_collection(&client, "default").await?;
+                Ok(Box::new(collection))
+            }
+            VectorProvider::SqliteVec => {
+                let name = self.collection_config.name();
+                let name = if name.is_empty() { "default" } else { name };
+                let client = self.sqlite_vec_client_config.create_client().await?;
+                let collection = client.collection(name)?;
+                Ok(Box::new(collection))
+            }
+        }
     }
 
     /// Same as `embed`, but takes pre-built metadata items directly instead
@@ -112,11 +154,7 @@ impl EmbedArgs {
             .ok_or_else(|| RuChatError::InternalError("No model found".into()))?
             .to_string();
 
-        let client = self.client_config.create_client(cfg).await?;
-        let collection = self
-            .collection_config
-            .get_collection(&client, "default")
-            .await?;
+        let collection = self.resolve_collection(cfg).await?;
 
         // 1. Processing and Slicing
         let line_pool: Vec<&str> = prompt.lines().collect();
@@ -168,7 +206,7 @@ impl EmbedArgs {
             chunk_metadatas,
             mode,
             &ollama,
-            &collection,
+            collection.as_ref(),
             &model,
         )
         .await
@@ -193,11 +231,7 @@ impl EmbedArgs {
             .ok_or_else(|| RuChatError::InternalError("No model found".into()))?
             .to_string();
 
-        let client = self.client_config.create_client(cfg).await?;
-        let collection = self
-            .collection_config
-            .get_collection(&client, "default")
-            .await?;
+        let collection = self.resolve_collection(cfg).await?;
 
         let (chunk_texts, chunk_metadatas): (Vec<String>, Vec<Option<UpdateMetadata>>) = items
             .into_iter()
@@ -209,7 +243,7 @@ impl EmbedArgs {
             chunk_metadatas,
             mode,
             &ollama,
-            &collection,
+            collection.as_ref(),
             &model,
         )
         .await
@@ -227,7 +261,7 @@ impl EmbedArgs {
         chunk_metadatas: Vec<Option<UpdateMetadata>>,
         mode: UpsertMode,
         ollama: &Ollama,
-        collection: &ChromaCollection,
+        collection: &dyn VectorCollection,
         model: &str,
     ) -> Result<()> {
         // 2. Generate IDs and Embeddings
@@ -258,16 +292,12 @@ impl EmbedArgs {
         let mut final_metadatas = Vec::new();
 
         // Batched existence check: one round trip for all chunk IDs instead of
-        // one `collection.get()` per chunk. `.get()` returning an error (e.g.
-        // collection empty) is treated the same as "nothing exists yet".
-        let existing_ids: HashSet<String> = retry_transient!(async {
-            collection
-                .get(Some(chunk_ids.clone()), None, None, None, None)
-                .await
-                .map(|r| r.ids.into_iter().collect())
-                .map_err(RuChatError::from)
-        })
-        .unwrap_or_default();
+        // one existence check per chunk. An error (e.g. collection empty/not
+        // yet created) is treated the same as "nothing exists yet".
+        let existing_ids: HashSet<String> = collection
+            .existing_ids(chunk_ids.clone())
+            .await
+            .unwrap_or_default();
 
         for (i, id) in chunk_ids.iter().enumerate() {
             let exists = existing_ids.contains(id);
@@ -330,50 +360,23 @@ impl EmbedArgs {
                     })
                     .transpose()
                     .map_err(|e| RuChatError::MetadataConversionError(e.to_string()))?;
-                retry_transient!(async {
-                    collection
-                        .add(
-                            final_ids.clone(),
-                            final_embeddings.clone(),
-                            docs_to_send.clone(),
-                            None,
-                            metadatas_to_send.clone(),
-                        )
-                        .await
-                        .map_err(RuChatError::ChromaHttpClientError)
-                })?;
+                collection
+                    .add(final_ids, final_embeddings, docs_to_send, metadatas_to_send)
+                    .await?;
                 info!("Added records");
             }
             UpsertMode::Update => {
                 let update_embeddings =
-                    Some(final_embeddings.clone().into_iter().map(Some).collect());
-                retry_transient!(async {
-                    collection
-                        .update(
-                            final_ids.clone(),
-                            update_embeddings.clone(),
-                            docs_to_send.clone(),
-                            None,
-                            metadatas_to_send.clone(),
-                        )
-                        .await
-                        .map_err(RuChatError::ChromaHttpClientError)
-                })?;
+                    Some(final_embeddings.into_iter().map(Some).collect());
+                collection
+                    .update(final_ids, update_embeddings, docs_to_send, metadatas_to_send)
+                    .await?;
                 info!("Updated Records");
             }
             UpsertMode::Upsert => {
-                retry_transient!(async {
-                    collection
-                        .upsert(
-                            final_ids.clone(),
-                            final_embeddings.clone(),
-                            docs_to_send.clone(),
-                            None,
-                            metadatas_to_send.clone(),
-                        )
-                        .await
-                        .map_err(RuChatError::ChromaHttpClientError)
-                })?;
+                collection
+                    .upsert(final_ids, final_embeddings, docs_to_send, metadatas_to_send)
+                    .await?;
                 info!("Upserted records");
             }
         }
