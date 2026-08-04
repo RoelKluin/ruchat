@@ -42,7 +42,7 @@ need if one gets rebuilt, not as active bugs.
 - [ ] ~~Add syntax highlighting for code blocks in chat view~~ — moot, no chat view exists
 - [ ] ~~Support multi-line editing with proper indentation~~ — moot, no editable input buffer exists
 - [ ] ~~Add command palette / key bindings help screen~~ — moot, nothing to bind keys to
-- [ ] `crossterm` (`Cargo.toml`) is now an unused dependency — nothing in `src/` references it. Left in place rather than removed unilaterally, since removing it forecloses rebuilding the interactive TUI without re-adding it; worth a deliberate decision (drop it vs. keep it for a planned rebuild) rather than a silent removal.
+- [x] Removed 2026-08-04: `crossterm` was unused (no `src/` references). Decision: drop rather than keep for a hypothetical TUI rebuild — trivial to re-add if/when that's actually planned.
 - [x] ~~Wire up an actual producer for `AgentEvent::Progress`~~ — done, see Done section below.
 
 ## Medium Priority
