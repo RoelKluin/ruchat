@@ -292,6 +292,18 @@ live-run evidence attached, not just remove the bullet.
         naturally exercising that path is the realistic verification path, not a deliberately engineered repro.
       - `src/cli/config.rs`'s broken `allow_unused = true` was reverted (maintainer confirmed, 2026-08-04) — not a
         code fix, just cleanup of the artifact this bug produced.
+    - **Closed a real CLI gap that was blocking the maintainer's own next step (2026-08-04): asked to add
+      `--summarizer-model` to `scripts/refactoring_examples.sh` to test whether an actual Summarizer reduces the
+      unbounded context growth identified above — the flag didn't exist at all.** `ruchat pipe --help` had
+      `--validator-model` (a quick-start shortcut for the equally-optional Validator role) but no equivalent for
+      Summarizer — the only way to configure one was the full `-a/--agentic <JSON>` escape hatch, which none of the
+      repro scripts use. New `--summarizer-model <MODEL>` on `AskArgs` (`src/providers/llm/ollama/ask.rs`, shared by
+      `ruchat ask`/`ruchat pipe`), mirroring `--validator-model`'s exact pattern: sets `config["Summarizer"] =
+      {"model": ...}`. `scripts/refactoring_examples.sh`'s `COMMON_FLAGS` now passes
+      `--summarizer-model qwen2.5-coder:14b`. New regression test (`summarizer_model_shortcut_configures_the_
+      summarizer_agent`) confirms the shortcut actually reaches the built config; unlike most of this session's
+      fixes, this one required no `Stage`-machine involvement at all, so it's fully, directly unit-tested — no live-
+      infra caveat needed. 305 lib tests pass, clippy clean, fmt clean.
     - **Net assessment: meaningfully improved, not resolved.** The single most severe issue (runs dying almost
       instantly, well short of their configured budget) is fixed and live-confirmed; the double-read-only-tool-call
       and Architect-tool-call-hallucination contributors are fixed and live-confirmed (the second one via the

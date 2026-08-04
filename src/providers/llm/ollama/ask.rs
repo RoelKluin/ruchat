@@ -80,6 +80,15 @@ pub(crate) struct AskArgs {
     #[arg(long, help_heading = "Agent Configuration")]
     validator_model: Option<String>,
 
+    /// Model for an optional Summarizer agent — compresses history once it exceeds the model's
+    /// dynamic history-token limit (Stage::Retry). Without this, a multi-round run's HISTORY/
+    /// DOCUMENTS grow completely unbounded round over round, which both bloats every subsequent
+    /// prompt and slows inference — a real, measured contributor found while investigating why
+    /// later rounds of a run seemed to lose track of earlier instructions (see TODO.md's pinned
+    /// reliability item). Same "quick-start" shortcut pattern as --validator-model.
+    #[arg(long, help_heading = "Agent Configuration")]
+    summarizer_model: Option<String>,
+
     /// Add one or more specific critics (e.g., --critic "Security" --critic "Performance")
     #[arg(long, action = clap::ArgAction::Append, help_heading = "Agent Configuration")]
     critic: Vec<String>,
@@ -236,6 +245,11 @@ impl AskArgs {
         // Handle validator shortcut
         if let Some(v_model) = self.validator_model {
             config["Validator"] = serde_json::json!({ "model": v_model });
+        }
+
+        // Handle summarizer shortcut
+        if let Some(s_model) = self.summarizer_model {
+            config["Summarizer"] = serde_json::json!({ "model": s_model });
         }
 
         // Override iterations if flag is present
@@ -425,6 +439,25 @@ mod tests {
         assert_eq!(config["iterations"], 5);
         assert_eq!(config["Architect"]["model"], "codellama");
         assert_eq!(config["Worker"]["model"], "codellama");
+    }
+
+    // Regression: --summarizer-model previously didn't exist at all — the only way to configure
+    // a Summarizer was the full --agentic JSON escape hatch, unlike --validator-model's
+    // quick-start shortcut for the equally-optional Validator role. Found while investigating
+    // why a real run's later rounds seemed to lose track of earlier instructions: none of the
+    // repro scripts could enable a Summarizer even though they wanted to, since the flag simply
+    // didn't exist (see TODO.md's pinned reliability item).
+    #[tokio::test]
+    async fn summarizer_model_shortcut_configures_the_summarizer_agent() {
+        let args = AskArgs {
+            team_model: Some("codellama".to_string()),
+            summarizer_model: Some("qwen2.5-coder:14b".to_string()),
+            ..Default::default()
+        };
+
+        let config = args.into_config("default-model").unwrap();
+
+        assert_eq!(config["Summarizer"]["model"], "qwen2.5-coder:14b");
     }
 
     #[test]

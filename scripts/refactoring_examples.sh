@@ -52,6 +52,7 @@ RUCHAT_BIN="${RUCHAT_BIN:-./ruchat}"
 COMMON_FLAGS=(
   --team-model qwen2.5-coder:14b
   --validator-model qwen2.5-coder:14b
+  --summarizer-model qwen2.5-coder:14b
   --collection repo_src-all-minilm_l6-v2
   --iterations 5
 )
