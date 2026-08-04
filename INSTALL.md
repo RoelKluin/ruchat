@@ -2,7 +2,9 @@
 - Rust (latest stable version)
 - Git
 - Ollama
-- Chroma (For embedding generation)
+- A vector store, for RAG/embedding features: Chroma (below), or SQLite-vec
+  (`--vector-provider sqlite-vec --sqlite-vec-path <file>`) — no separate
+  server, `rusqlite` bundles SQLite so nothing extra to install
 
 # Ruchat installation Guide
 

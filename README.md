@@ -25,6 +25,9 @@ the local-first default.
 - **RAG via Chroma**: single- or multi-collection queries (a goal needing both
   source code and its commit history can search both collections in one
   query), relevance reranking, and automatic cross-session memory recall
+- **Optional SQLite-vec vector-store backend** (`--vector-provider sqlite-vec
+  --sqlite-vec-path <file>`) — a local-file alternative to Chroma for `embed`/
+  `index` and Librarian RAG, no separate server needed
 - **Repo indexing** into Chroma using ctags symbol boundaries (`index`,
   requires `universal-ctags` on `PATH`)
 - **Automatic collection management** (`chroma-init`) — ensures every
@@ -51,6 +54,8 @@ the local-first default.
    - Optional: `universal-ctags` on `PATH` for `ruchat index`
    - Optional: an Anthropic API key (from console.anthropic.com — separate
      from a Claude Pro subscription) if you want `--chat-provider anthropic`
+   - No extra install needed for `--vector-provider sqlite-vec` — `rusqlite`
+     bundles SQLite, so it's just a local file path
 
 2. **Build**
    ```bash
