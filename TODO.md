@@ -77,7 +77,7 @@ need if one gets rebuilt, not as active bugs.
 - [ ] Provider-selector flags split their own on/off switch and sub-args across two different `--help` headings each (internally consistent between the two providers, but a user has to scan two sections to fully configure either one) — cosmetic, low priority.
 
 ### Performance
-- [ ] Streaming response handling in agent orchestrator (currently buffers)
+- [x] Stale, corrected 2026-08-04: this already works and isn't buffered. `Agent::query_stream` (`core/agent.rs`) forwards each `StreamItem::ChatChunk` over the channel the instant it arrives from the model; `tui/render.rs` writes each chunk to the terminal immediately on receipt (`cio.write_line`). `ctx.output.push_str` alongside it is a separate concern (accumulating the full text for tool-call parsing after the round completes), not a buffering-before-display step.
 - [ ] Optimize history limit calculation and token counting
 - [x] Reviewed 2026-08-04: `reqwest`'s default features (`default-tls` (rustls), `charset`, `http2`, `system-proxy`) are all genuinely used — TLS for the Anthropic API, `system-proxy` for corporate/dev network setups, `http2` likely relevant to Anthropic's API. No trimming warranted; explicit `["json", "stream"]` are the only additions beyond defaults, both used.
 
