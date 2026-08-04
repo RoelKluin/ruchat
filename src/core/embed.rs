@@ -414,3 +414,39 @@ impl EmbedPromptArgs {
         self.args.embed(self.prompt.as_str(), self.mode, cfg).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    // Regression coverage for `resolve_collection`'s own branch selection — every other test
+    // of this behavior goes through the Librarian's separate client-construction path
+    // (`orchestrator.rs`), not this one. Proves `--vector-provider sqlite-vec` actually reaches
+    // a real `SqliteVecCollection`, not a silent fallthrough to Chroma, by writing through the
+    // resolved collection and reading the result back with an independent client.
+    #[tokio::test]
+    async fn resolve_collection_with_sqlite_vec_provider_writes_to_the_real_sqlite_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("embed_test.sqlite3");
+        let args = EmbedArgs::parse_from([
+            "embed",
+            "--vector-provider",
+            "sqlite-vec",
+            "--sqlite-vec-path",
+            path.to_str().unwrap(),
+            "-c",
+            "testcol",
+        ]);
+
+        let collection = args.resolve_collection(&serde_json::json!({})).await.unwrap();
+        collection
+            .add(vec!["a".into()], vec![vec![1.0, 0.0]], Some(vec![Some("hi".into())]), None)
+            .await
+            .unwrap();
+
+        let client = crate::sqlite_vec::SqliteVecClient::open(&path).unwrap();
+        let found = client.collection("testcol").unwrap().existing_ids(vec!["a".into()]).await.unwrap();
+        assert!(found.contains("a"), "expected the write to land in the real sqlite file");
+    }
+}
