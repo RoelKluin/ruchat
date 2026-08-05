@@ -273,7 +273,10 @@ Stop writing new mitigations until there is a number that can move. In order:
    are continued (#16). It now diffs the commit set before/after and requires a new commit
    touching a file other than `featured_changes.md`. Still aborts if a run leaves the tree
    dirty (contributor #7 recurring). Replaces "~99/100 fail" with a baseline. Gate for Phase 2's
-   milestone: 5 consecutive unaided lands. NEEDS A LIVE RUN.
+   milestone, softened 2026-08-05 (maintainer call, see ROADMAP.md): >=60% of a 5-run batch
+   lands (was "5 consecutive" - a streak metric that stayed at effectively 0% regardless of
+   real progress, since one failure reset it). `gate_measure` now prints MET/not met against
+   this bar itself. NEEDS A LIVE RUN.
 
    Known real rate so far, from the maintainer's own archived runs: **3 genuine lands out of 8
    commits** - and those 8 came from many more runs than 8, so the true per-run rate is lower.

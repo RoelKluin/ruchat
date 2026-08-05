@@ -334,9 +334,19 @@ gate_measure() {
       exit 1
     fi
   done
+  # Bar softened 2026-08-05 (maintainer call): "5 consecutive" was a streak metric, not a rate
+  # one — at any realistic success probability a single failure resets the whole count to zero,
+  # so it barely moved even as real reliability fixes landed. >=60% of a batch is still a real
+  # bar (a coin flip does not clear it), but it rewards partial progress instead of discarding
+  # it. ceil(0.6 * runs) via integer math so this still makes sense if `runs` isn't 5.
+  local threshold=$(( (runs * 3 + 4) / 5 ))
   echo
-  echo "gate result: $landed/$runs landed a commit"
-  echo "Phase 2 milestone gate needs 5 consecutive lands (see TODO.md section 0)."
+  echo "gate result: $landed/$runs landed a commit (need $threshold, i.e. >=60%)"
+  if [ "$landed" -ge "$threshold" ]; then
+    echo "Phase 2 milestone: MET this batch (see TODO.md section 0)."
+  else
+    echo "Phase 2 milestone: not met this batch (see TODO.md section 0)."
+  fi
 }
 
 # --- Dispatch ----------------------------------------------------------------

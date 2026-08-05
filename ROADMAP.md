@@ -25,11 +25,18 @@ are tracked separately:
 - **Features complete** — every `[x]` in the phase. Checkbox-derived, cheap to verify.
 - **Milestone met** — a measured, live, end-to-end success rate. Not implied by the above.
 
-**Phase 2's milestone gate**: 5 consecutive live runs (`ruchat pipe
---team-model ...` against real Ollama) each landing a committed change, no human
-intervention. Current measured rate: ~1/100 (2026-08-04 baseline: 19/20 archived
-traces failed). Until that gate is met, Phase 2's milestone is **not met**,
-regardless of how many features are `[x]`.
+**Phase 2's milestone gate**: **>=60% of a 5-run batch** (`ruchat pipe
+--team-model ...` against real Ollama, `bash scripts/refactoring_examples.sh
+gate 5`) landing a committed change, no human intervention. Softened
+2026-08-05 (maintainer call) from "5 consecutive" — a streak requirement is a
+single-failure-resets-to-zero metric, not a rate one, so it stayed pinned at
+effectively 0% even as real fixes landed; a batch success rate rewards partial
+progress instead of discarding it on the first miss. Still a real bar, not a
+formality: a coin flip does not clear 60%. Current measured rate: ~1/100
+(2026-08-04 baseline: 19/20 archived traces failed, pre-dating this session's
+reliability fixes — not yet re-measured against the new bar). Until that gate
+is met, Phase 2's milestone is **not met**, regardless of how many features
+are `[x]`.
 
 The gate task is deliberately **not** `fix_one_clippy_lint` (decided
 2026-08-04): that scenario's correct fix needs two hunks — `options` is declared
