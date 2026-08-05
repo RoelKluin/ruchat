@@ -1236,13 +1236,23 @@ impl Orchestrator {
         Ok(())
     }
 
-    /// Analyzes the just-finished run's trace with a single LLM call and archives the result —
-    /// `ruchat_traces/successes/` (summary only) if `Stage::Commit` succeeded, otherwise
-    /// `ruchat_traces/failures/` (summary plus the full trace) — removing the live
-    /// in-progress file either way. If the LLM call itself fails (Ollama unreachable, timeout,
-    /// empty response), the run is still archived, just with a placeholder note instead of a
-    /// real summary — a diagnostic nicety failing must never mask or replace the original
-    /// outcome, nor leave the run's trace file orphaned outside both archive directories.
+    /// Analyzes the just-finished run's trace and writes out what can be learned from it:
+    ///
+    /// - `ruchat_traces/summaries/` — a standalone analysis of every run, successful or not:
+    ///   how it ended, plus a round-by-round review of the agents' decisions saying which were
+    ///   good calls and which were not (`run_summary::generate_step_review`).
+    /// - `ruchat_traces/successes/` (outcome summary only) or `ruchat_traces/failures/`
+    ///   (outcome summary plus the full trace), removing the live in-progress file either way.
+    ///
+    /// Two LLM calls rather than one asking for both parts at once: a local model does
+    /// noticeably better on one focused instruction than on a two-section structured document,
+    /// and it keeps the short outcome summary — the part echoed to the terminal and used as the
+    /// archive header — from being held hostage to the much longer review's timeout.
+    ///
+    /// If either call fails (Ollama unreachable, timeout, empty response), the run is still
+    /// archived, just with a placeholder note in place of that piece — a diagnostic nicety
+    /// failing must never mask or replace the original outcome, nor leave the run's trace file
+    /// orphaned outside every archive directory.
     async fn finalize_trace(
         &self,
         ctx: &Context,
@@ -1268,6 +1278,15 @@ impl Orchestrator {
             tracing::warn!(error = ?e, success, "run summary generation failed");
             format!("(automatic summary generation failed: {e})")
         });
+        let review =
+            run_summary::generate_step_review(self.chat.as_ref(), &model, &ctx.goal, &body)
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::warn!(error = ?e, success, "step review generation failed");
+                    format!("(automatic step review generation failed: {e})")
+                });
+        ctx.finalize_summary_trace(&ctx.summary_body(&summary, &review, success))
+            .await;
         if success {
             ctx.finalize_success_trace(&summary).await;
         } else {
@@ -1278,9 +1297,13 @@ impl Orchestrator {
         } else {
             "Run did not succeed"
         };
+        // Only the outcome summary goes to the terminal — the step review is a page of
+        // per-round lines, which belongs in a file to read afterwards, not scrolling past at
+        // the end of a run.
         let _ = tx
             .send(Ok(StreamItem::Event(AgentEvent::Trace(format!(
-                "{prefix}: {summary}"
+                "{prefix}: {summary}\nStep-by-step review written to {}",
+                ctx.summary_path().display()
             )))))
             .await;
     }
@@ -2104,9 +2127,13 @@ mod tests {
     // `prepend_failure_summary` was.
     #[tokio::test]
     async fn finalize_trace_sends_a_failure_trace_event_with_the_analysis() {
+        // Two scripted responses, in call order: the outcome summary, then the step review.
         let orchestrator = build_test_orchestrator(
             base_config(),
-            vec!["Worker kept repeating itself and never produced a valid patch"],
+            vec![
+                "Worker kept repeating itself and never produced a valid patch",
+                "round 1 | Worker | resubmitted the rejected diff | BAD: same rejection reason",
+            ],
             None,
         )
         .await;
@@ -2122,6 +2149,10 @@ mod tests {
                 assert!(
                     msg.contains("Worker kept repeating itself and never produced a valid patch")
                 );
+                // The review is a page of per-round lines; it belongs in the summary file, not
+                // scrolling past in the terminal — only its path is reported here.
+                assert!(!msg.contains("BAD: same rejection reason"));
+                assert!(msg.contains("ruchat_traces/summaries/ruchat_trace_0.md"));
             }
             other => panic!("expected a Trace event, got {other:?}"),
         }
@@ -2131,7 +2162,10 @@ mod tests {
     async fn finalize_trace_sends_a_success_trace_event_with_the_analysis() {
         let orchestrator = build_test_orchestrator(
             base_config(),
-            vec!["Renamed the helper and updated every call site."],
+            vec![
+                "Renamed the helper and updated every call site.",
+                "round 1 | Worker | read the file before editing | GOOD: grounded the diff",
+            ],
             None,
         )
         .await;
@@ -2145,6 +2179,34 @@ mod tests {
             StreamItem::Event(AgentEvent::Trace(msg)) => {
                 assert!(msg.starts_with("Run succeeded:"));
                 assert!(msg.contains("Renamed the helper and updated every call site."));
+                assert!(msg.contains("ruchat_traces/summaries/ruchat_trace_0.md"));
+            }
+            other => panic!("expected a Trace event, got {other:?}"),
+        }
+    }
+
+    // A step review failing must not cost the run its outcome summary — the review is the
+    // newer, slower, more failure-prone of the two calls (much longer output, much longer
+    // timeout), and it sits between the outcome summary and the archival step.
+    #[tokio::test]
+    async fn finalize_trace_still_reports_the_outcome_when_the_step_review_fails() {
+        // One scripted response only: the outcome summary. The review call gets an empty
+        // response, which `generate_step_review` treats as an error.
+        let orchestrator = build_test_orchestrator(
+            base_config(),
+            vec!["Worker never produced a valid patch", "   "],
+            None,
+        )
+        .await;
+        let ctx = Context::new("fix the bug".to_string());
+        let (tx, mut rx) = mpsc::channel(100);
+
+        orchestrator.finalize_trace(&ctx, &tx, false).await;
+
+        let event = rx.recv().await.expect("expected a trace event");
+        match event.expect("expected Ok") {
+            StreamItem::Event(AgentEvent::Trace(msg)) => {
+                assert!(msg.contains("Worker never produced a valid patch"));
             }
             other => panic!("expected a Trace event, got {other:?}"),
         }

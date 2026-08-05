@@ -141,6 +141,33 @@ instruction not to (485). Next step if these persist after a live re-run: try
     edit. The reliability gate deliberately does NOT get this clause (`run_ruchat_raw`) - its
     whole point is that the target never varies.
 
+18. [x] Every finished run now writes `ruchat_traces/summaries/ruchat_trace_<N>.md`: goal,
+    outcome, and a round-by-round review of the agents' decisions - one line per step with a
+    `GOOD:`/`BAD:`/`UNCLEAR:` verdict, then `LESSON:` lines (maintainer request 2026-08-05, to
+    have something learnable per run rather than only a cause-of-death line). Fixed prefixes so
+    recurring patterns are greppable across runs. `run_summary::generate_step_review` +
+    `Context::summary_body`/`finalize_summary_trace`. Judges observed decisions, not claimed
+    reasoning - a Worker tool call states no motive and a model asked for one invents it.
+    Verified against real trace 529 on qwen2.5-coder:14b: correct verdicts, correct round
+    numbers, 95s cold. Own 240s timeout (30s timed out) and a 24k-char head+tail clamp, since
+    `chat_stream` sets no `num_ctx` and traces average ~50 KB. The clamp also fixed the existing
+    outcome summary, which shares the same trace: `failures/ruchat_trace_472.md` (535 KB) had
+    recorded the summary "I'm sorry, but I can't assist with that request." - Ollama had
+    truncated away the system instruction. Same trace clamped now summarizes correctly in 4s.
+    Any pre-clamp summary on a large trace should be treated as unreliable.
+
+19. [ ] ~58 traces sit unarchived in `ruchat_traces/` (471-529), so those runs never reached
+    `finalize_trace` - no outcome summary and now no step review either. Find out how a run
+    exits without it (cancel? panic? `?` early-return in `run_stage_machine`?). Each one is a
+    lost data point on exactly the reliability question section 0 exists to answer.
+
+20. [ ] `LlmClient::chat_stream` sets no `num_ctx`, so Ollama silently truncates any prompt over
+    the model default - agent prompts, not just summaries. Item 18 clamps its own input as a
+    local mitigation; the general case is unhandled and would explain context-blind agent
+    behavior in long runs. Not theoretical: it demonstrably destroyed the run summary on
+    trace 472 (see item 18), and the same mechanism drops HISTORY/DOCUMENTS from a Worker
+    prompt in a long run - which looks exactly like the model ignoring its own context.
+
 ### NEXT ACTION (decided 2026-08-04, roadmap review)
 
 Stop writing new mitigations until there is a number that can move. In order:

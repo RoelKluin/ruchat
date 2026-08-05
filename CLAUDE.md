@@ -218,6 +218,16 @@ or escalated run; each run gets its own `ruchat_trace_<N>.md`, moved into
 summary of why the run ended that way) once it finishes, so old runs are
 never overwritten by new ones.
 
+Start from `ruchat_traces/summaries/ruchat_trace_<N>.md` rather than the raw
+trace, though: every finished run gets one, and it carries the goal, the
+outcome, and a round-by-round review of the agents' decisions with a
+`GOOD:`/`BAD:`/`UNCLEAR:` verdict per step plus `LESSON:` lines. Those
+prefixes are fixed so they can be grepped across runs — `grep -h '^LESSON:'
+ruchat_traces/summaries/*.md | sort | uniq -c | sort -rn` is the fastest way
+to see which failure patterns actually recur, instead of re-reading traces
+one at a time. Drop to the full trace in `failures/` only when the summary
+names something you need the round-by-round detail to confirm.
+
 ## Documentation (for `documentation`)
 
 Keep changes consistent with the existing doc split — don't duplicate content

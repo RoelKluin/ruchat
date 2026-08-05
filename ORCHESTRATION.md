@@ -128,11 +128,27 @@ this live file is a full chronological dump of every turn
 turns, which are excluded from the `HISTORY` prompt variable (rendered as a
 separate `DOCUMENTS` section instead) but not from the trace file.
 
-Once the run ends, `Orchestrator::finalize_trace` makes a single direct LLM
-call (`orchestrator/run_summary.rs`, same one-shot pattern as commit-message
+Once the run ends, `Orchestrator::finalize_trace` makes two direct LLM calls
+(`orchestrator/run_summary.rs`, same one-shot pattern as commit-message
 generation — best-effort, so a failed analysis call never blocks or masks the
-original outcome) analyzing the finished trace, and archives the result,
-removing the live file:
+original outcome) analyzing the finished trace, and archives the results,
+removing the live file. The trace is clamped to `MAX_TRACE_CHARS` head-and-tail
+first: traces average ~50 KB and `chat_stream` sets no `num_ctx`, so without
+that, Ollama would silently drop whichever part of the prompt didn't fit.
+
+- **Every run**, whatever the outcome: `generate_step_review` walks the run
+  round by round and emits one line per significant step — what the role
+  decided (quoting the Architect's own `CHOICE:` paragraph, or a rejection's
+  stated reason, where the trace has one) and a `GOOD:`/`BAD:`/`UNCLEAR:`
+  verdict on whether it was the right call given what was already in context
+  at that point, then up to three `LESSON:` lines naming recurring patterns.
+  `Context::finalize_summary_trace` writes that, under the goal and the
+  outcome summary below, as `ruchat_traces/summaries/ruchat_trace_<N>.md`.
+  Kept in its own directory so every file there is the same shape and the
+  fixed verdict prefixes can be grepped across runs to find patterns that
+  repeat. Judging observed decisions rather than asking for an agent's
+  interior reasoning is deliberate: a Worker's tool call states no motive, and
+  a model asked for one invents it convincingly.
 - **Success** (`Stage::Commit` actually succeeded): `generate_success_summary`
   explains how/why the run succeeded; `Context::finalize_success_trace` writes
   *just that summary* — deliberately not the full round-by-round trace, since

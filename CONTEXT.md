@@ -110,8 +110,10 @@ state to keep in sync:
   variable — see `full_history_view`/`trace_body`). `init_trace_index()` picks
   the run's file slot once, at the very start; `finalize_success_trace(summary)`
   / `finalize_failure_trace(summary)` archive the final result into
-  `ruchat_traces/successes/` or `ruchat_traces/failures/` once the run ends —
-  see `ORCHESTRATION.md` for how the summary itself is generated.
+  `ruchat_traces/successes/` or `ruchat_traces/failures/` once the run ends, and
+  `finalize_summary_trace(summary_body(..))` writes every run's standalone
+  analysis — outcome plus a round-by-round review of the agents' decisions — to
+  `ruchat_traces/summaries/`. See `ORCHESTRATION.md` for how both are generated.
 
 ### How Context Flows Through the Orchestration Loop
 

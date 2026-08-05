@@ -13,6 +13,13 @@ const TRACE_DIR: &str = "ruchat_traces";
 const TRACE_SUCCESS_DIR: &str = "ruchat_traces/successes";
 const TRACE_FAILURE_DIR: &str = "ruchat_traces/failures";
 
+/// One short, self-contained analysis file per run — the outcome summary plus a round-by-round
+/// review of the agents' decisions (see `run_summary::generate_step_review`). Kept apart from
+/// the outcome archives above so this directory is all signal: every file is the same shape,
+/// none of them is a raw trace, and recurring failure patterns can be found across runs by
+/// grepping the fixed `GOOD:`/`BAD:`/`UNCLEAR:`/`LESSON:` verdict prefixes.
+const TRACE_SUMMARY_DIR: &str = "ruchat_traces/summaries";
+
 /// Parses `N` out of a `ruchat_trace_<N>.md` filename; `None` for anything else found sitting
 /// in one of the trace directories.
 fn parse_trace_index(name: &str) -> Option<u64> {
@@ -132,8 +139,8 @@ impl Context {
         }
     }
 
-    /// Picks this run's trace-file slot by scanning `TRACE_DIR` (plus both outcome
-    /// subdirectories, in case a prior run's file was already archived there) for existing
+    /// Picks this run's trace-file slot by scanning `TRACE_DIR` (plus every subdirectory a
+    /// finished run leaves a file in, since a prior run's number only survives there) for existing
     /// `ruchat_trace_<N>.md` files and using one past the highest `N` found — so every run
     /// gets its own file instead of every run overwriting the same path. Call once, right
     /// after `Context::new`, before the first `trace()` call.
@@ -145,7 +152,12 @@ impl Context {
             return;
         }
         let mut max_seen = 0u64;
-        for dir in [TRACE_DIR, TRACE_SUCCESS_DIR, TRACE_FAILURE_DIR] {
+        for dir in [
+            TRACE_DIR,
+            TRACE_SUCCESS_DIR,
+            TRACE_FAILURE_DIR,
+            TRACE_SUMMARY_DIR,
+        ] {
             let Ok(mut entries) = tokio::fs::read_dir(dir).await else {
                 continue;
             };
@@ -287,6 +299,44 @@ impl Context {
             self.context_view_for_trace(),
             self.full_history_view()
         )
+    }
+
+    /// Where this run's analysis file lands, for reporting the path to the maintainer once the
+    /// run ends.
+    pub(crate) fn summary_path(&self) -> PathBuf {
+        Path::new(TRACE_SUMMARY_DIR).join(self.trace_filename())
+    }
+
+    /// Renders the standalone run-analysis document written to `TRACE_SUMMARY_DIR`: the goal,
+    /// how the run ended, and the round-by-round review of the agents' decisions. Deliberately
+    /// repeats the goal and the outcome rather than pointing at the trace, so one summary file
+    /// can be read (or fed to another model) on its own without the trace beside it.
+    ///
+    /// Pure and separately tested: the write below is skipped under `cfg!(test)` along with
+    /// every other `ruchat_traces/` write, so this is the part that can actually be asserted on.
+    pub(crate) fn summary_body(&self, outcome: &str, review: &str, success: bool) -> String {
+        let verdict = if success {
+            "succeeded"
+        } else {
+            "did not succeed"
+        };
+        format!(
+            "# Run summary — trace {} ({verdict})\n\n## Goal\n{}\n\n## Outcome\n{outcome}\n\n\
+            ## Step review\n{review}\n",
+            self.trace_index, self.goal
+        )
+    }
+
+    /// Writes this run's analysis file. Unlike the two archive functions below, this one runs
+    /// for every finished run, successful or not — the decisions worth learning from are just
+    /// as often in a run that worked.
+    pub(crate) async fn finalize_summary_trace(&self, body: &str) {
+        // See `trace()`'s doc comment.
+        if cfg!(test) {
+            return;
+        }
+        let _ = tokio::fs::create_dir_all(TRACE_SUMMARY_DIR).await;
+        let _ = tokio::fs::write(self.summary_path(), body).await;
     }
 
     /// Archives this run's trace under `TRACE_FAILURE_DIR` — `summary` plus the full
@@ -835,5 +885,35 @@ mod tests {
         assert_eq!(parse_trace_index("notes.md"), None);
         assert_eq!(parse_trace_index("ruchat_trace_abc.md"), None);
         assert_eq!(parse_trace_index("ruchat_trace_3.txt"), None);
+    }
+
+    // The summary file is meant to be readable — and feedable to another model — on its own,
+    // without the trace beside it, so it has to carry the goal as well as the two analyses.
+    // `finalize_summary_trace` skips its write under `cfg!(test)` like every other
+    // `ruchat_traces/` write, which is why the composition is a separate, pure function.
+    #[test]
+    fn summary_body_is_self_contained_and_names_the_outcome() {
+        let ctx = Context::new("fix the clippy warning".to_string());
+        let body = ctx.summary_body(
+            "The Worker never produced an applicable patch.",
+            "round 1 | Worker | re-ran cargo_clippy | BAD: result was already in context",
+            false,
+        );
+        assert!(body.contains("did not succeed"));
+        assert!(body.contains("fix the clippy warning"));
+        assert!(body.contains("The Worker never produced an applicable patch."));
+        assert!(body.contains("BAD: result was already in context"));
+    }
+
+    #[test]
+    fn summary_body_marks_a_successful_run_as_succeeded() {
+        let ctx = Context::new("rename a function".to_string());
+        let body = ctx.summary_body(
+            "Renamed it.",
+            "round 1 | Worker | edited | GOOD: fine",
+            true,
+        );
+        assert!(body.contains("succeeded"));
+        assert!(!body.contains("did not succeed"));
     }
 }
