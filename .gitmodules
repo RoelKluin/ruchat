@@ -1,0 +1,3 @@
+[submodule "fixtures/gate-repo"]
+	path = fixtures/gate-repo
+	url = /home/roel/dnld/sdc4/dev/git/rust/ruchat-gate-fixture

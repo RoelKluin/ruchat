@@ -45,6 +45,16 @@ pipeline works" with "the model can decompose a multi-site edit." The gate runs
 on a task whose correct fix is genuinely one hunk. Multi-hunk tasks are a
 separate, later bar.
 
+**Runs against a dedicated fixture submodule (2026-08-05, maintainer request),
+not ruchat's own repo.** `fixtures/gate-repo` is a small separate crate; the
+gate deletes a dead trait there instead of in `src/`. Keeps gate commits and
+`ai/feature-*` branches out of ruchat's own git history, keeps `cargo_clippy`/
+`cargo_check` output (and trace size) independent of ruchat's own codebase
+size, and keeps the target from needing re-verification every time ruchat's
+surrounding code shifts. See `fixtures/gate-repo/README.md` and `TODO.md`'s
+NEXT ACTION item 1. The submodule URL is currently a local absolute path —
+works on this machine only, not yet clone-portable.
+
 **Reference model** (named explicitly 2026-08-04, previously implicit — which is
 why "reliable" was never falsifiable): `qwen2.5-coder:32b`. `qwen2.5-coder:14b`
 is best-effort, not the bar. A per-task-class tier list is the intended

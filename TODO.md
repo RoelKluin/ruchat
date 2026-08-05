@@ -259,14 +259,26 @@ Stop writing new mitigations until there is a number that can move. In order:
 1. [x] **Gate task retargeted, 2026-08-04.** `fix_one_clippy_lint` needs a 2-hunk edit
    (declaration at agent.rs:82 + construction at agent.rs:116), so it conflates "pipeline works"
    with "model can decompose a multi-site edit" - it cannot answer either question.
-   New gate: `gate_remove_dead_trait` in scripts/refactoring_examples.sh - delete the dead
-   `LlmProvider` trait in src/providers/llm.rs (nothing implements or calls it). Verified
-   one-hunk by hand both ways before adopting it: trait alone (3 lines) compiles, leaving an
-   unused-import warning; `use` + trait (5 lines) compiles clean. Both are one contiguous hunk,
-   so either lands - a deliberately forgiving criterion, since this measures the loop, not the
-   model's thoroughness. It is a control, not a challenge: it names the file so that
-   target-selection isn't a variable. Naturally repeatable (a success commits to an
-   `ai/feature-*` branch and returns to the working branch, leaving llm.rs intact).
+   New gate: `gate_remove_dead_trait` in scripts/refactoring_examples.sh - delete a dead trait
+   (`Evictor`, nothing implements or calls it). Verified one-hunk by hand both ways before
+   adopting it: trait alone compiles, leaving an unused-import warning; trait + doc comment
+   compiles clean. Both are one contiguous hunk, so either lands - a deliberately forgiving
+   criterion, since this measures the loop, not the model's thoroughness. It is a control, not a
+   challenge: it names the file so that target-selection isn't a variable. Naturally repeatable
+   (a success commits to an `ai/feature-*` branch and returns to the working branch, leaving the
+   target intact).
+   **Moved to a dedicated fixture submodule, 2026-08-05 (maintainer request).** The gate (and the
+   rest of `refactoring_examples.sh`'s non-gate examples still run against ruchat's own repo)
+   now runs `Evictor` against `fixtures/gate-repo`, a small separate crate added as a git
+   submodule (`git -C fixtures/gate-repo ...` throughout `gate_measure`/`_agent_commits`), not
+   `src/providers/llm.rs`. Reasons: gate commits/`ai/feature-*` branches no longer land in
+   ruchat's own git history; `cargo_clippy`/`cargo_check` output (and so trace size) no longer
+   scales with ruchat's actual codebase size; the target no longer needs re-verifying single-hunk
+   every time ruchat's surrounding code shifts under it. See `fixtures/gate-repo/README.md`.
+   **Caveat**: `.gitmodules`' URL is a local absolute path
+   (`/home/roel/dnld/sdc4/dev/git/rust/ruchat-gate-fixture`) - works on this machine, but
+   `git submodule update --init` will fail on a fresh clone from GitHub/GitLab until that crate
+   is pushed to a real remote and the URL updated to match.
 2. [ ] **Measure the real success rate on it.** `bash scripts/refactoring_examples.sh gate 5`.
    Runner corrected 2026-08-05: it counted new `ai/feature-*` branches, which would have scored
    all 5 changelog-only commits (#15) as lands, and stops incrementing at all now that branches

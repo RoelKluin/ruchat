@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Example `ruchat pipe` invocations for small, low-risk Rust code-quality tasks
-# against ruchat's own repository.
+# against ruchat's own repository. The reliability gate near the bottom of this
+# file is the one exception — it runs against fixtures/gate-repo, a dedicated
+# fixture crate submodule, not against ruchat itself (see GATE_DIR below and
+# fixtures/gate-repo/README.md for why).
 #
 # These are modeled on a command the maintainer confirmed works:
 #
@@ -45,7 +48,9 @@
 
 set -euo pipefail
 
-RUCHAT_BIN="${RUCHAT_BIN:-./ruchat}"
+# Absolute, resolved once up front: the gate functions below `cd` into $GATE_DIR before
+# invoking this, and a relative `./ruchat` would no longer resolve once cwd has moved.
+RUCHAT_BIN="$(realpath "${RUCHAT_BIN:-./ruchat}")"
 
 # Shared, proven-working flags from the maintainer's confirmed command.
 # shellcheck disable=SC2034
@@ -54,6 +59,25 @@ COMMON_FLAGS=(
   --validator-model qwen2.5-coder:14b
   --summarizer-model qwen2.5-coder:14b
   --collection repo_src-all-minilm_l6-v2
+  --iterations 5
+)
+
+# The reliability gate (below) runs against this dedicated fixture crate — a git submodule,
+# not ruchat's own source — instead of ruchat's own repo. Added 2026-08-05 (maintainer
+# request): a gate run against ruchat itself put its ai/feature-* branches and commits in
+# ruchat's real git history, scaled its cargo_clippy/cargo_check output (and so its trace size)
+# with ruchat's actual codebase size, and needed its one fixed target hand-reverified single-hunk
+# every time ruchat's surrounding code shifted under it. See fixtures/gate-repo/README.md.
+GATE_DIR="$(realpath "${GATE_DIR:-fixtures/gate-repo}")"
+
+# Same shape as COMMON_FLAGS but no --collection: the fixture crate isn't indexed in Chroma
+# (it's intentionally too small and stable to be worth a RAG collection of its own), and the
+# gate's whole point is a control that names its target directly — it never needed retrieval.
+# shellcheck disable=SC2034
+GATE_FLAGS=(
+  --team-model qwen2.5-coder:14b
+  --validator-model qwen2.5-coder:14b
+  --summarizer-model qwen2.5-coder:14b
   --iterations 5
 )
 
@@ -249,27 +273,36 @@ those 3 to match cargo fmt's default style, with no behavior change."
 # constructed at :116) — so a failure there could always be either the pipeline
 # or the model's inability to decompose a multi-site edit.
 #
-# Verified one-hunk 2026-08-04, both ways, by applying each by hand and running
-# `cargo check --lib`:
-#   - delete the trait only (3 lines)      -> compiles; leaves an unused-import warning
-#   - delete the `use` + trait (5 lines)   -> compiles clean
+# Runs against $GATE_DIR (fixtures/gate-repo, a dedicated fixture crate submodule) rather than
+# ruchat's own source as of 2026-08-05 — see GATE_DIR's own comment above and
+# fixtures/gate-repo/README.md for why. Verified one-hunk when that crate was written, both
+# ways, by applying each by hand and running `cargo check --lib` inside it:
+#   - delete the trait only               -> compiles; leaves an unused-import warning
+#   - delete the trait + its doc comment  -> compiles clean
 # Both are a single contiguous hunk, so a correct run lands either way. That
 # forgiving success criterion is deliberate: this measures the loop, not the
 # model's thoroughness.
 #
 # Naturally repeatable: a successful run commits to a new `ai/feature-<ts>`
-# branch and returns to the original branch, so `src/providers/llm.rs` on the
-# working branch still contains the trait for the next run. No manual reset.
+# branch *inside the fixture repo* and returns to its master, so `Evictor` on
+# the fixture's working branch still exists for the next run. No manual reset.
 
 gate_remove_dead_trait() {
-  # run_ruchat_raw, not run_ruchat: the gate must NOT get the "pick a different instance" clause
-  # every example gets. Its whole purpose is that the target never varies between runs.
-  run_ruchat_raw "--critic Idiomatic-Rust" \
-    "You are a rust specialist. You work on the ruchat git repository. Task: \
-the trait \`LlmProvider\` in src/providers/llm.rs is dead code — nothing \
-implements it and nothing calls it. Delete that trait. The \`use \
-crate::Result;\` line just above it exists only to support that trait, so you \
-may delete that line in the same change too. Do not modify any other file."
+  # A subshell, not a plain `cd`: this can also be invoked standalone via `run
+  # gate_remove_dead_trait`, and must not leave the caller's shell sitting in $GATE_DIR
+  # afterward. run_ruchat_raw is not used here (that would pull in COMMON_FLAGS, which still
+  # carries ruchat's own --collection) — GATE_FLAGS directly instead, and no
+  # "pick a different instance" clause either: the gate's whole purpose is that its target
+  # never varies between runs.
+  (
+    cd "$GATE_DIR"
+    # shellcheck disable=SC2068
+    "$RUCHAT_BIN" pipe ${GATE_FLAGS[@]} --critic Idiomatic-Rust \
+      "You are a rust specialist. You work on a small Rust crate. Task: \
+the trait \`Evictor\` in src/cache.rs is dead code — nothing implements it \
+and nothing calls it. Delete that trait, including its doc comment. Do not \
+modify any other file."
+  )
 }
 
 # Runs the gate N times (default 5) and reports how many landed a REAL commit.
@@ -284,23 +317,26 @@ may delete that line in the same change too. Do not modify any other file."
 # Instead: record the branch tip before and after, and require a new commit that touches at least
 # one file other than featured_changes.md.
 # Every commit sitting on an ai/feature-* branch but not on the current branch, sorted so `comm`
-# can diff two snapshots of this set.
+# can diff two snapshots of this set. Always against $GATE_DIR (`git -C`, not a `cd`): this
+# measures the fixture submodule's history, never ruchat's own.
 _agent_commits() {
-  git rev-list --branches='ai/feature-*' --not master 2>/dev/null | sort -u
+  git -C "$GATE_DIR" rev-list --branches='ai/feature-*' --not master 2>/dev/null | sort -u
 }
 
-# True when commit $1 changes at least one file that isn't ruchat's own changelog. This is what
-# separates a real land from a run that applied no patch but still committed featured_changes.md.
+# True when commit $1 (inside $GATE_DIR) changes at least one file that isn't the auto-commit's
+# own changelog. This is what separates a real land from a run that applied no patch but still
+# committed featured_changes.md (see orchestrator/git.rs::commit_add_targets — that file is
+# staged unconditionally by every ruchat auto-commit, in whichever repo it runs).
 _commit_touches_source() {
-  git show --format= --name-only "$1" \
+  git -C "$GATE_DIR" show --format= --name-only "$1" \
     | grep -v '^featured_changes\.md$' \
     | grep -q '[^[:space:]]'
 }
 
 gate_measure() {
   local runs="${1:-5}"
-  if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
-    echo "refusing to measure: working tree has uncommitted tracked changes." >&2
+  if [ -n "$(git -C "$GATE_DIR" status --porcelain --untracked-files=no)" ]; then
+    echo "refusing to measure: $GATE_DIR has uncommitted tracked changes." >&2
     echo "A run that fails mid-way can leave a patch applied; start clean so" >&2
     echo "that a dirty tree afterward is unambiguously this run's doing." >&2
     exit 1
@@ -320,17 +356,17 @@ gate_measure() {
       for h in $new; do
         if _commit_touches_source "$h"; then
           real=1
-          echo "--- run $i: LANDED $(git log -1 --format=%h\ %s "$h")"
+          echo "--- run $i: LANDED $(git -C "$GATE_DIR" log -1 --format=%h\ %s "$h")"
         else
-          echo "--- run $i: changelog-only commit $(git log -1 --format=%h "$h") — NOT a land"
+          echo "--- run $i: changelog-only commit $(git -C "$GATE_DIR" log -1 --format=%h "$h") — NOT a land"
         fi
       done
       [ "$real" -eq 1 ] && landed=$((landed + 1))
     fi
-    if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
-      echo "!!! run $i left the tree dirty — a rejected patch was not reverted." >&2
+    if [ -n "$(git -C "$GATE_DIR" status --porcelain --untracked-files=no)" ]; then
+      echo "!!! run $i left $GATE_DIR dirty — a rejected patch was not reverted." >&2
       echo "!!! That is itself a section-0 bug (cf. contributor #7). Stopping." >&2
-      git status --short >&2
+      git -C "$GATE_DIR" status --short >&2
       exit 1
     fi
   done
@@ -370,8 +406,9 @@ Available examples (each is one small, single-file, low-compile-risk task):
   format_a_few_drifted_files    - cargo-fmt 3 files with formatting drift
 
 Reliability gate (a control task, not an example — see TODO.md section 0):
+Runs against fixtures/gate-repo (a fixture crate submodule), not ruchat's own source.
 
-  gate_remove_dead_trait        - delete the dead LlmProvider trait (verified 1 hunk)
+  gate_remove_dead_trait        - delete the dead Evictor trait (verified 1 hunk)
 
 Run one with:
   bash scripts/refactoring_examples.sh run <name>

@@ -68,8 +68,7 @@ impl AgentPipeline {
                     approve_commit,
                     trace_timings,
                 };
-                let stream =
-                    Box::pin(orchestrator.run_task_stream(goal, options, cancel.clone()));
+                let stream = Box::pin(orchestrator.run_task_stream(goal, options, cancel.clone()));
                 (stream, cancel)
             }
             AgentPipeline::OneShot {
