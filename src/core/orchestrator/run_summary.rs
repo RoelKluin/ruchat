@@ -2,6 +2,7 @@ use crate::agent::llm_client::LlmClient;
 use crate::utils::text::wrap_line;
 use crate::{Result, RuChatError};
 use ollama_rs::generation::chat::ChatMessage;
+use std::sync::OnceLock;
 use std::time::Duration;
 use tokio_stream::StreamExt;
 
@@ -147,6 +148,60 @@ fn clamp_trace(trace: &str) -> String {
     format!("{head}\n\n[... {dropped} characters of middle rounds omitted ...]\n\n{tail}")
 }
 
+/// Phrases that read as an explicit claim that a build/lint reported zero warnings — checked
+/// case-insensitively against a generated summary. Deliberately a fixed phrase list rather than
+/// a broader "mentions warnings" heuristic: this only needs to catch the specific false-negative
+/// shape a live run produced (maintainer report, 2026-08-05: a summary said "No clippy warnings
+/// found in src/." for a run whose own trace never actually ran `cargo_clippy` at all — the
+/// Scoper answered from a stale RAG search instead, see `doc_summary.rs`'s matching fix), not to
+/// flag every summary that happens to discuss warnings.
+const NO_WARNINGS_CLAIMS: [&str; 4] = [
+    "no clippy warning",
+    "no warnings found",
+    "no warnings were found",
+    "0 warnings",
+];
+
+/// Extracts the warning count from cargo's own deterministic per-crate summary line — emitted
+/// verbatim by both `cargo check` and `cargo clippy` whenever the build reported anything, e.g.
+/// "warning: `ruchat` (lib) generated 9 warnings (run `cargo clippy --fix ...`)". Takes the
+/// *last* match in the trace: a run can invoke the tool more than once across rounds, and the
+/// most recent invocation reflects the repo's state closest to when the run ended.
+fn last_reported_warning_count(trace: &str) -> Option<u32> {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| regex::Regex::new(r"generated (\d+) warnings?").unwrap());
+    re.captures_iter(trace)
+        .last()
+        .and_then(|c| c[1].parse().ok())
+}
+
+/// Grounds a generated summary against the one fact in the trace that doesn't need an LLM to
+/// read correctly: cargo's own warning count. If the trace's own tool output reports a nonzero
+/// count but the summary claims there were none, the summary is wrong — prepend a note saying
+/// so rather than silently trusting the model's paraphrase. Deliberately additive, not a rewrite
+/// of the summary text itself: the rest of the summary may still be accurate, and this only
+/// flags the one claim the trace can actually prove or disprove on its own.
+fn ground_warning_claim(trace: &str, summary: &str) -> String {
+    let Some(count) = last_reported_warning_count(trace) else {
+        return summary.to_string();
+    };
+    if count == 0 {
+        return summary.to_string();
+    }
+    let lower = summary.to_lowercase();
+    if NO_WARNINGS_CLAIMS.iter().any(|p| lower.contains(p)) {
+        format!(
+            "NOTE: the trace's own tool output reports {count} warning{} generated (a \
+             \"generated {count} warning{}\" line from cargo check/clippy) — this contradicts \
+             the \"no warnings\" claim below; treat that claim as wrong.\n\n{summary}",
+            if count == 1 { "" } else { "s" },
+            if count == 1 { "" } else { "s" },
+        )
+    } else {
+        summary.to_string()
+    }
+}
+
 /// Generates a short, human-readable explanation of how/why a successful run reached its
 /// accepted, committed result, from the run's own trace — used for the one-file-per-run
 /// summary kept in `TRACE_SUCCESS_DIR` (deliberately not the full trace; see
@@ -220,6 +275,10 @@ async fn generate_run_summary(
     if generated.is_empty() {
         Err(RuChatError::Is(format!("LLM returned an empty {label}")))
     } else {
+        // Grounded against the *full*, unclamped trace — not the possibly-clamped text the model
+        // was shown above — so a warning-count line dropped by `clamp_trace`'s middle-rounds
+        // omission still gets caught rather than silently trusted.
+        let generated = ground_warning_claim(trace, &generated);
         // A backstop for the prompt's own formatting instructions, same reasoning as
         // `git::wrap_commit_message_body`: models don't reliably honor exact line-length
         // instructions on their own. Each line (the failure summary can be several, one per
@@ -237,6 +296,64 @@ async fn generate_run_summary(
 mod tests {
     use super::*;
     use crate::agent::llm_client::FakeLlmClient;
+
+    #[test]
+    fn last_reported_warning_count_reads_cargos_own_summary_line() {
+        let trace = "src/core/agent.rs:83:5: warning: field `options` is never read\n\
+            warning: `ruchat` (lib) generated 9 warnings (run `cargo clippy --fix --lib -p \
+            ruchat -- ` to apply 1 suggestion)";
+        assert_eq!(last_reported_warning_count(trace), Some(9));
+    }
+
+    #[test]
+    fn last_reported_warning_count_is_none_when_the_line_never_appears() {
+        assert_eq!(last_reported_warning_count("nothing relevant here"), None);
+    }
+
+    // A run can invoke cargo_clippy more than once across rounds; the most recent invocation is
+    // the one that reflects the repo's state closest to when the run ended.
+    #[test]
+    fn last_reported_warning_count_takes_the_last_occurrence() {
+        let trace = "warning: `ruchat` (lib) generated 9 warnings\n...\
+            later in the trace...\nwarning: `ruchat` (lib) generated 8 warnings";
+        assert_eq!(last_reported_warning_count(trace), Some(8));
+    }
+
+    // The exact live-run failure this exists to catch (2026-08-05): the trace's own tool output
+    // says 9 warnings, but the model-written summary claims there were none.
+    #[test]
+    fn ground_warning_claim_flags_a_no_warnings_claim_that_contradicts_the_trace() {
+        let trace = "warning: `ruchat` (lib) generated 9 warnings (run `cargo clippy --fix ...`)";
+        let summary = "No clippy warnings found in src/.";
+        let grounded = ground_warning_claim(trace, summary);
+        assert!(grounded.contains("NOTE:"));
+        assert!(grounded.contains("9 warning"));
+        assert!(grounded.contains(summary));
+    }
+
+    #[test]
+    fn ground_warning_claim_leaves_a_consistent_summary_untouched() {
+        let trace = "warning: `ruchat` (lib) generated 9 warnings (run `cargo clippy --fix ...`)";
+        let summary = "Fixed one of the 9 reported clippy warnings by removing a dead field.";
+        assert_eq!(ground_warning_claim(trace, summary), summary);
+    }
+
+    #[test]
+    fn ground_warning_claim_leaves_a_no_warnings_claim_untouched_when_the_trace_agrees() {
+        let trace = "warning: `ruchat` (lib) generated 0 warnings";
+        let summary = "No clippy warnings found in src/.";
+        assert_eq!(ground_warning_claim(trace, summary), summary);
+    }
+
+    #[test]
+    fn ground_warning_claim_is_a_noop_when_the_trace_never_ran_the_tool() {
+        // The actual trace-543 shape: the Scoper never really invoked cargo_clippy at all (see
+        // doc_summary.rs's matching fix), so there is no "generated N warnings" line to ground
+        // against — this function can't catch that case and must not pretend otherwise.
+        let trace = "some trace with no cargo output in it";
+        let summary = "No clippy warnings found in src/.";
+        assert_eq!(ground_warning_claim(trace, summary), summary);
+    }
 
     #[tokio::test]
     async fn generate_failure_summary_returns_the_trimmed_llm_response() {
@@ -282,6 +399,19 @@ mod tests {
         let ollama = FakeLlmClient::new(vec![]); // would panic if chat_stream were called
         let result = generate_success_summary(&ollama, "any-model", "rename a fn", "  ").await;
         assert!(result.is_err());
+    }
+
+    // End-to-end: `generate_failure_summary` itself (not just `ground_warning_claim` in
+    // isolation) must apply the grounding note when the model's answer contradicts the trace.
+    #[tokio::test]
+    async fn generate_failure_summary_grounds_a_false_no_warnings_claim_against_the_trace() {
+        let ollama = FakeLlmClient::new(vec!["No clippy warnings found in src/."]);
+        let trace = "warning: `ruchat` (lib) generated 9 warnings (run `cargo clippy --fix ...`)";
+        let summary = generate_failure_summary(&ollama, "any-model", "fix a clippy warning", trace)
+            .await
+            .unwrap();
+        assert!(summary.contains("NOTE:"));
+        assert!(summary.contains("9 warning"));
     }
 
     // Regression: maintainer feedback that the run summary should be wrapped, and that a run

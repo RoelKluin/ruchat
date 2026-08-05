@@ -1,6 +1,6 @@
 # Ruchat TODO
 
-Last updated: 2026-08-04
+Last updated: 2026-08-05
 
 ## 0. CRITICAL - Agentic run reliability (pinned, DO NOT REMOVE until a live run lands a committed change)
 
@@ -167,13 +167,29 @@ instruction not to (485). Next step if these persist after a live re-run: try
     Note `ollama.service` never starts (duplicate `ExecStart=` in override.conf) - the real
     launcher is `~/ollama_serve.sh` in tmux, so `systemctl edit`/`journalctl -u` are dead ends.
 
-25. [ ] **Architect emits tool instructions the Worker then obeys, burning the round's one
-    lookup.** Every plan in trace 531 opens "1. Run `cargo clippy --lib -p ruchat`" although
-    architect.md tells it plainly it has no tools. worker.md interpolates `PLAN: {{PLAN}}`
-    verbatim, so the Worker calls cargo_clippy - whose output is already in DOCUMENTS - then
-    gets refused for using its lookup. Rounds 1 and 4 of 5 died entirely to this. Fix is
-    structural: strip tool-invocation steps from a plan before it reaches the Worker, or
-    reject a plan containing them, rather than adding more prompt text.
+25. [x] Not live-verified. **Architect emits tool instructions the Worker then obeys, burning
+    the round's one lookup.** Every plan in trace 531 opens "1. Run `cargo clippy --lib -p
+    ruchat`" although architect.md tells it plainly it has no tools. worker.md interpolates
+    `PLAN: {{PLAN}}` verbatim, so the Worker calls cargo_clippy - whose output is already in
+    DOCUMENTS - then gets refused for using its lookup. Rounds 1 and 4 of 5 died entirely to
+    this. Fixed structurally: `plan_sanitize::strip_lookup_directives` strips lookup-tool
+    directives from the Worker's copy of the plan before it renders (Architect's own copy is
+    untouched), leaving a note explaining why a step is missing. `plan_sanitize.rs`, role.rs.
+
+28. [x] Not live-verified. **A run summary can flatly misstate the trace's own tool output** -
+    maintainer report 2026-08-05: a summary claimed "No clippy warnings found in src/." for a
+    run whose Scoper never actually ran `cargo_clippy` at all; it asked the RAG `retrieve` tool
+    a natural-language question, got back stale source/test chunks that merely mention clippy,
+    and the doc-summarizer answered the question from those instead of saying it couldn't.
+    Two fixes: (1) `doc_summary.rs`'s condensing prompt now explicitly forbids answering a goal
+    from anything not literally in the retrieved rows, and forbids asserting a negative
+    ("no warnings found") from an unrelated or sparse RAG match - a static index can't prove
+    absence of live state. (2) `run_summary.rs::ground_warning_claim` cross-checks a generated
+    outcome summary against cargo's own deterministic "generated N warnings" line in the trace,
+    prepending a correction note when the summary claims none but the trace says otherwise.
+    Fix (2) only catches the case where the tool really ran and the model misreported it; it
+    can't catch fix (1)'s case (tool never ran at all) since there's no such line in the trace
+    to check against - that's why both were needed.
 
 26. [ ] **Rejections are raw compiler output, never interpreted.** Tester returns
     `src/core/agent.rs:115:17: error: struct Agent has no field named options` - a complete
@@ -191,6 +207,12 @@ instruction not to (485). Next step if these persist after a live re-run: try
     irrelevant information" and "information not rephrased after failure" (2026-08-05).
     NOTE: architect.md already contains five paragraphs forbidding a repeated plan, including
     "will be treated as a stall". It repeated anyway. More prompt text is not the fix.
+    Partial progress 2026-08-05: the Architect/Scoper "this round repeated the previous one"
+    notes (separate from `history_view` itself, this item's actual scope) only fired on
+    byte-identical output, so a repeat with a changed self-referential detail (e.g. an
+    incrementing "Round N") evaded detection entirely. Both now use
+    `stall_mitigation::is_near_duplicate` (word-set Jaccard similarity, >=0.9, digit-normalized)
+    instead of `==`. `history_view` collapsing itself is still unaddressed.
 
 23. [ ] `ruchat index` cannot correctly re-index a changed file: chunk IDs derive from chunk
     content, so an edited chunk is inserted as a new record and the old one stays forever.
@@ -213,10 +235,15 @@ instruction not to (485). Next step if these persist after a live re-run: try
     the `ollama-heavy` MCP share :11434 and there is one usable GPU, so they queue against
     each other. Turn delegation off before the section-0 reliability gate.
 
-19. [ ] ~58 traces sit unarchived in `ruchat_traces/` (471-529), so those runs never reached
-    `finalize_trace` - no outcome summary and now no step review either. Find out how a run
-    exits without it (cancel? panic? `?` early-return in `run_stage_machine`?). Each one is a
-    lost data point on exactly the reliability question section 0 exists to answer.
+19. [x] Root cause confirmed 2026-08-05, not live-verified: `run_stage_machine`'s loop had a
+    dozen `?`-propagating calls (LLM errors, `Stage::Test`'s build/test failures, and the
+    cancellation check itself) that all returned straight out of the function, skipping
+    `finalize_trace` at the bottom entirely - the common case, not an edge case (traces 524-542
+    all sat unarchived). Split into `run_stage_machine` (thin wrapper) and
+    `run_stage_machine_loop` (the loop, returns `Result<bool>`); the wrapper now calls
+    `finalize_trace` unconditionally whether the loop returned `Ok` or `Err`, recording the
+    error into the trace first so the archived summary explains why the run stopped early.
+    orchestrator.rs.
 
 20. [ ] `LlmClient::chat_stream` sets no `num_ctx`, so Ollama silently truncates any prompt over
     the model default - agent prompts, not just summaries. Item 18 clamps its own input as a

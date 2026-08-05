@@ -31,8 +31,8 @@ use crate::retry_transient;
 use git::commit_feature_branch;
 use serde::Deserialize;
 use stall_mitigation::{
-    auto_ground_planned_file, is_read_only_worker_tool, round_has_actionable_diagnostics,
-    strip_architect_tool_call_hallucination,
+    auto_ground_planned_file, is_near_duplicate, is_read_only_worker_tool,
+    round_has_actionable_diagnostics, strip_architect_tool_call_hallucination,
 };
 use std::sync::Arc;
 
@@ -53,6 +53,15 @@ enum Stage {
     Retry,
     Escalate(String),
     Done,
+}
+
+/// Per-run budgets/flags `run_stage_machine_loop` needs, bundled so passing them down doesn't
+/// trip `clippy::too_many_arguments` — plain config read once before the loop starts, not state
+/// the loop mutates, so a struct rather than individual fields costs nothing here.
+struct StageLoopBudgets {
+    max_iterations: u64,
+    max_scope_iterations: u64,
+    approve_commit: bool,
 }
 
 #[derive(serde::Deserialize)]
@@ -721,7 +730,7 @@ impl Orchestrator {
         // Phase 3). A fresh run starts from `Context::new`/`Stage::Scope`, same as always; `--
         // resume` reloads the last-completed stage's checkpoint instead — `goal` above is
         // ignored in that case, since resuming continues the *same* task, not a new one.
-        let (mut ctx, mut stage) = if resume {
+        let (mut ctx, stage) = if resume {
             checkpoint::Checkpoint::load(std::path::Path::new(checkpoint::CHECKPOINT_PATH))
                 .await?
                 .into_context_and_stage()
@@ -750,6 +759,54 @@ impl Orchestrator {
         self.recall_prior_memories(ctx, &tx).await;
         ctx.trace(&tx, self.model_summary()).await;
 
+        // Split out so a `?` anywhere in the loop below — an LLM call failing, cancellation, a
+        // build error, any of the dozen fallible steps a round can hit — can no longer make the
+        // run skip `finalize_trace` entirely by returning straight out of this function. That
+        // used to be the common case: most archived runs never reached the summaries/successes/
+        // failures directories at all (TODO.md item 19), because the trace file this analyzes
+        // lives on `ctx`, which stayed alive here regardless of how the loop ended, but the old
+        // single-function shape threw it away unread on every early `?`. `tx`/`cancel` are cheap
+        // handles (`mpsc::Sender`/`CancellationToken` are both `Clone`), so cloning them into the
+        // loop instead of taking them by reference sidesteps any lifetime gymnastics here.
+        let result = self
+            .run_stage_machine_loop(
+                ctx,
+                stage,
+                tx.clone(),
+                cancel.clone(),
+                StageLoopBudgets {
+                    max_iterations,
+                    max_scope_iterations,
+                    approve_commit,
+                },
+            )
+            .await;
+        if let Err(ref e) = result {
+            ctx.trace(&tx, format!("Run aborted before completion: {e}"))
+                .await;
+        }
+        let success = matches!(result, Ok(true));
+        ctx.trace(&tx, String::new()).await;
+        self.finalize_trace(ctx, &tx, success).await;
+        result.map(|_| ())
+    }
+
+    /// The stage-machine loop itself, extracted from `run_stage_machine` so an early error can
+    /// still be reported to `finalize_trace` by the caller — see the comment there. Behavior is
+    /// unchanged from before the split: same stages, same budgets, same checkpointing.
+    async fn run_stage_machine_loop(
+        &mut self,
+        ctx: &mut Context,
+        mut stage: Stage,
+        tx: mpsc::Sender<OrchestratorResult>,
+        cancel: CancellationToken,
+        budgets: StageLoopBudgets,
+    ) -> Result<bool> {
+        let StageLoopBudgets {
+            max_iterations,
+            max_scope_iterations,
+            approve_commit,
+        } = budgets;
         let mut retrieve_budget: u32 = 2; // conservative cap on Worker-initiated retrievals per run
         let mut scope_round = 0;
         let mut last_scope_output: Option<String> = None;
@@ -828,13 +885,14 @@ impl Orchestrator {
                         // Scoper's own identical-output handling already uses (forces
                         // progression instead of escalating).
                         if let Some(prev) = &last_architect_output
-                            && prev == &ctx.output
+                            && is_near_duplicate(prev, &ctx.output)
                         {
                             ctx.push_turn(
                                 TurnKind::System,
                                 "Orchestrator",
-                                "Note: this plan is identical to the previous round's. If the \
-                                rejection reason above suggests a different approach, use it \
+                                "Note: this plan is a near-duplicate of the previous round's \
+                                (allowing for minor wording drift, not just byte-identical). If \
+                                the rejection reason above suggests a different approach, use it \
                                 now — otherwise proceeding with the same plan is fine as long \
                                 as the implementation actually changes this round."
                                     .into(),
@@ -1205,11 +1263,12 @@ impl Orchestrator {
                         scope_round += 1;
                         let stage = self.run_scope_stage(ctx, &tx).await?;
                         if let Some(prev) = &last_scope_output
-                            && prev == &ctx.output
+                            && is_near_duplicate(prev, &ctx.output)
                         {
                             ctx.trace(
                                 &tx,
-                                "Scoper repeated identical output — forcing progression to Plan"
+                                "Scoper repeated a near-duplicate of its previous output — \
+                                forcing progression to Plan"
                                     .into(),
                             )
                             .await;
@@ -1231,9 +1290,7 @@ impl Orchestrator {
             )
             .await;
         }
-        ctx.trace(&tx, String::new()).await;
-        self.finalize_trace(ctx, &tx, success).await;
-        Ok(())
+        Ok(success)
     }
 
     /// Analyzes the just-finished run's trace and writes out what can be learned from it:

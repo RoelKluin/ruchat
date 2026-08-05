@@ -143,9 +143,109 @@ pub(super) async fn auto_ground_planned_file(ctx: &mut Context) {
     );
 }
 
+/// Similarity threshold above which two round outputs count as "the same thing repeated" for
+/// stall-mitigation purposes, not just literally byte-identical. Below 1.0 on purpose: a model
+/// re-emitting a near-identical plan/output with only a self-referential round counter, a
+/// rephrased clause, or reordered whitespace changed still isn't making progress, but an
+/// exact-only `a == b` check let that slip past every repeat check in this module — a single
+/// digit changing (e.g. a plan that opens "Round 1" one turn and "Round 2" the next) was enough
+/// to make two otherwise-identical plans compare as different every time.
+const NEAR_DUPLICATE_THRESHOLD: f64 = 0.9;
+
+/// True when `a` and `b` are the same content repeated, allowing for minor wording drift rather
+/// than requiring byte-for-byte equality — see `NEAR_DUPLICATE_THRESHOLD`. Compares normalized
+/// word sets with the Jaccard index (`|intersection| / |union|`): cheap, order-insensitive, and
+/// — unlike a byte or line diff — not swung entirely by one changed token in a short text.
+pub(super) fn is_near_duplicate(a: &str, b: &str) -> bool {
+    let wa = normalized_words(a);
+    let wb = normalized_words(b);
+    if wa.is_empty() || wb.is_empty() {
+        return wa.is_empty() && wb.is_empty();
+    }
+    let set_a: std::collections::HashSet<&str> = wa.iter().map(String::as_str).collect();
+    let set_b: std::collections::HashSet<&str> = wb.iter().map(String::as_str).collect();
+    let intersection = set_a.intersection(&set_b).count();
+    let union = set_a.union(&set_b).count();
+    (intersection as f64 / union as f64) >= NEAR_DUPLICATE_THRESHOLD
+}
+
+/// Lowercased words with every digit run collapsed to a single `#` placeholder, so "round 1" and
+/// "round 2" normalize to the same token instead of comparing as different words — the concrete
+/// case `is_near_duplicate` exists to catch. Any other run of non-alphanumeric characters (
+/// punctuation, markdown fencing, whitespace) is treated as a word boundary.
+fn normalized_words(s: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut current = String::new();
+    let mut in_digit_run = false;
+    for ch in s.chars() {
+        if ch.is_alphanumeric() {
+            if ch.is_ascii_digit() {
+                if !in_digit_run {
+                    current.push('#');
+                }
+                in_digit_run = true;
+            } else {
+                current.push(ch.to_ascii_lowercase());
+                in_digit_run = false;
+            }
+        } else if !current.is_empty() {
+            words.push(std::mem::take(&mut current));
+            in_digit_run = false;
+        }
+    }
+    if !current.is_empty() {
+        words.push(current);
+    }
+    words
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // The concrete case that motivated `is_near_duplicate`: a plan that opens "Round 1" one turn
+    // and "Round 2" the next is otherwise byte-identical, but `a == b` never sees it as a repeat.
+    #[test]
+    fn is_near_duplicate_ignores_an_incrementing_round_number() {
+        let a = "Round 1: fix the dead-code warning in agent.rs by removing the unused field.";
+        let b = "Round 2: fix the dead-code warning in agent.rs by removing the unused field.";
+        assert!(is_near_duplicate(a, b));
+    }
+
+    #[test]
+    fn is_near_duplicate_is_true_for_byte_identical_text() {
+        let a = "PLAN:\n1. Remove the field.\n\nFILES: src/core/agent.rs";
+        assert!(is_near_duplicate(a, a));
+    }
+
+    // A single swapped word ("in" -> "at") out of a realistic plan-length text should not tip the
+    // ratio below the threshold, unlike the same swap in a one-sentence text would (word sets
+    // that short are dominated by any single differing word).
+    #[test]
+    fn is_near_duplicate_tolerates_minor_rephrasing() {
+        let a = "PLAN:\n1. Remove the unused `options` field from the Agent struct in \
+            src/core/agent.rs, since clippy reports it is never read anywhere else in the \
+            codebase and no other code constructs or references it.\n\nCHOICE: Delete the dead \
+            field entirely rather than suppressing the warning.\n\nFILES: src/core/agent.rs";
+        let b = "PLAN:\n1. Remove the unused `options` field from the Agent struct at \
+            src/core/agent.rs, since clippy reports it is never read anywhere else in the \
+            codebase and no other code constructs or references it.\n\nCHOICE: Delete the dead \
+            field entirely rather than suppressing the warning.\n\nFILES: src/core/agent.rs";
+        assert!(is_near_duplicate(a, b));
+    }
+
+    #[test]
+    fn is_near_duplicate_is_false_for_genuinely_different_plans() {
+        let a = "Remove the unused `options` field from the Agent struct in src/core/agent.rs.";
+        let b = "Collapse the nested `if` statement in src/core/index.rs into a single condition.";
+        assert!(!is_near_duplicate(a, b));
+    }
+
+    #[test]
+    fn is_near_duplicate_treats_two_empty_strings_as_duplicates_but_not_one() {
+        assert!(is_near_duplicate("", ""));
+        assert!(!is_near_duplicate("", "some content"));
+    }
 
     #[test]
     fn is_read_only_worker_tool_covers_every_budgeted_lookup_tool() {

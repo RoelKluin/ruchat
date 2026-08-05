@@ -40,8 +40,18 @@ pub(crate) async fn summarize_retrieved_documents(
         keep every one of those exactly as written, character for character; a coding agent may \
         need to match them exactly to produce a correct change. Only the surrounding \
         explanation/metadata is safe to compress. If nothing is safe to remove, say so briefly \
-        rather than inventing compression. Output ONLY the condensed results, no preamble, no \
-        meta-commentary about what you removed.";
+        rather than inventing compression.\n\n\
+        This is a static index, not a live command: it can only ever tell you what happens to be \
+        indexed, never the current, real-time state of the repository or its build. Do NOT \
+        answer the goal from your own knowledge, and never state a conclusion the retrieved rows \
+        don't literally contain — most importantly, never claim something does not exist (\"no \
+        warnings found\", \"nothing matches\") just because the retrieved rows don't happen to \
+        show it; that is a false negative, not an absence. If the retrieved rows don't actually \
+        answer the goal — for example the goal asks for a live tool's current output and these \
+        rows are old source/test content that merely mentions the same topic — say plainly that \
+        the retrieved results don't show that, instead of inventing an answer. Output ONLY the \
+        condensed results (or that one plain statement), no preamble, no meta-commentary about \
+        what you removed.";
     let user = format!("GOAL: {goal}\n\nRETRIEVED RESULTS TO CONDENSE:\n{docs}");
     let messages = vec![
         ChatMessage::system(system.to_string()),
