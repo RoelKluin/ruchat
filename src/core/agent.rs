@@ -6,6 +6,7 @@ pub(crate) mod json_extract;
 pub(crate) mod llm_client;
 pub(crate) mod manager;
 pub(crate) mod pipeline;
+mod plan_sanitize;
 pub(crate) mod protocol;
 pub(crate) mod role;
 pub(crate) mod team;

@@ -14,21 +14,10 @@ use crate::agent::types::{Context, TurnKind};
 /// out as its own predicate so `Stage::Implement`'s first-call check and its second-chance check
 /// (see the nudge-and-reask loop below) can't drift apart into two different tool lists.
 pub(super) fn is_read_only_worker_tool(tool: &ToolName) -> bool {
-    matches!(
-        tool,
-        ToolName::Retrieve
-            | ToolName::GitLog
-            | ToolName::GitBlame
-            | ToolName::GitDiff
-            | ToolName::GitSearchHistory
-            | ToolName::ReadFile
-            | ToolName::ListDir
-            | ToolName::Ripgrep
-            | ToolName::ReadTags
-            | ToolName::CargoCheck
-            | ToolName::CargoClippy
-            | ToolName::CargoDupes
-    )
+    // Delegates to the enum so this and `plan_sanitize::strip_lookup_directives` can never
+    // disagree about which tools cost a lookup. Kept as a named function because the call sites
+    // in `run_implement_patch_loop` read better with it and its tests below pin the behavior.
+    tool.is_read_only_lookup()
 }
 
 /// True if this round already retrieved real, actionable `cargo_clippy`/`cargo_check` output —

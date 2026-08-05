@@ -29,6 +29,58 @@ pub(crate) enum ToolName {
 }
 
 impl ToolName {
+    /// Every variant, for callers that need to enumerate the catalog rather than match on one
+    /// tool. Kept next to the enum so a new variant is a one-line addition in the same place;
+    /// `as_str` below is an exhaustive match, so forgetting to extend that is a compile error
+    /// even if this array is missed.
+    pub(crate) const ALL: [ToolName; 14] = [
+        ToolName::Memorize,
+        ToolName::ApplyPatch,
+        ToolName::Retrieve,
+        ToolName::GitLog,
+        ToolName::GitBlame,
+        ToolName::GitDiff,
+        ToolName::GitSearchHistory,
+        ToolName::ReadFile,
+        ToolName::ListDir,
+        ToolName::Ripgrep,
+        ToolName::ReadTags,
+        ToolName::CargoCheck,
+        ToolName::CargoClippy,
+        ToolName::CargoDupes,
+    ];
+
+    /// The canonical snake_case name — the same spelling `#[serde(rename_all = "snake_case")]`
+    /// parses from a model's `{"tool": "..."}` field, so this and the parser cannot disagree.
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            ToolName::Memorize => "memorize",
+            ToolName::ApplyPatch => "apply_patch",
+            ToolName::Retrieve => "retrieve",
+            ToolName::GitLog => "git_log",
+            ToolName::GitBlame => "git_blame",
+            ToolName::GitDiff => "git_diff",
+            ToolName::GitSearchHistory => "git_search_history",
+            ToolName::ReadFile => "read_file",
+            ToolName::ListDir => "list_dir",
+            ToolName::Ripgrep => "ripgrep",
+            ToolName::ReadTags => "read_tags",
+            ToolName::CargoCheck => "cargo_check",
+            ToolName::CargoClippy => "cargo_clippy",
+            ToolName::CargoDupes => "cargo_dupes",
+        }
+    }
+
+    /// True for the tools that only gather information, i.e. the ones `Stage::Implement` budgets
+    /// at one per round. `ApplyPatch`/`Memorize` are the round's actual *action* and are
+    /// deliberately excluded. Lives on the enum rather than beside one of its callers because
+    /// two unrelated places need it — the orchestrator's lookup budget and
+    /// `plan_sanitize::strip_lookup_directives` — and two hand-maintained copies of this list
+    /// would be exactly the kind of drift that has silently broken dispatch here before.
+    pub(crate) fn is_read_only_lookup(self) -> bool {
+        !matches!(self, ToolName::ApplyPatch | ToolName::Memorize)
+    }
+
     fn schema_hint(self) -> &'static str {
         match self {
             ToolName::Memorize => r#"{"tool":"memorize","content":"<string>"}"#,

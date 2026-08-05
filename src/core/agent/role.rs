@@ -1,5 +1,6 @@
 use super::types::{Context, TurnKind};
 use crate::agent::tools::{prompt_scoper_tool_catalog, prompt_tool_catalog};
+use crate::core::agent::plan_sanitize;
 use crate::core::agent::templates;
 use crate::{Result, RuChatError};
 use std::collections::HashMap;
@@ -74,7 +75,14 @@ impl Role {
             }
             Self::Worker => {
                 vars.insert("DOCUMENTS", ctx.documents_view(ctx.round));
-                vars.insert("PLAN", ctx.context_view());
+                // Only the Worker's copy is sanitized: it is the one that acts on the plan, and
+                // an Architect step like "1. Run cargo clippy" spends the round's single
+                // information-lookup on output already sitting in DOCUMENTS above. The Architect
+                // keeps seeing its own plan verbatim — it needs to recognize what it wrote.
+                vars.insert(
+                    "PLAN",
+                    plan_sanitize::strip_lookup_directives(&ctx.context_view()),
+                );
                 vars.insert("HISTORY", ctx.history_view(ctx.round.saturating_sub(1)));
                 vars.insert("TOOLS", prompt_tool_catalog("-"));
                 "worker"
