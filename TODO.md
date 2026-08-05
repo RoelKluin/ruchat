@@ -167,6 +167,23 @@ instruction not to (485). Next step if these persist after a live re-run: try
     Note `ollama.service` never starts (duplicate `ExecStart=` in override.conf) - the real
     launcher is `~/ollama_serve.sh` in tmux, so `systemctl edit`/`journalctl -u` are dead ends.
 
+23. [ ] `ruchat index` cannot correctly re-index a changed file: chunk IDs derive from chunk
+    content, so an edited chunk is inserted as a new record and the old one stays forever.
+    Measured 2026-08-05 on a 2-section test doc - editing one section's body took the
+    collection 3 -> 5 -> 7 chunks, with both old and new text retrievable and nothing marking
+    which is current. The incremental marker makes it worse: only changed files are re-indexed,
+    i.e. exactly the ones that duplicate. Affects the Librarian at runtime, not just tooling.
+    Fix is an ID scheme keyed on (file, symbol, occurrence) plus deleting a file's existing
+    records before re-inserting. `scripts/index_rag.sh` currently works around it by deleting
+    and recreating volatile collections. Note: dedup-by-(file,symbol) is NOT a valid detector
+    here - Rust legitimately repeats a method name across impl blocks (`generate_embeddings`
+    appears 7x in llm_client.rs), so a count of duplicate keys proves nothing either way.
+
+24. [x] Rebuilt `repo_src-all-minilm_l6-v2` 2026-08-05: it held 1230 chunks where a clean index
+    of the same tree gives 1535, so the Librarian had been retrieving against an index missing
+    ~305 chunks of current code. `scripts/index_rag.sh src` regenerates it; not in the
+    post-commit path (too slow) - rerun after a refactor that moves or renames much of src/.
+
 22. [ ] Timing measurements must not run concurrently with local-model delegation: ruchat and
     the `ollama-heavy` MCP share :11434 and there is one usable GPU, so they queue against
     each other. Turn delegation off before the section-0 reliability gate.
