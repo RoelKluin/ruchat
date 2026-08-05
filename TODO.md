@@ -210,6 +210,26 @@ instruction not to (485). Next step if these persist after a live re-run: try
     from a clean baseline, not one accumulating feature - continuation is still the right
     default for real multi-run feature work.
 
+30. [ ] **Validator/Critic approve a diff that never made the requested change at all.**
+    Live-verified 2026-08-05, 3 consecutive gate runs against `fixtures/gate-repo`: every one
+    "landed" a commit that only trimmed lines out of `Evictor`'s doc comment - the trait
+    declaration itself was untouched in all three, still triggering the exact dead-code warning
+    the task asked to fix - yet Validator said `VALIDATED` and Critic said `APPROVED` every
+    time. Neither checks that the concrete thing the goal named is actually gone; both only see
+    "a diff applied, tests still pass," which is true of an empty edit to the same file too.
+    Root cause on the fixture's side (worked around, not the pipeline bug): the trait's old
+    11-line doc comment was self-referential meta-commentary about the gate itself, and the
+    model treated it as separately editable content, trimming only the comment across repeated
+    attempts instead of recognizing "delete the trait, including its doc comment" as one block.
+    Simplified to an ordinary one-line doc comment (`ruchat-gate-fixture` commit
+    `b71ca79`) - not yet re-measured whether that alone fixes it. Separately, `gate_measure`'s
+    own "landed" criterion (`_commit_touches_source`: any change to a non-changelog file) would
+    have counted all 3 of these as passes too - it was deliberately loose ("measures the loop,
+    not the model's thoroughness"), but this shows that looseness can hide a completely wrong
+    diff, not just a rougher-than-ideal correct one. Worth a stricter check specifically for the
+    gate (e.g. grep the resulting file for the named symbol) even if the general-purpose
+    examples keep the loose criterion.
+
 26. [ ] **Rejections are raw compiler output, never interpreted.** Tester returns
     `src/core/agent.rs:115:17: error: struct Agent has no field named options` - a complete
     diagnosis - but nothing turns it into "the patch is incomplete: line 115 still uses this
