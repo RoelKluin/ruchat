@@ -230,6 +230,30 @@ instruction not to (485). Next step if these persist after a live re-run: try
     gate (e.g. grep the resulting file for the named symbol) even if the general-purpose
     examples keep the loose criterion.
 
+31. [ ] **New eval added 2026-08-05: compile-error mutation testing, a strict counterpart to
+    the gate's loose criterion above.** `fixtures/mutant-repo` (a second, separate fixture
+    submodule - deliberately not folded into `gate-repo`, which carries clippy warnings/dead
+    code on purpose and would give an agent something else to wander off "fixing" instead of
+    the one compile error this eval cares about) has 6 tiny modules, each with a hand-authored,
+    single-location compile error and a known-correct fix (the mutation's own reverse - see
+    `fixtures/mutant-repo/mutations/mutations.json`). `scripts/mutant_eval.sh` applies one,
+    runs the pipeline against it with a goal that doesn't name the file or the bug (unlike the
+    gate, forcing real diagnosis from `cargo_check`'s own output), then diffs the landed
+    commit's target file against the known-correct content: byte-identical = exact match; a
+    commit landed but differs = "alternate fix" (Stage::Test already guarantees it compiles, so
+    this isn't a failure, just not *the* expected one) - saved to `mutant_eval_results/
+    alternates/` for later review rather than auto-scored, per maintainer request ("some
+    alternates are better than others... valuable to collect and re-evaluate later, with more
+    intelligence" - not built yet, just the collection point). No commit reaching
+    `Stage::Commit` at all = no land. NEEDS A LIVE RUN - mechanics (mutation apply/restore,
+    branch diffing, all three verdict paths) verified without one by hand-simulating each
+    outcome in the fixture repo directly.
+    Deliberately deferred, per maintainer ("nice to have, but for later"): a second mutation
+    category where the crate still compiles but a test fails (a logic bug, not a syntax one) -
+    would need `cargo test` as the pass/fail signal instead of `cargo_check`, closer to a real
+    bug-fixing task than any eval here so far. Not built - only `cargo_check`-detectable
+    mutations exist right now.
+
 26. [ ] **Rejections are raw compiler output, never interpreted.** Tester returns
     `src/core/agent.rs:115:17: error: struct Agent has no field named options` - a complete
     diagnosis - but nothing turns it into "the patch is incomplete: line 115 still uses this
