@@ -156,6 +156,21 @@ instruction not to (485). Next step if these persist after a live re-run: try
     truncated away the system instruction. Same trace clamped now summarizes correctly in 4s.
     Any pre-clamp summary on a large trace should be treated as unreliable.
 
+21. [x] GPU/Ollama facts corrected by measurement 2026-08-05, replacing two wrong claims:
+    (a) both instances ARE pinned correctly (`/proc/<pid>/environ`: :11434 has
+    `CUDA_VISIBLE_DEVICES=0`, :11431 has `1,2,3,4`) - the "unsubstituted `N` placeholder" note
+    was wrong; (b) the Teslas do NOT work - `/api/ps` after a real generation reports
+    `size_vram: 0` on :11431 vs 100% on :11434, so ollama-light is CPU inference and the
+    "frees the 3090" premise is false. Delegation policy now routes everything to
+    ollama-heavy; build-log-summarizer switched off ollama-light. Detail moved out of
+    CLAUDE.md into the ruchat-dev skill's `references/gpu-and-ollama.md`.
+    Note `ollama.service` never starts (duplicate `ExecStart=` in override.conf) - the real
+    launcher is `~/ollama_serve.sh` in tmux, so `systemctl edit`/`journalctl -u` are dead ends.
+
+22. [ ] Timing measurements must not run concurrently with local-model delegation: ruchat and
+    the `ollama-heavy` MCP share :11434 and there is one usable GPU, so they queue against
+    each other. Turn delegation off before the section-0 reliability gate.
+
 19. [ ] ~58 traces sit unarchived in `ruchat_traces/` (471-529), so those runs never reached
     `finalize_trace` - no outcome summary and now no step review either. Find out how a run
     exits without it (cancel? panic? `?` early-return in `run_stage_machine`?). Each one is a

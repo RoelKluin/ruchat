@@ -244,55 +244,28 @@ across files:
 
 - Boilerplate, trait impls, test scaffolding, first-pass review → use the rust-local-* subagents.
 - Long build/test/clippy output → route through build-log-summarizer, never paste raw.
-- Codebase context → query the chromadb MCP tool for relevant snippets instead of re-reading whole files.
-- Reserve your own (Sonnet) reasoning for: borrow-checker/lifetime issues, architecture, concurrency bugs, anything in the agent-loop core.
-- Escalate to Opus only after Sonnet has made a real attempt and hit a wall — not as a first resort.
+- Codebase context → query the chromadb MCP tool instead of re-reading whole files. Collections
+  (Chroma database `default`, not `default_database`): `repo_docs-*` the design docs,
+  `repo_lessons-*` the per-run agent-decision reviews from `ruchat_traces/summaries/`,
+  `repo_src-*` ctags chunks of `src/`, `repo_hist-*` commit history. `scripts/index_rag.sh`
+  refreshes docs+lessons and runs automatically from `.git/hooks/post-commit`.
+- For code you can already name, ripgrep + a targeted read beats RAG — ~20k lines over 77
+  files is small. Reach for `repo_lessons-*` for the opposite case: "has this failure mode
+  happened before", which grep cannot answer.
+- Reserve your own reasoning for: borrow-checker/lifetime issues, architecture, concurrency bugs, anything in the agent-loop core.
 
-## Parallel dispatch
-The Tesla-backed light model (ollama-light) is slow per-task but frees the 3090
-for heavy work. When a task involves both a substantial coding change AND
-independent auxiliary work (build log summarization, test scaffolding, docstrings,
-doc updates), dispatch them as separate Task calls in the same turn — do not wait
-for the heavy task to finish before starting the light one. Only sequence them if
-the light task depends on the heavy task's output.
+**All local-model delegation goes to `ollama-heavy` (:11434, the 3090), one at
+a time.** Measured 2026-08-05: the `ollama-light` instance (:11431) reports
+`size_vram: 0` — it is pinned to the Tesla M10s correctly, but Ollama's CUDA
+build drops Maxwell CC 5.0, so it runs on CPU. It is slower than simply
+queueing on the 3090. Do not dispatch work to it, and do not treat it as a
+parallel lane that "frees" the 3090 — that premise was tested and is false.
 
-**Caveat on that premise (2026-08-05, unresolved):** "frees the 3090" assumes the
-Tesla instance actually runs on the Teslas. Observed otherwise — `ollama ps` on
-:11431 reported `qwen2.5:7b` at **100% CPU** despite that instance being correctly
-pinned to the Tesla GPUs. Tesla M10 is Maxwell (compute capability 5.0) and recent
-Ollama CUDA builds have been dropping the older architectures, so the cards may be
-driver-visible but unusable by Ollama. If so, ollama-light is plain CPU inference —
-slower than just queueing on the 3090, and the split above is a net loss. Check
-`journalctl -u ollama | grep -i "compute capability\|cuda"` before relying on it.
+Since there is one usable GPU, parallel dispatch of two local-model tasks buys
+nothing; they serialize at the server. Parallelism is still worth it when the
+second task is *not* local inference (a shell command, a file read, a web
+fetch). `ollama-heavy` also shares :11434 with ruchat itself, so turn
+delegation off while measuring a live run.
 
-## GPU / Ollama instance map
-
-Host-specific, recorded 2026-08-05 so it doesn't get re-derived every session.
-
-| GPU | Device | Notes |
-|-----|--------|-------|
-| 0 | RTX 3090 Ti, 24 GB | the fast one; UUID `GPU-5fe0e911-80e4-ca27-25af-8002a47f5a67` |
-| 1–4 | Tesla M10, 8 GB each | Maxwell CC 5.0 — see the caveat above |
-
-| Port | Used by | Pinned to |
-|------|---------|-----------|
-| 11434 | ruchat's default, and the `ollama-heavy` MCP server (`qwen2.5-coder:32b`) | should be GPU 0 |
-| 11431 | the `ollama-light` MCP server (`qwen2.5:7b`) | `CUDA_VISIBLE_DEVICES=1,2,3,4` |
-
-ruchat has **no** GPU-selection option and cannot have a meaningful one: Ollama's
-HTTP API has no parameter for choosing a device (`num_gpu` sets layer offload
-count, not which card), so placement is decided entirely by the Ollama server at
-model-load time. Selecting a GPU therefore means selecting an instance — use
-`ruchat -s/--server` (`OLLAMA_SERVER`). Don't add a `--gpu` flag; it would
-silently do nothing.
-
-Pin on the **server** by UUID, not index: CUDA enumerates `FASTEST_FIRST` by
-default, so `CUDA_VISIBLE_DEVICES=0` is not guaranteed to be the card `nvidia-smi`
-calls 0 (or set `CUDA_DEVICE_ORDER=PCI_BUS_ID` as well).
-
-**Known-broken as of 2026-08-05:** the :11434 instance was running with a literal
-unsubstituted template placeholder — `CUDA_VISIBLE_DEVICES=N` and
-`OLLAMA_HOST=0.0.0.0:1143N` (Ollama couldn't parse the port and silently fell back
-to 11434). A malformed device allowlist is the likely cause of runs landing on a
-Tesla unpredictably. Verify it's fixed before trusting any timing measurement,
-including the reliability gate in `TODO.md` section 0.
+For GPU/instance detail, the launcher, and the measurements behind this, read
+`references/gpu-and-ollama.md` in the ruchat-dev skill rather than re-deriving.
