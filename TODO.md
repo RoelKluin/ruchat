@@ -167,6 +167,31 @@ instruction not to (485). Next step if these persist after a live re-run: try
     Note `ollama.service` never starts (duplicate `ExecStart=` in override.conf) - the real
     launcher is `~/ollama_serve.sh` in tmux, so `systemctl edit`/`journalctl -u` are dead ends.
 
+25. [ ] **Architect emits tool instructions the Worker then obeys, burning the round's one
+    lookup.** Every plan in trace 531 opens "1. Run `cargo clippy --lib -p ruchat`" although
+    architect.md tells it plainly it has no tools. worker.md interpolates `PLAN: {{PLAN}}`
+    verbatim, so the Worker calls cargo_clippy - whose output is already in DOCUMENTS - then
+    gets refused for using its lookup. Rounds 1 and 4 of 5 died entirely to this. Fix is
+    structural: strip tool-invocation steps from a plan before it reaches the Worker, or
+    reject a plan containing them, rather than adding more prompt text.
+
+26. [ ] **Rejections are raw compiler output, never interpreted.** Tester returns
+    `src/core/agent.rs:115:17: error: struct Agent has no field named options` - a complete
+    diagnosis - but nothing turns it into "the patch is incomplete: line 115 still uses this
+    field, a correct fix removes both sites." The Architect must infer it and, over 4 rounds,
+    never did. Synthesize an explicit incomplete-deletion message when a compile error names a
+    symbol the just-applied patch deleted; the compiler already supplies the line number.
+
+27. [ ] **`history_view` never collapses superseded content, so the wrong answer outvotes the
+    correction.** It filters only `TurnKind::Retrieval`; everything else accumulates verbatim.
+    By round 5 of trace 531 the Architect's HISTORY held its own failed plan 6x and the failed
+    diff 8x against 3 copies of the rejection - the same wrong answer shown twice as often as
+    its correction, in identical formatting. Collapse repeats to one instance plus a
+    "(repeated Nx)" marker. This is the root cause behind the maintainer's "too much
+    irrelevant information" and "information not rephrased after failure" (2026-08-05).
+    NOTE: architect.md already contains five paragraphs forbidding a repeated plan, including
+    "will be treated as a stall". It repeated anyway. More prompt text is not the fix.
+
 23. [ ] `ruchat index` cannot correctly re-index a changed file: chunk IDs derive from chunk
     content, so an edited chunk is inserted as a new record and the old one stays forever.
     Measured 2026-08-05 on a 2-section test doc - editing one section's body took the
