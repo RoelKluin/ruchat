@@ -385,7 +385,8 @@ impl AskArgs {
                 prompt,
             }
         };
-        crate::tui::render::render_pipeline_stream(pipeline.run(), &mut cio).await
+        let (stream, cancel) = pipeline.run();
+        crate::tui::render::render_pipeline_stream(stream, cancel, &mut cio).await
     }
 }
 

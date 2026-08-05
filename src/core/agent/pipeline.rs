@@ -2,7 +2,7 @@ use crate::Result;
 use crate::RuChatError;
 use crate::agent::event::StreamItem;
 use crate::agent::llm_client::LlmClient;
-use crate::core::orchestrator::{DebugBreakpoints, Orchestrator};
+use crate::core::orchestrator::{DebugBreakpoints, Orchestrator, RunTaskOptions};
 use ollama_rs::generation::chat::ChatMessage;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -10,6 +10,7 @@ use tokio::sync::mpsc;
 use tokio_stream::Stream;
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
+use tokio_util::sync::CancellationToken;
 
 pub(crate) type PipelineStream = Pin<Box<dyn Stream<Item = Result<StreamItem>> + Send>>;
 
@@ -41,7 +42,14 @@ pub(crate) enum AgentPipeline {
 }
 
 impl AgentPipeline {
-    pub(crate) fn run(self) -> PipelineStream {
+    /// Also returns a `CancellationToken` the caller can trigger (a Ctrl-C handler in
+    /// `render_pipeline_stream`) to ask a running `Orchestrator` to stop at its next safe
+    /// checkpoint instead of the OS killing the process outright — see
+    /// `Orchestrator::run_task_stream`'s doc comment for why that distinction matters. The
+    /// `OneShot` path returns a token too, for a uniform return type, but nothing ever checks
+    /// it: a bare prompt has no trace to save, so there's nothing a graceful stop would buy it
+    /// over Ctrl-C just ending the process as before.
+    pub(crate) fn run(self) -> (PipelineStream, CancellationToken) {
         match self {
             AgentPipeline::Orchestrator {
                 orchestrator,
@@ -51,14 +59,19 @@ impl AgentPipeline {
                 resume,
                 approve_commit,
                 trace_timings,
-            } => Box::pin(orchestrator.run_task_stream(
-                goal,
-                debug_sequence,
-                breakpoints,
-                resume,
-                approve_commit,
-                trace_timings,
-            )),
+            } => {
+                let cancel = CancellationToken::new();
+                let options = RunTaskOptions {
+                    debug_sequence,
+                    breakpoints,
+                    resume,
+                    approve_commit,
+                    trace_timings,
+                };
+                let stream =
+                    Box::pin(orchestrator.run_task_stream(goal, options, cancel.clone()));
+                (stream, cancel)
+            }
             AgentPipeline::OneShot {
                 ollama,
                 model,
@@ -82,7 +95,7 @@ impl AgentPipeline {
                         let _ = tx.send(Err(e)).await;
                     }
                 });
-                Box::pin(ReceiverStream::new(rx))
+                (Box::pin(ReceiverStream::new(rx)), CancellationToken::new())
             }
         }
     }

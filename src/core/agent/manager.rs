@@ -96,7 +96,8 @@ impl Manager {
                     trace_timings: false,
                 };
                 let mut cio = Io::new();
-                render_pipeline_stream(pipeline.run(), &mut cio).await?;
+                let (stream, cancel) = pipeline.run();
+                render_pipeline_stream(stream, cancel, &mut cio).await?;
             }
             ManagerCommands::List => {
                 let manager = load_manager(config_path.as_str()).await?;

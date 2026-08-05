@@ -64,6 +64,16 @@ struct StageLoopBudgets {
     approve_commit: bool,
 }
 
+/// Everything `Orchestrator::run_task_stream` needs beyond `goal` and `cancel`, bundled for the
+/// same `clippy::too_many_arguments` reason as `StageLoopBudgets` above.
+pub(crate) struct RunTaskOptions {
+    pub(crate) debug_sequence: Option<String>,
+    pub(crate) breakpoints: DebugBreakpoints,
+    pub(crate) resume: bool,
+    pub(crate) approve_commit: bool,
+    pub(crate) trace_timings: bool,
+}
+
 #[derive(serde::Deserialize)]
 struct ValidatorVerdict {
     verdict: String,
@@ -301,17 +311,27 @@ impl Orchestrator {
         })
     }
 
+    /// `cancel` is caller-owned rather than created here, so a Ctrl-C handler sitting above the
+    /// stream (`render_pipeline_stream`) can trigger it directly — see that function's doc
+    /// comment. Before this, the only way to stop a run early was the OS's default SIGINT
+    /// handling, which kills the process outright with no chance for `finalize_trace` to run:
+    /// confirmed live 2026-08-05 (traces 554-556 sat unarchived even after the `?`-early-return
+    /// fix below, because none of them ever produced an `Err` for that fix to catch — they were
+    /// killed from outside the program entirely).
     pub(crate) fn run_task_stream(
         mut self,
         goal: String,
-        debug_sequence: Option<String>,
-        breakpoints: DebugBreakpoints,
-        resume: bool,
-        approve_commit: bool,
-        trace_timings: bool,
+        options: RunTaskOptions,
+        cancel: CancellationToken,
     ) -> impl Stream<Item = OrchestratorResult> {
+        let RunTaskOptions {
+            debug_sequence,
+            breakpoints,
+            resume,
+            approve_commit,
+            trace_timings,
+        } = options;
         let (tx, rx) = mpsc::channel(100);
-        let cancel = CancellationToken::new();
         let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
 
         // Watcher now races two exits: receiver dropped early (cancellation),
@@ -2050,11 +2070,14 @@ mod tests {
         let path = format!("agent_debug/{fixture}");
         let stream = orchestrator.run_task_stream(
             "test goal".to_string(),
-            Some(path),
-            DebugBreakpoints::default(),
-            false,
-            false,
-            false,
+            RunTaskOptions {
+                debug_sequence: Some(path),
+                breakpoints: DebugBreakpoints::default(),
+                resume: false,
+                approve_commit: false,
+                trace_timings: false,
+            },
+            CancellationToken::new(),
         );
         tokio_stream::StreamExt::collect::<Vec<Result<StreamItem>>>(stream)
             .await
