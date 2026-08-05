@@ -1252,13 +1252,30 @@ impl Orchestrator {
                             .get("feature_branch")
                             .and_then(|v| v.as_str())
                             .map(str::to_string);
-                        commit_feature_branch(
+                        if let Err(e) = commit_feature_branch(
                             ctx,
                             self.chat.as_ref(),
                             &commit_model,
                             requested_branch.as_deref(),
                         )
-                        .await?;
+                        .await
+                        {
+                            // Live-verified 2026-08-05: `commit_feature_branch`'s own checkout
+                            // to a *continued* `ai/feature-*` branch (the default — see
+                            // `git::resolve_feature_branch`) can fail outright ("Your local
+                            // changes... would be overwritten by checkout") when that branch's
+                            // committed version of a file differs from the round's own
+                            // uncommitted `apply_patch` output — normal for two runs that both
+                            // touch the same file. `commit_feature_branch` already best-efforts
+                            // its own return-to-original-branch checkout on failure, but that
+                            // only moves HEAD back; it never touches the working tree, so the
+                            // round's applied-but-never-committed patch was left sitting on
+                            // disk indefinitely — the same class of bug contributor #7's
+                            // `revert_pending_patches` calls elsewhere in this loop exist to
+                            // prevent, just not yet covering this call site.
+                            ctx.revert_pending_patches(&tx).await;
+                            return Err(e);
+                        }
                         success = true;
                         Stage::Done
                     }

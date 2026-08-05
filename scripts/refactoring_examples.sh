@@ -305,8 +305,24 @@ gate_remove_dead_trait() {
   (
     cd "$GATE_DIR"
     export RUCHAT_TEMPLATES_DIR="$AGENT_ROLE_DIR"
+    # A submodule defaults to detached HEAD after `add`/`update` (git records a commit, not a
+    # branch, for it) — hit live 2026-08-05: `commit_feature_branch`'s "return to the original
+    # branch" step captures `git rev-parse --abbrev-ref HEAD`, which is the literal string
+    # "HEAD" while detached, so it never actually lands back on master. Belt-and-suspenders
+    # against that recurring after a future `git submodule update`.
+    git checkout --quiet master
+    # --feature-branch forces a fresh branch every run instead of continuing the last one
+    # (resolve_feature_branch's default). Hit live 2026-08-05: two runs in a row both touch
+    # src/cache.rs; continuing run 1's branch means checking out its *already-fixed* version of
+    # that file over run 2's still-uncommitted patch to the *unfixed* version — git correctly
+    # refuses ("your local changes would be overwritten by checkout"). Real multi-run feature
+    # work wants continuation (see TODO.md item #16); the gate wants N independent, comparable
+    # attempts from the same clean baseline, which is what "always fresh branch" actually means
+    # here — not a workaround for the bug above, orchestrator.rs also got a defensive fix for
+    # that (see its commit_feature_branch call site).
     # shellcheck disable=SC2068
     "$RUCHAT_BIN" pipe ${GATE_FLAGS[@]} --critic Idiomatic-Rust \
+      --feature-branch "ai/gate-$(date +%s)-$$" \
       "You are a rust specialist. You work on a small Rust crate. Task: \
 the trait \`Evictor\` in src/cache.rs is dead code — nothing implements it \
 and nothing calls it. Delete that trait, including its doc comment. Do not \

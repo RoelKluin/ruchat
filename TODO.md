@@ -191,6 +191,25 @@ instruction not to (485). Next step if these persist after a live re-run: try
     can't catch fix (1)'s case (tool never ran at all) since there's no such line in the trace
     to check against - that's why both were needed.
 
+29. [x] Not live-verified. **`commit_feature_branch` failing left the applied patch on disk,
+    uncommitted, indefinitely.** Live-verified failure mode 2026-08-05 (against
+    `fixtures/gate-repo`, item 1's fixture submodule, but the bug is general): the default is to
+    *continue* the most recent `ai/feature-*` branch (see item #16 in Done), which means
+    `commit_feature_branch` does `git checkout <existing-branch>` - and that fails outright
+    ("your local changes... would be overwritten by checkout") whenever the round's own
+    uncommitted `apply_patch` touched the same file the continued branch already has a
+    *different* committed version of. Entirely normal for two runs in a row against the same
+    target, not a corner case. `commit_feature_branch` already best-efforts a return-to-
+    original-branch checkout on failure, but that only moves HEAD - the working tree was never
+    touched, so the round's patch just sat there mutated and forgotten, same failure shape as
+    contributor #7 but at a call site that fix never covered. Fixed: `Stage::Commit`'s call site
+    in orchestrator.rs now calls `ctx.revert_pending_patches` before propagating a
+    `commit_feature_branch` error. Separately, `scripts/refactoring_examples.sh`'s gate now
+    passes `--feature-branch ai/gate-<ts>-<pid>` (always a fresh branch) instead of relying on
+    the continue-by-default behavior, since the gate wants N independent, comparable attempts
+    from a clean baseline, not one accumulating feature - continuation is still the right
+    default for real multi-run feature work.
+
 26. [ ] **Rejections are raw compiler output, never interpreted.** Tester returns
     `src/core/agent.rs:115:17: error: struct Agent has no field named options` - a complete
     diagnosis - but nothing turns it into "the patch is incomplete: line 115 still uses this
