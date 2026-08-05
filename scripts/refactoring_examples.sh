@@ -52,6 +52,14 @@ set -euo pipefail
 # invoking this, and a relative `./ruchat` would no longer resolve once cwd has moved.
 RUCHAT_BIN="$(realpath "${RUCHAT_BIN:-./ruchat}")"
 
+# `agent_role/*.md` is a ruchat asset (its own role prompt templates), not a target-repo one —
+# unlike the git-tooling/cargo paths, `templates.rs::templates_dir()` resolves it relative to
+# CWD ("ruchat is expected to run from the repository root"), so once the gate `cd`s into
+# $GATE_DIR it can no longer find its own templates without this. Hit live 2026-08-05: "failed
+# to load prompt template 'agent_role/scoper.md'" the first time the gate ran against the
+# fixture submodule. RUCHAT_TEMPLATES_DIR is templates.rs's existing override for exactly this.
+AGENT_ROLE_DIR="$(realpath "${AGENT_ROLE_DIR:-agent_role}")"
+
 # Shared, proven-working flags from the maintainer's confirmed command.
 # shellcheck disable=SC2034
 COMMON_FLAGS=(
@@ -296,6 +304,7 @@ gate_remove_dead_trait() {
   # never varies between runs.
   (
     cd "$GATE_DIR"
+    export RUCHAT_TEMPLATES_DIR="$AGENT_ROLE_DIR"
     # shellcheck disable=SC2068
     "$RUCHAT_BIN" pipe ${GATE_FLAGS[@]} --critic Idiomatic-Rust \
       "You are a rust specialist. You work on a small Rust crate. Task: \
