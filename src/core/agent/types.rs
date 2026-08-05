@@ -6,19 +6,15 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 use tokio::sync::mpsc;
 
-/// Root directory for every run's trace file — each run gets its own numbered file here
-/// while in progress, then it's moved into `TRACE_SUCCESS_DIR`/`TRACE_FAILURE_DIR` once the
-/// run's outcome is known. Replaces the old single, always-overwritten `.ruchat_trace.md`.
-const TRACE_DIR: &str = "ruchat_traces";
+/// Every run's trace lives only in memory (`Context.turns`) while it's in progress — nothing
+/// is written to disk until the run ends. `finalize_success_trace`/`finalize_failure_trace`
+/// then write exactly one file, the outcome summary plus a round-by-round review of the
+/// agents' decisions (see `run_summary::generate_step_review`), into whichever of these two
+/// directories matches the run's outcome. Every file is the same shape — none of them is a
+/// raw trace — so recurring failure patterns can be found across runs by grepping the fixed
+/// `GOOD:`/`BAD:`/`UNCLEAR:`/`LESSON:` verdict prefixes in either directory.
 const TRACE_SUCCESS_DIR: &str = "ruchat_traces/successes";
 const TRACE_FAILURE_DIR: &str = "ruchat_traces/failures";
-
-/// One short, self-contained analysis file per run — the outcome summary plus a round-by-round
-/// review of the agents' decisions (see `run_summary::generate_step_review`). Kept apart from
-/// the outcome archives above so this directory is all signal: every file is the same shape,
-/// none of them is a raw trace, and recurring failure patterns can be found across runs by
-/// grepping the fixed `GOOD:`/`BAD:`/`UNCLEAR:`/`LESSON:` verdict prefixes.
-const TRACE_SUMMARY_DIR: &str = "ruchat_traces/summaries";
 
 /// Parses `N` out of a `ruchat_trace_<N>.md` filename; `None` for anything else found sitting
 /// in one of the trace directories.
@@ -107,10 +103,10 @@ pub(crate) struct Context {
     /// calls (see the multi-file loop there), each to a different file. Order doesn't matter;
     /// membership does (`record_patch`/`revert_pending_patches`).
     pub(crate) pending_patches: Vec<PendingPatch>,
-    /// This run's slot in `TRACE_DIR` — set once via `init_trace_index()` right after
+    /// This run's archive-file number — set once via `init_trace_index()` right after
     /// construction. Left at 0 (colliding with the first real run's file, harmlessly, since
-    /// nothing reads it) for `Context::new` callers — mostly tests — that never touch a trace
-    /// file at all.
+    /// nothing reads it) for `Context::new` callers — mostly tests — that never archive a run
+    /// at all.
     pub(crate) trace_index: u64,
     /// `--trace-timings` — whether `full_history_view()` (the trace-file renderer) should show
     /// each timed turn's `duration_ms` inline. Set once by the orchestrator right after
@@ -139,25 +135,19 @@ impl Context {
         }
     }
 
-    /// Picks this run's trace-file slot by scanning `TRACE_DIR` (plus every subdirectory a
-    /// finished run leaves a file in, since a prior run's number only survives there) for existing
-    /// `ruchat_trace_<N>.md` files and using one past the highest `N` found — so every run
-    /// gets its own file instead of every run overwriting the same path. Call once, right
+    /// Picks this run's trace-file slot by scanning `TRACE_SUCCESS_DIR`/`TRACE_FAILURE_DIR` for
+    /// existing `ruchat_trace_<N>.md` files and using one past the highest `N` found — so every
+    /// run gets its own file instead of every run overwriting the same path. Call once, right
     /// after `Context::new`, before the first `trace()` call.
     pub(crate) async fn init_trace_index(&mut self) {
         // See `trace()`'s doc comment for why test builds skip real `ruchat_traces/` I/O
         // entirely — scanning the directory here would be harmless (read-only) on its own, but
-        // there's no point doing it when `trace()` itself is never going to write anything.
+        // there's no point doing it when nothing is ever archived under `cfg!(test)`.
         if cfg!(test) {
             return;
         }
         let mut max_seen = 0u64;
-        for dir in [
-            TRACE_DIR,
-            TRACE_SUCCESS_DIR,
-            TRACE_FAILURE_DIR,
-            TRACE_SUMMARY_DIR,
-        ] {
+        for dir in [TRACE_SUCCESS_DIR, TRACE_FAILURE_DIR] {
             let Ok(mut entries) = tokio::fs::read_dir(dir).await else {
                 continue;
             };
@@ -172,13 +162,6 @@ impl Context {
 
     fn trace_filename(&self) -> String {
         format!("ruchat_trace_{}.md", self.trace_index)
-    }
-
-    /// This run's live, in-progress trace file — refreshed on every `trace()` call while the
-    /// run is ongoing, then removed once `finalize_success_trace`/`finalize_failure_trace`
-    /// archives the final version under `TRACE_SUCCESS_DIR`/`TRACE_FAILURE_DIR`.
-    fn live_trace_path(&self) -> PathBuf {
-        Path::new(TRACE_DIR).join(self.trace_filename())
     }
 
     pub(crate) fn push_turn(&mut self, kind: TurnKind, source: &str, content: String) {
@@ -267,31 +250,18 @@ impl Context {
         if !msg.is_empty() {
             let _ = tx.send(Ok(StreamItem::Event(AgentEvent::Trace(msg)))).await;
         }
-        // `cfg!(test)`, not a real condition on the run itself: fixture-driven tests
-        // (`run_fixture`/`debug_stage_machine`) exercise the real stage machine, including this
-        // call, against `agent_debug/*.json` sequences — with nothing to distinguish "a real
-        // CLI invocation" from "a unit test" at this layer, every `cargo test --lib` run used to
-        // write hundreds of real files into the repo's own `ruchat_traces/` (one per turn per
-        // fixture test), permanently orphaned since tests never reach the archival step below
-        // that would otherwise clean them up. Found 2026-08-03 while investigating why that
-        // directory had 460+ loose files with `Goal: test goal` content — not from real runs at
-        // all. Tests that need to assert on trace *content* should call `trace_body()` directly
-        // instead of reading it back off disk.
-        if cfg!(test) {
-            return;
-        }
-        let _ = tokio::fs::create_dir_all(TRACE_DIR).await;
-        let _ = tokio::fs::write(self.live_trace_path(), self.trace_body()).await;
     }
 
-    /// Renders the full on-disk trace body: goal, latest plan/implementation, and every turn
-    /// in chronological order, including retrieval turns (see `full_history_view` — `trace()`
-    /// used to build this from `history_view`, which deliberately excludes retrievals since
-    /// those are rendered as a separate, round-scoped `DOCUMENTS` section in prompts; that
-    /// meant any round whose only content was a tool call or RAG lookup — `read_file`,
-    /// `ripgrep`, `cargo_clippy`, Librarian retrieval, etc. — never appeared in the trace file
-    /// at all, not even collapsed, even though `print_debug_info` already got this right for
-    /// debug-sequence runs).
+    /// Renders the full trace body from the in-memory `turns` log: goal, latest
+    /// plan/implementation, and every turn in chronological order, including retrieval turns
+    /// (see `full_history_view` — this deliberately doesn't build on `history_view`, which
+    /// excludes retrievals since those are rendered as a separate, round-scoped `DOCUMENTS`
+    /// section in prompts; that meant any round whose only content was a tool call or RAG
+    /// lookup — `read_file`, `ripgrep`, `cargo_clippy`, Librarian retrieval, etc. — never
+    /// appeared here at all, not even collapsed, even though `print_debug_info` already got
+    /// this right for debug-sequence runs). Never written to disk — only fed to the LLM calls
+    /// in `finalize_trace` that produce the outcome summary and step review that do get
+    /// archived.
     pub(crate) fn trace_body(&self) -> String {
         format!(
             "# Orchestration Trace\n\n## Goal\n{}\n\n## Context\n{}\n\n## History\n{}\n",
@@ -302,17 +272,22 @@ impl Context {
     }
 
     /// Where this run's analysis file lands, for reporting the path to the maintainer once the
-    /// run ends.
-    pub(crate) fn summary_path(&self) -> PathBuf {
-        Path::new(TRACE_SUMMARY_DIR).join(self.trace_filename())
+    /// run ends — `TRACE_SUCCESS_DIR` or `TRACE_FAILURE_DIR` depending on outcome.
+    pub(crate) fn archive_path(&self, success: bool) -> PathBuf {
+        let dir = if success {
+            TRACE_SUCCESS_DIR
+        } else {
+            TRACE_FAILURE_DIR
+        };
+        Path::new(dir).join(self.trace_filename())
     }
 
-    /// Renders the standalone run-analysis document written to `TRACE_SUMMARY_DIR`: the goal,
-    /// how the run ended, and the round-by-round review of the agents' decisions. Deliberately
-    /// repeats the goal and the outcome rather than pointing at the trace, so one summary file
-    /// can be read (or fed to another model) on its own without the trace beside it.
+    /// Renders the standalone run-analysis document written by `finalize_success_trace`/
+    /// `finalize_failure_trace`: the goal, how the run ended, and the round-by-round review of
+    /// the agents' decisions. Deliberately repeats the goal and the outcome rather than pointing
+    /// at a trace, since no raw trace is ever kept on disk to point at.
     ///
-    /// Pure and separately tested: the write below is skipped under `cfg!(test)` along with
+    /// Pure and separately tested: the writes below are skipped under `cfg!(test)` along with
     /// every other `ruchat_traces/` write, so this is the part that can actually be asserted on.
     pub(crate) fn summary_body(&self, outcome: &str, review: &str, success: bool) -> String {
         let verdict = if success {
@@ -327,53 +302,30 @@ impl Context {
         )
     }
 
-    /// Writes this run's analysis file. Unlike the two archive functions below, this one runs
-    /// for every finished run, successful or not — the decisions worth learning from are just
-    /// as often in a run that worked.
-    pub(crate) async fn finalize_summary_trace(&self, body: &str) {
-        // See `trace()`'s doc comment.
-        if cfg!(test) {
-            return;
-        }
-        let _ = tokio::fs::create_dir_all(TRACE_SUMMARY_DIR).await;
-        let _ = tokio::fs::write(self.summary_path(), body).await;
-    }
-
-    /// Archives this run's trace under `TRACE_FAILURE_DIR` — `summary` plus the full
-    /// round-by-round trace body underneath it (kept in full here, unlike the success case,
-    /// since a failure is exactly when a maintainer needs to dig through every round to see
-    /// what actually happened) — and removes the live in-progress file. Called once, after an
+    /// Archives this run's analysis under `TRACE_FAILURE_DIR`. Called once, after an
     /// unsuccessful run (escalated, or the iteration budget exhausted without ever reaching
     /// `Stage::Commit`).
-    pub(crate) async fn finalize_failure_trace(&self, summary: &str) {
-        // See `trace()`'s doc comment.
+    pub(crate) async fn finalize_failure_trace(&self, body: &str) {
+        // Fixture-driven tests (`run_fixture`/`debug_stage_machine`) exercise the real stage
+        // machine against `agent_debug/*.json` sequences, with nothing to distinguish "a real
+        // CLI invocation" from "a unit test" at this layer — skip real `ruchat_traces/` I/O
+        // under `cfg!(test)` so `cargo test --lib` never writes real archive files.
         if cfg!(test) {
             return;
         }
         let _ = tokio::fs::create_dir_all(TRACE_FAILURE_DIR).await;
-        let content = format!(
-            "# Why this run did not succeed\n\n{summary}\n\n---\n\n{}",
-            self.trace_body()
-        );
-        let dest = Path::new(TRACE_FAILURE_DIR).join(self.trace_filename());
-        let _ = tokio::fs::write(&dest, content).await;
-        let _ = tokio::fs::remove_file(self.live_trace_path()).await;
+        let _ = tokio::fs::write(self.archive_path(false), body).await;
     }
 
-    /// Archives this run's trace under `TRACE_SUCCESS_DIR` — deliberately just `summary`, not
-    /// the full round-by-round trace body: a successful run doesn't need the blow-by-blow to
-    /// be useful later, and keeping `successes/` to one short file per run makes it easy to
-    /// skim. Removes the live in-progress file. Called once, after `Stage::Commit` succeeds.
-    pub(crate) async fn finalize_success_trace(&self, summary: &str) {
-        // See `trace()`'s doc comment.
+    /// Archives this run's analysis under `TRACE_SUCCESS_DIR`. Called once, after
+    /// `Stage::Commit` succeeds.
+    pub(crate) async fn finalize_success_trace(&self, body: &str) {
+        // See `finalize_failure_trace`'s comment on why tests skip this.
         if cfg!(test) {
             return;
         }
         let _ = tokio::fs::create_dir_all(TRACE_SUCCESS_DIR).await;
-        let content = format!("# Why this run succeeded\n\n{summary}\n");
-        let dest = Path::new(TRACE_SUCCESS_DIR).join(self.trace_filename());
-        let _ = tokio::fs::write(&dest, content).await;
-        let _ = tokio::fs::remove_file(self.live_trace_path()).await;
+        let _ = tokio::fs::write(self.archive_path(true), body).await;
     }
     pub(crate) fn build_collections_summary(&self) -> String {
         let mut summary = String::from("AVAILABLE COLLECTIONS (loaded from config):\n");
@@ -871,9 +823,9 @@ mod tests {
 
     #[test]
     fn parse_trace_index_extracts_the_number_from_a_well_formed_filename() {
-        // The scan `init_trace_index` runs over TRACE_DIR/TRACE_SUCCESS_DIR/TRACE_FAILURE_DIR
-        // relies on this to find the highest existing run number and pick one past it — every
-        // run must get its own file instead of every run overwriting the same path (the old
+        // The scan `init_trace_index` runs over TRACE_SUCCESS_DIR/TRACE_FAILURE_DIR relies on
+        // this to find the highest existing run number and pick one past it — every run must
+        // get its own file instead of every run overwriting the same path (the old
         // `.ruchat_trace.md` behavior).
         assert_eq!(parse_trace_index("ruchat_trace_42.md"), Some(42));
         assert_eq!(parse_trace_index("ruchat_trace_0.md"), Some(0));
@@ -888,9 +840,9 @@ mod tests {
     }
 
     // The summary file is meant to be readable — and feedable to another model — on its own,
-    // without the trace beside it, so it has to carry the goal as well as the two analyses.
-    // `finalize_summary_trace` skips its write under `cfg!(test)` like every other
-    // `ruchat_traces/` write, which is why the composition is a separate, pure function.
+    // without a trace beside it (none is ever kept on disk), so it has to carry the goal as
+    // well as the two analyses. `finalize_success_trace`/`finalize_failure_trace` skip their
+    // write under `cfg!(test)`, which is why the composition is a separate, pure function.
     #[test]
     fn summary_body_is_self_contained_and_names_the_outcome() {
         let ctx = Context::new("fix the clippy warning".to_string());

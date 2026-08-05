@@ -696,13 +696,11 @@ impl Orchestrator {
         Ok(success)
     }
 
-    /// Analyzes the just-finished run's trace and writes out what can be learned from it:
-    ///
-    /// - `ruchat_traces/summaries/` — a standalone analysis of every run, successful or not:
-    ///   how it ended, plus a round-by-round review of the agents' decisions saying which were
-    ///   good calls and which were not (`run_summary::generate_step_review`).
-    /// - `ruchat_traces/successes/` (outcome summary only) or `ruchat_traces/failures/`
-    ///   (outcome summary plus the full trace), removing the live in-progress file either way.
+    /// Analyzes the just-finished run's in-memory trace (`ctx.trace_body()` — never written to
+    /// disk itself) and archives a single analysis file under `ruchat_traces/successes/` or
+    /// `ruchat_traces/failures/`: how the run ended, plus a round-by-round review of the
+    /// agents' decisions saying which were good calls and which were not
+    /// (`run_summary::generate_step_review`). No raw trace text is ever written to disk.
     ///
     /// Two LLM calls rather than one asking for both parts at once: a local model does
     /// noticeably better on one focused instruction than on a two-section structured document,
@@ -711,8 +709,7 @@ impl Orchestrator {
     ///
     /// If either call fails (Ollama unreachable, timeout, empty response), the run is still
     /// archived, just with a placeholder note in place of that piece — a diagnostic nicety
-    /// failing must never mask or replace the original outcome, nor leave the run's trace file
-    /// orphaned outside every archive directory.
+    /// failing must never mask or replace the original outcome.
     async fn finalize_trace(
         &self,
         ctx: &Context,
@@ -745,12 +742,11 @@ impl Orchestrator {
                     tracing::warn!(error = ?e, success, "step review generation failed");
                     format!("(automatic step review generation failed: {e})")
                 });
-        ctx.finalize_summary_trace(&ctx.summary_body(&summary, &review, success))
-            .await;
+        let body = ctx.summary_body(&summary, &review, success);
         if success {
-            ctx.finalize_success_trace(&summary).await;
+            ctx.finalize_success_trace(&body).await;
         } else {
-            ctx.finalize_failure_trace(&summary).await;
+            ctx.finalize_failure_trace(&body).await;
         }
         let prefix = if success {
             "Run succeeded"
@@ -763,7 +759,7 @@ impl Orchestrator {
         let _ = tx
             .send(Ok(StreamItem::Event(AgentEvent::Trace(format!(
                 "{prefix}: {summary}\nStep-by-step review written to {}",
-                ctx.summary_path().display()
+                ctx.archive_path(success).display()
             )))))
             .await;
     }
@@ -857,7 +853,7 @@ mod tests {
                 // The review is a page of per-round lines; it belongs in the summary file, not
                 // scrolling past in the terminal — only its path is reported here.
                 assert!(!msg.contains("BAD: same rejection reason"));
-                assert!(msg.contains("ruchat_traces/summaries/ruchat_trace_0.md"));
+                assert!(msg.contains("ruchat_traces/failures/ruchat_trace_0.md"));
             }
             other => panic!("expected a Trace event, got {other:?}"),
         }
@@ -884,7 +880,7 @@ mod tests {
             StreamItem::Event(AgentEvent::Trace(msg)) => {
                 assert!(msg.starts_with("Run succeeded:"));
                 assert!(msg.contains("Renamed the helper and updated every call site."));
-                assert!(msg.contains("ruchat_traces/summaries/ruchat_trace_0.md"));
+                assert!(msg.contains("ruchat_traces/successes/ruchat_trace_0.md"));
             }
             other => panic!("expected a Trace event, got {other:?}"),
         }
