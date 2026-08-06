@@ -25,6 +25,9 @@ fn should_continue_patch_loop(ctx: &Context, remaining_patch_budget: u32) -> boo
 }
 
 impl Orchestrator {
+    /// `Stage::Implement`'s patch loop, run once the Worker's turn is already pushed as an
+    /// `Implementation` turn. Allows up to a per-round `patch_budget` of sequential
+    /// `apply_patch` calls (reset fresh every time this stage is entered, i.e. every new round —
     /// unlike `retrieve_budget`, which is a conservative cap for the whole run) so a plan naming
     /// multiple files in its `FILES:` line can land as one commit instead of only ever touching
     /// the first of them (see `should_continue_patch_loop`). Ends the same way a single-patch
@@ -50,7 +53,11 @@ impl Orchestrator {
             let exec_start = std::time::Instant::now();
             match self.worker.execute_and_verify(ctx).await? {
                 Validation::Failure(err) => {
-                    ctx.push_turn_timed(TurnKind::Rejection, "ApplyPatch", err, exec_start);
+                    // apply_patch failures are already pushed by protocol.rs with full diagnostic context;
+                    // other tool failures are not, so push them here to ensure all rejections are recorded.
+                    if !is_apply_patch {
+                        ctx.push_turn_timed(TurnKind::Rejection, "Validator", err, exec_start);
+                    }
                     return Ok(Stage::Retry);
                 }
                 // A real failure mode, not hypothetical: a live run showed the Worker calling

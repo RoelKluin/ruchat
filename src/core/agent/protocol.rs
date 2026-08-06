@@ -438,6 +438,18 @@ impl Validation {
                     ctx.record_patch(target.to_string(), original);
                     return Ok(Validation::Success);
                 }
+                // For hunks that aren't pure deletions (additions, modifications, mixed),
+                // try searching ±5 lines around the stated starting line. This auto-corrects
+                // misaligned hunks without requiring the model to fix the line numbers itself.
+                if let Some(realigned) =
+                    crate::core::agent::diff_repair::realign_any_hunk(&normalized, &original)
+                    && let Ok(patch) = diffy::Patch::from_str(&realigned)
+                    && let Ok(patched) = diffy::apply(&original, &patch)
+                {
+                    tokio::fs::write(target, patched).await?;
+                    ctx.record_patch(target.to_string(), original);
+                    return Ok(Validation::Success);
+                }
                 // `diffy::apply` fails here for essentially one reason: the diff's context
                 // lines don't match `target`'s actual current content — almost always because
                 // the Worker guessed/hallucinated what the file looks like instead of reading
@@ -469,11 +481,13 @@ impl Validation {
                 };
                 let git_diagnosis = check_with_git_apply(diff_text).await;
                 let content = format!(
-                    "Patch apply failed on {target}: {e}\n\n{git_diagnosis}This means the \
-                    diff's context lines don't match {target}'s actual current content. Here \
-                    is the file's real current content, with line numbers (N:content) — write \
-                    your next diff's context lines AND its @@ -a,b +c,d @@ hunk header's \
-                    starting line number to match this exactly, don't guess:\n\n{shown}{truncated_note}"
+                    "Patch apply failed on {target}: {e}\n\n{git_diagnosis}The problem: your \
+                    diff's context lines and hunk header don't match {target}'s real current \
+                    content. Specifically, your @@ -a,b +c,d @@ hunk header claims the change \
+                    starts at line `a`, but that line either doesn't exist or contains different \
+                    content than your context lines show. Re-read the actual file below, find \
+                    where your changes truly belong, and rewrite both the context lines and the \
+                    @@ starting line number to match exactly:\n\n{shown}{truncated_note}"
                 );
                 ctx.push_turn(TurnKind::Rejection, "Validator", content);
                 Ok(Validation::Failure(e.to_string()))

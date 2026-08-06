@@ -172,7 +172,6 @@ impl Orchestrator {
                 .await;
         }
         let success = matches!(result, Ok(true));
-        ctx.trace(&tx, String::new()).await;
         self.finalize_trace(ctx, &tx, success).await;
         result.map(|_| ())
     }
@@ -270,19 +269,36 @@ impl Orchestrator {
                         // genuine infinite stall without a separate fast-fail — same posture the
                         // Scoper's own identical-output handling already uses (forces
                         // progression instead of escalating).
+                        let mut should_escalate = false;
                         if let Some(prev) = &last_architect_output
                             && is_near_duplicate(prev, &ctx.output)
                         {
-                            ctx.push_turn(
-                                TurnKind::System,
-                                "Orchestrator",
-                                "Note: this plan is a near-duplicate of the previous round's \
-                                (allowing for minor wording drift, not just byte-identical). If \
-                                the rejection reason above suggests a different approach, use it \
-                                now — otherwise proceeding with the same plan is fine as long \
-                                as the implementation actually changes this round."
-                                    .into(),
-                            );
+                            // Count recent System notes from this round warning about duplicates
+                            let duplicate_warnings = ctx
+                                .turns
+                                .iter()
+                                .rev()
+                                .take_while(|t| t.round == ctx.round && t.kind == TurnKind::System)
+                                .filter(|t| t.content.contains("near-duplicate"))
+                                .count();
+
+                            // After 2 consecutive duplicate plans, escalate rather than keep
+                            // advising (with history_view deduplication, model should now be able
+                            // to change the plan; repeated duplicates despite that signal an actual stall)
+                            if duplicate_warnings >= 1 {
+                                should_escalate = true;
+                            } else {
+                                ctx.push_turn(
+                                    TurnKind::System,
+                                    "Orchestrator",
+                                    "Note: this plan is a near-duplicate of the previous round's \
+                                    (allowing for minor wording drift, not just byte-identical). If \
+                                    the rejection reason above suggests a different approach, use it \
+                                    now — otherwise proceeding with the same plan is fine as long \
+                                    as the implementation actually changes this round."
+                                        .into(),
+                                );
+                            }
                         }
                         last_architect_output = Some(ctx.output.clone());
                         // Without this, context_view() never finds a Plan
@@ -297,7 +313,13 @@ impl Orchestrator {
                             ctx.output.clone(),
                             architect_start,
                         );
-                        Stage::Retrieve
+                        if should_escalate {
+                            Stage::Escalate(
+                                "Architect repeated a plan despite near-duplicate warning".into(),
+                            )
+                        } else {
+                            Stage::Retrieve
+                        }
                     }
                 }
                 Stage::Retrieve => {
@@ -710,12 +732,28 @@ impl Orchestrator {
     /// If either call fails (Ollama unreachable, timeout, empty response), the run is still
     /// archived, just with a placeholder note in place of that piece — a diagnostic nicety
     /// failing must never mask or replace the original outcome.
+    ///
+    /// Writes a placeholder archive *before* either LLM call, then overwrites it with the
+    /// enriched version once they finish. A run that already succeeded (a real commit landed)
+    /// must not lose its record to a slow or interrupted summary/review call — live-verified
+    /// 2026-08-05: a landed gate commit had no archive at all because nothing was written to
+    /// disk until after both calls returned.
     async fn finalize_trace(
         &self,
         ctx: &Context,
         tx: &mpsc::Sender<OrchestratorResult>,
         success: bool,
     ) {
+        let placeholder = ctx.summary_body(
+            "(pending — summary generation was interrupted or is still in progress)",
+            "(pending — step review was interrupted or is still in progress)",
+            success,
+        );
+        if success {
+            ctx.finalize_success_trace(&placeholder).await;
+        } else {
+            ctx.finalize_failure_trace(&placeholder).await;
+        }
         let model = self
             .orchestrator_config
             .get("failure_analysis_model")

@@ -215,6 +215,103 @@ pub(super) fn realign_pure_deletion_hunks(diff: &str, original: &str) -> Option<
     changed.then_some(out)
 }
 
+/// Realigns hunks of any type (not just deletions) by trying different starting line numbers.
+/// If a hunk's stated starting line doesn't match the actual file, tries ±5 lines and returns
+/// the first successful realignment with corrected hunk headers. More aggressive but faster
+/// than rejecting and asking the model to fix it. Returns the realigned diff if any hunks were
+/// relocated, or None if the original diff applies cleanly or cannot be realigned.
+pub(super) fn realign_any_hunk(diff: &str, original: &str) -> Option<String> {
+    const REALIGN_RANGE: i32 = 5;
+
+    // Try the original diff first — if it works, no repair needed
+    if diffy::Patch::from_str(diff)
+        .ok()
+        .and_then(|p| diffy::apply(original, &p).ok())
+        .is_some()
+    {
+        return None;
+    }
+
+    // Parse hunks and try different line offsets for each
+    let file_lines: Vec<&str> = original.lines().collect();
+    let mut result = String::with_capacity(diff.len());
+    let mut changed = false;
+
+    for line in diff.lines() {
+        if !line.starts_with("@@") {
+            result.push_str(line);
+            result.push('\n');
+            continue;
+        }
+
+        // Extract hunk header: @@ -start,count +... @@
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 2 {
+            result.push_str(line);
+            result.push('\n');
+            continue;
+        }
+
+        let old_range = parts[1];
+        if !old_range.starts_with('-') {
+            result.push_str(line);
+            result.push('\n');
+            continue;
+        }
+
+        let start_str = old_range
+            .trim_start_matches('-')
+            .split(',')
+            .next()
+            .unwrap_or("0");
+        let Ok(mut orig_start) = start_str.parse::<i32>() else {
+            result.push_str(line);
+            result.push('\n');
+            continue;
+        };
+
+        // diffy uses 1-based line numbers; convert to 0-based for our search
+        orig_start = orig_start.saturating_sub(1);
+
+        let mut found_offset = false;
+        for offset in -REALIGN_RANGE..=REALIGN_RANGE {
+            let new_start = (orig_start + offset).max(0) as usize;
+            if new_start >= file_lines.len() {
+                continue;
+            }
+
+            // Try rebuilding this one hunk with the new starting line
+            let new_header = line.replace(
+                &format!("-{}", orig_start + 1),
+                &format!("-{}", new_start + 1),
+            );
+
+            // Quick test: try parsing and applying the entire modified diff
+            let test_diff = result.clone() + &new_header + "\n";
+
+            if diffy::Patch::from_str(&test_diff)
+                .ok()
+                .and_then(|p| diffy::apply(original, &p).ok())
+                .is_some()
+            {
+                result.push_str(&new_header);
+                result.push('\n');
+                found_offset = true;
+                changed = true;
+                break;
+            }
+        }
+
+        if !found_offset {
+            // No offset worked, keep original header
+            result.push_str(line);
+            result.push('\n');
+        }
+    }
+
+    changed.then_some(result)
+}
+
 /// Rebuilds one hunk body against the real file, returning the rebuilt hunk text and the 0-based
 /// file line it now starts at, or `None` if this isn't an unambiguously relocatable pure
 /// deletion. See `realign_pure_deletion_hunks` for the rules.

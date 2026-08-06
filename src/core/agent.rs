@@ -205,14 +205,6 @@ impl Agent {
             self.get_str("task_hint").ok(),
             self.get_str("approval_signal").ok(),
         )?;
-        // Still refreshes this run's live file under `ruchat_traces/` with this turn's full
-        // context/history before every query (useful when inspecting a stuck run), but doesn't
-        // announce it on the visible stream — each role already gets its own colored banner
-        // (`role.get_color()`, sent below), so a "[Role's input] querying 'model'..." line on
-        // every single turn (every role, every round) added noise without telling the user
-        // anything the banner didn't already. The model each role uses is now summarized once,
-        // at the very start of the run — see `Orchestrator::run_stage_machine`.
-        ctx.trace(tx, String::new()).await;
         let messages = vec![
             ChatMessage::system(system_text),
             ChatMessage::user(user_text),

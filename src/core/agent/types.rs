@@ -56,7 +56,7 @@ fn render_turn_content_for_trace(kind: TurnKind, content: &str) -> String {
 // so a whole `Context` can round-trip through `core/orchestrator/checkpoint.rs`'s resumable-run
 // checkpoint file — see that module for why (ROADMAP.md Phase 3 "Resumable/crash-resilient
 // runs"). Plain data, no invariants a naive round-trip could violate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub(crate) enum TurnKind {
     Plan,           // Architect output
     Implementation, // Worker output
@@ -302,9 +302,11 @@ impl Context {
         )
     }
 
-    /// Archives this run's analysis under `TRACE_FAILURE_DIR`. Called once, after an
-    /// unsuccessful run (escalated, or the iteration budget exhausted without ever reaching
-    /// `Stage::Commit`).
+    /// Archives this run's analysis under `TRACE_FAILURE_DIR`, after an unsuccessful run
+    /// (escalated, or the iteration budget exhausted without ever reaching `Stage::Commit`).
+    /// Called at least once — `finalize_trace` writes an immediate placeholder body here before
+    /// its LLM analysis calls, then calls again with the enriched body once they finish, so this
+    /// may overwrite a file it just wrote itself.
     pub(crate) async fn finalize_failure_trace(&self, body: &str) {
         // Fixture-driven tests (`run_fixture`/`debug_stage_machine`) exercise the real stage
         // machine against `agent_debug/*.json` sequences, with nothing to distinguish "a real
@@ -313,19 +315,28 @@ impl Context {
         if cfg!(test) {
             return;
         }
-        let _ = tokio::fs::create_dir_all(TRACE_FAILURE_DIR).await;
-        let _ = tokio::fs::write(self.archive_path(false), body).await;
+        if let Err(e) = tokio::fs::create_dir_all(TRACE_FAILURE_DIR).await {
+            tracing::warn!(error = ?e, dir = TRACE_FAILURE_DIR, "failed to create trace archive dir");
+        }
+        if let Err(e) = tokio::fs::write(self.archive_path(false), body).await {
+            tracing::warn!(error = ?e, path = ?self.archive_path(false), "failed to write trace archive");
+        }
     }
 
-    /// Archives this run's analysis under `TRACE_SUCCESS_DIR`. Called once, after
-    /// `Stage::Commit` succeeds.
+    /// Archives this run's analysis under `TRACE_SUCCESS_DIR`, after `Stage::Commit` succeeds.
+    /// Called at least once — see `finalize_failure_trace`'s doc comment on the placeholder-then-
+    /// enriched double write.
     pub(crate) async fn finalize_success_trace(&self, body: &str) {
         // See `finalize_failure_trace`'s comment on why tests skip this.
         if cfg!(test) {
             return;
         }
-        let _ = tokio::fs::create_dir_all(TRACE_SUCCESS_DIR).await;
-        let _ = tokio::fs::write(self.archive_path(true), body).await;
+        if let Err(e) = tokio::fs::create_dir_all(TRACE_SUCCESS_DIR).await {
+            tracing::warn!(error = ?e, dir = TRACE_SUCCESS_DIR, "failed to create trace archive dir");
+        }
+        if let Err(e) = tokio::fs::write(self.archive_path(true), body).await {
+            tracing::warn!(error = ?e, path = ?self.archive_path(true), "failed to write trace archive");
+        }
     }
     pub(crate) fn build_collections_summary(&self) -> String {
         let mut summary = String::from("AVAILABLE COLLECTIONS (loaded from config):\n");
@@ -434,10 +445,38 @@ impl Context {
 
     /// Replaces the old `ctx.history` string: chronological transcript up to `round`,
     /// excluding retrieval payloads (those are rendered separately via `documents_view`).
+    /// Deduplicates by keeping only the most recent turn for each (source, kind) pair —
+    /// prevents a repeated failed plan/implementation/rejection from a round 1–5 loop
+    /// from outnumbering its single correction to the model (see TODO.md item 33).
     pub(crate) fn history_view(&self, upto_round: u64) -> String {
-        self.turns
+        use std::collections::HashMap;
+
+        // Collect turns in reverse order, keeping the most recent (source, kind) pair
+        let mut seen: HashMap<(String, TurnKind), bool> = HashMap::new();
+        let mut deduplicated = Vec::new();
+
+        for turn in self.turns.iter().rev() {
+            if turn.round > upto_round || turn.kind == TurnKind::Retrieval {
+                continue;
+            }
+
+            // Deduplicate Plan, Implementation, Rejection, Validate, Test (the main repeaters);
+            // keep all System turns (metadata/confirmations don't dilute the signal).
+            if !matches!(turn.kind, TurnKind::System | TurnKind::Summary) {
+                let key = (turn.source.clone(), turn.kind);
+                if seen.contains_key(&key) {
+                    continue; // Skip older versions of this (source, kind)
+                }
+                seen.insert(key, true);
+            }
+            deduplicated.push(turn);
+        }
+
+        // Reverse back to chronological order
+        deduplicated.reverse();
+
+        deduplicated
             .iter()
-            .filter(|t| t.round <= upto_round && t.kind != TurnKind::Retrieval)
             .map(|t| {
                 format!(
                     "### {} [{:?}, round {}]:\n{}\n",
